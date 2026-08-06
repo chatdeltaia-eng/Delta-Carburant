@@ -2799,7 +2799,7 @@ function Login({
   loading: boolean;
   error: string;
 }) {
-  const [email, setEmail] = useState("najib@deltacarburant.ma");
+  const [email, setEmail] = useState("");
   return (
     <main className={styles.login}>
       <section>
@@ -2810,20 +2810,7 @@ function Login({
           </div>
         </div>
         <h1>Bienvenue</h1>
-        <p>Chaque utilisateur dispose de son espace et de ses permissions.</p>
-        <div className={styles.demoProfiles}>
-          {Object.values(profiles).map((p) => (
-            <button
-              type="button"
-              key={p.email}
-              className={email === p.email ? styles.profileActive : ""}
-              onClick={() => setEmail(p.email)}
-            >
-              <b>{p.name}</b>
-              <small>{permissionText(p.role)}</small>
-            </button>
-          ))}
-        </div>
+        <p>Connectez-vous avec vos identifiants professionnels.</p>
         <form onSubmit={onSubmit}>
           <label>
             Adresse e-mail
@@ -2840,7 +2827,7 @@ function Login({
             <input
               name="password"
               type="password"
-              defaultValue={PASSWORD}
+              autoComplete="current-password"
               required
             />
           </label>
@@ -2849,7 +2836,6 @@ function Login({
             {loading ? "Connexion…" : "Se connecter"}
           </button>
         </form>
-        <small>Mot de passe démo : {PASSWORD}</small>
       </section>
       <aside>
         <div className={styles.orb}>Δ</div>
@@ -2858,10 +2844,7 @@ function Login({
           <br />
           Une responsabilité par rôle.
         </h2>
-        <p>
-          Najib affecte et demande. Zin valide, bloque et gère. La Direction
-          Générale supervise tout le processus.
-        </p>
+        <p>Gérez les cartes carburant et suivez les opérations en toute sécurité.</p>
       </aside>
     </main>
   );

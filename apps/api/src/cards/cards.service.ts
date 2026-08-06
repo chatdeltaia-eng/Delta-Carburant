@@ -54,8 +54,11 @@ export class CardsService {
         FROM fuel_transaction ft WHERE ft.fuel_card_id=v.id AND ft.deleted_at IS NULL),0) / v.monthly_limit)) ELSE 0 END AS consumption_rate
       FROM v_fuel_card_list v ${where}
       ORDER BY updated_at DESC LIMIT $4 OFFSET $5`, [search.trim(), term, status, limit, offset, actor.role==='NAJIB_ASSIGNER', actor.sub]);
-    const [count] = await this.db.query<{ total: number }>(`SELECT count(*)::int AS total FROM v_fuel_card_list ${where}`,
-      [search.trim(), term, status, limit, offset, actor.role==='NAJIB_ASSIGNER', actor.sub]);
+    const countWhere = `WHERE ($1='' OR masked_card_number ILIKE $2 OR beneficiary ILIKE $2 OR registration ILIKE $2)
+      AND ($3='' OR status::text=$3)
+      AND ($4::boolean=false OR (card_category='OFF_PARK' AND responsible_user_id=$5))`;
+    const [count] = await this.db.query<{ total: number }>(`SELECT count(*)::int AS total FROM v_fuel_card_list ${countWhere}`,
+      [search.trim(), term, status, actor.role==='NAJIB_ASSIGNER', actor.sub]);
     return { items, total: count.total, page, pageSize: limit };
   }
   async details(id: string) {

@@ -15,6 +15,7 @@ const migrations = [
   '012_user_email_domain.sql',
   '013_user_password.sql',
   '014_default_users.sql',
+  '015_default_company.sql',
 ];
 
 async function main() {

@@ -13,7 +13,7 @@ export class TransactionsService {
     coalesce(sum(ta.allocated_amount),0) AS "allocatedAmount",
     ft.amount_incl_tax-coalesce(sum(ta.allocated_amount),0) AS "remainingAmount",
     coalesce((SELECT jsonb_agg(jsonb_build_object(
-      'id',detail.id,'beneficiary',detail.display_name,'vehicle',detail.registration_display,
+      'id',detail.id,'beneficiary',db.display_name,'vehicle',dv.registration_display,
       'amount',detail.allocated_amount,'liters',detail.allocated_liters,'note',detail.note,
       'allocatedAt',detail.allocated_at) ORDER BY detail.allocated_at)
       FROM transaction_allocation detail

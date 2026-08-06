@@ -79,7 +79,7 @@ type WorkflowStep = {
 // Browser requests stay on the same origin. Next.js proxies this path to the
 // API service, so the API hostname does not need to be exposed to clients.
 const API = "/api/v1";
-const PASSWORD = "DeltaDemo2026";
+const PASSWORD = "DeltaCarburant@2026";
 const profiles: Record<string, User> = {
   "najib@deltacarburant.com": {
     name: "Najib Admin",

@@ -13,6 +13,7 @@ const migrations = [
   '010_request_card_synchronization.sql',
   '011_off_park_consumption_allocation.sql',
   '012_user_email_domain.sql',
+  '013_user_password.sql',
 ];
 
 async function main() {

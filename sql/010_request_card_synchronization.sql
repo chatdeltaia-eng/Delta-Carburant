@@ -2,7 +2,9 @@ BEGIN;
 
 -- La demande validée est liée à la carte créée. L'affectation active devient
 -- l'unique source de vérité commune aux vues Cartes, Bénéficiaires et Véhicules.
-CREATE OR REPLACE VIEW v_fuel_card_list AS
+DROP VIEW IF EXISTS v_fuel_card_list;
+
+CREATE VIEW v_fuel_card_list AS
 SELECT fc.id,
        c.code AS company_code,
        fc.masked_card_number,

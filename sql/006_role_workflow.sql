@@ -21,7 +21,9 @@ ALTER TABLE vehicle
   ADD COLUMN IF NOT EXISTS deleted_at timestamptz,
   ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES app_user(id);
 
-CREATE OR REPLACE VIEW v_fuel_card_list AS
+DROP VIEW IF EXISTS v_fuel_card_list;
+
+CREATE VIEW v_fuel_card_list AS
 SELECT fc.id, c.code AS company_code, fc.masked_card_number, fc.monthly_limit,
        fc.threshold_alert_enabled, fc.status, fc.legacy_state,
        b.display_name AS beneficiary, v.registration_display AS registration,

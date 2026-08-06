@@ -23,7 +23,9 @@ CREATE INDEX idx_transaction_allocation_transaction
 CREATE INDEX idx_off_park_responsible
   ON fuel_card(responsible_user_id, status) WHERE card_category='OFF_PARK';
 
-CREATE OR REPLACE VIEW v_fuel_card_list AS
+DROP VIEW IF EXISTS v_fuel_card_list;
+
+CREATE VIEW v_fuel_card_list AS
 SELECT fc.id, c.code AS company_code, fc.masked_card_number, fc.monthly_limit,
        fc.threshold_alert_enabled, fc.status, fc.legacy_state,
        b.display_name AS beneficiary, d.name AS department,

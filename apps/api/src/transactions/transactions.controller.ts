@@ -12,8 +12,10 @@ class CorrectTransactionDto {
   @IsString() reason!: string;
 }
 class AllocateTransactionDto {
-  @IsUUID() beneficiaryId!: string;
-  @IsUUID() vehicleId!: string;
+  @IsOptional() @IsUUID() beneficiaryId?: string;
+  @IsOptional() @IsUUID() vehicleId?: string;
+  @IsOptional() @IsString() beneficiary?:string;
+  @IsOptional() @IsString() vehicle?:string;
   @IsNumber() @Min(0.001) amount!: number;
   @IsOptional() @IsNumber() @Min(0.001) liters?: number;
   @IsOptional() @IsString() note?: string;
@@ -35,6 +37,7 @@ class ReviewDecisionDto {
   @IsIn(['ACCEPTED','REJECTED']) decision!: 'ACCEPTED'|'REJECTED';
   @IsOptional() @IsString() reason?: string;
 }
+class AllocationDecisionDto { @IsIn(['APPROVED','REJECTED']) decision!:'APPROVED'|'REJECTED'; @IsOptional() @IsString() reason?:string; }
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('transactions')
@@ -44,6 +47,7 @@ export class TransactionsController {
   @Post('import') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') import(@Body() dto: ImportTransactionsDto, @Req() req: { user: { sub:string; email:string } }) { return this.transactions.import(dto,req.user); }
   @Get('reviews') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') reviews() { return this.transactions.reviews(); }
   @Patch('reviews/:id') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') review(@Param('id',ParseUUIDPipe) id:string,@Body() dto:ReviewDecisionDto,@Req() req:{user:{sub:string;email:string}}) { return this.transactions.review(id,dto,req.user); }
+  @Patch('allocations/:id/decision') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') decideAllocation(@Param('id',ParseUUIDPipe) id:string,@Body() dto:AllocationDecisionDto,@Req() req:{user:{sub:string;email:string}}){return this.transactions.decideAllocation(id,dto,req.user);}
   @Post(':id/allocations') @Roles('NAJIB_ASSIGNER') allocate(@Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AllocateTransactionDto, @Req() req: { user: { sub: string; email: string } }) {
     return this.transactions.allocate(id,dto,req.user);

@@ -9,9 +9,10 @@ import { RequestsModule } from './requests/requests.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { VehiclesModule } from './vehicles/vehicles.module';
+import { MileageModule } from './mileage/mileage.module';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, DashboardModule, CardsModule, RequestsModule, TransactionsModule, NotificationsModule, VehiclesModule],
+  imports: [DatabaseModule, AuthModule, DashboardModule, CardsModule, RequestsModule, TransactionsModule, NotificationsModule, VehiclesModule, MileageModule],
   controllers: [AppController],
   providers: [AppService],
 })

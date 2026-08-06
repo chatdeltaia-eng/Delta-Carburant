@@ -2,29 +2,45 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { DatabaseService } from '../database/database.service';
 
 type UpdateCard = { status?: string; financeStatus?: string; monthlyLimit?: number; thresholdAlertEnabled?: boolean };
-type CreateCard = { cardNumber: string; monthlyLimit: number; beneficiaryId?: string; vehicleId?: string; cardCategory?: 'PERSONALIZED'|'OFF_PARK' };
+type CreateCard = { cardNumber: string; monthlyLimit: number; beneficiaryId?: string; vehicleId?: string; cardCategory?: 'PERSONALIZED'|'OFF_PARK';responsibleUserId?:string;companyId?:string };
 type Actor = { sub: string; email: string; role: string };
 @Injectable()
 export class CardsService {
   constructor(private readonly db: DatabaseService) {}
+  responsibles(){return this.db.query(`SELECT id,display_name AS name,email FROM app_user WHERE active AND role='NAJIB_ASSIGNER' ORDER BY display_name`);}
+  companies(){return this.db.query(`SELECT id,code,name FROM company WHERE active ORDER BY code`);}
+  async assignResponsible(id:string,responsibleUserId:string,actor:Actor){return this.db.transaction(async client=>{
+    const responsible=await client.query(`SELECT id,display_name FROM app_user WHERE id=$1 AND active AND role='NAJIB_ASSIGNER'`,[responsibleUserId]);
+    if(!responsible.rows[0])throw new BadRequestException('Responsable hors parc introuvable');
+    const card=await client.query(`UPDATE fuel_card SET responsible_user_id=$2,card_category='OFF_PARK' WHERE id=$1 AND deleted_at IS NULL RETURNING id,masked_card_number`,[id,responsibleUserId]);
+    if(!card.rows[0])throw new NotFoundException('Carte introuvable');
+    await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id) VALUES($1,'Carte hors parc attribuée',$2,'cards','fuel_card',$3)`,[responsibleUserId,`La carte ${card.rows[0].masked_card_number} vous a été attribuée`,id]);
+    await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'ASSIGN_RESPONSIBLE','fuel_card',$2,$3)`,[actor.email,id,{responsibleUserId}]);return card.rows[0];});}
+  async assignVehicle(id:string,dto:{beneficiary:string;vehicleId:string},actor:Actor){return this.db.transaction(async client=>{
+    const card=await client.query(`SELECT id,company_id,masked_card_number FROM fuel_card WHERE id=$1 AND responsible_user_id=$2 AND card_category='OFF_PARK' AND deleted_at IS NULL FOR UPDATE`,[id,actor.sub]);if(!card.rows[0])throw new NotFoundException('Carte hors parc non attribuée à ce responsable');
+    const vehicle=await client.query(`SELECT id,company_id,registration_display FROM vehicle WHERE id=$1 AND active AND deleted_at IS NULL`,[dto.vehicleId]);if(!vehicle.rows[0]||vehicle.rows[0].company_id!==card.rows[0].company_id)throw new BadRequestException('Le véhicule doit appartenir à la société de la carte');
+    const department=await client.query(`INSERT INTO department(company_id,name) VALUES($1,'Hors parc') ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id`,[card.rows[0].company_id]);
+    const beneficiary=await client.query(`INSERT INTO beneficiary(company_id,department_id,display_name) VALUES($1,$2,$3) ON CONFLICT(company_id,display_name) DO UPDATE SET active=true RETURNING id`,[card.rows[0].company_id,department.rows[0].id,dto.beneficiary.trim()]);
+    await client.query(`UPDATE card_assignment SET ends_at=now() WHERE fuel_card_id=$1 AND ends_at IS NULL`,[id]);await client.query(`INSERT INTO card_assignment(fuel_card_id,beneficiary_id,vehicle_id,workflow_status,requested_by) VALUES($1,$2,$3,'PENDING_ZIN',$4)`,[id,beneficiary.rows[0].id,dto.vehicleId,actor.sub]);await client.query(`UPDATE fuel_card SET status='ASSIGNED' WHERE id=$1`,[id]);
+    await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id) SELECT id,'Nouvelle affectation hors parc',$2,'cards','fuel_card',$3 FROM app_user WHERE active AND role::text=ANY($1::text[])`,[['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'],`${card.rows[0].masked_card_number} → ${vehicle.rows[0].registration_display}`,id]);return {id,status:'ASSIGNED'};});}
   private author(role: string) {
-    return role === 'ZIN_FINANCE' ? 'Zin' : role === 'DIRECTION_GENERAL' ? 'la Direction Générale' : role === 'NAJIB_ASSIGNER' ? 'Najib' : 'le Super Admin';
+    return role === 'ZIN_FINANCE' ? 'Zin' : role === 'DIRECTION_GENERAL' ? 'la Direction Générale' : role === 'NAJIB_ASSIGNER' ? 'le responsable hors parc' : 'le Super Admin';
   }
   private async notifyCompany(client: import('pg').PoolClient, companyId: string, actor: Actor,
     title: string, message: string, cardId: string, severity = 'INFO') {
     await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
       SELECT u.id,$3,$4,$5,'cards','fuel_card',$6 FROM app_user u
-      WHERE u.active AND u.company_id=$1 AND u.id<>$2
+      WHERE u.active AND (u.company_id=$1 OR u.id=(SELECT responsible_user_id FROM fuel_card WHERE id=$6)) AND u.id<>$2
         AND u.role IN ('NAJIB_ASSIGNER','ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN')`,
       [companyId, actor.sub, title, message, severity, cardId]);
   }
   async create(dto: CreateCard, actorId: string, actor: string) {
     if (dto.vehicleId && !dto.beneficiaryId) throw new BadRequestException('Un véhicule doit être lié à un bénéficiaire');
     return this.db.transaction(async client => {
-      const context = await client.query(`SELECT u.company_id,
+      const context = await client.query(`SELECT coalesce(selected.id,u.company_id) AS company_id,
         b.company_id AS beneficiary_company,v.company_id AS vehicle_company
-        FROM app_user u LEFT JOIN beneficiary b ON b.id=$2 LEFT JOIN vehicle v ON v.id=$3
-        WHERE u.id=$1`, [actorId,dto.beneficiaryId ?? null,dto.vehicleId ?? null]);
+        FROM app_user u LEFT JOIN beneficiary b ON b.id=$2 LEFT JOIN vehicle v ON v.id=$3 LEFT JOIN company selected ON selected.id=$4 AND selected.active
+        WHERE u.id=$1`, [actorId,dto.beneficiaryId ?? null,dto.vehicleId ?? null,dto.companyId??null]);
       const row = context.rows[0];
       if (!row?.company_id) throw new BadRequestException('Société utilisateur introuvable');
       if (dto.beneficiaryId && !row.beneficiary_company) throw new BadRequestException('Bénéficiaire introuvable');
@@ -34,8 +50,8 @@ export class CardsService {
       const number = dto.cardNumber.trim();
       let responsibleUserId: string | null = null;
       if (dto.cardCategory === 'OFF_PARK') {
-        const responsible = await client.query(`SELECT id FROM app_user WHERE company_id=$1 AND role='NAJIB_ASSIGNER' AND active LIMIT 1`, [row.company_id]);
-        if (!responsible.rows[0]) throw new BadRequestException('Aucun responsable Najib actif pour cette société');
+        const responsible = await client.query(`SELECT id FROM app_user WHERE id=coalesce($1,id) AND role='NAJIB_ASSIGNER' AND active ORDER BY display_name LIMIT 1`, [dto.responsibleUserId??null]);
+        if (!responsible.rows[0]) throw new BadRequestException('Aucun responsable hors parc actif');
         responsibleUserId = responsible.rows[0].id;
       }
       const inserted = await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,
@@ -54,7 +70,7 @@ export class CardsService {
     });
   }
   async list(page: number, search: string, status: string, actor: { sub: string; role: string }) {
-    const limit = 20, offset = (page - 1) * limit;
+    const limit = 200, offset = (page - 1) * limit;
     const term = `%${search.trim()}%`;
     const where = `WHERE ($1='' OR masked_card_number ILIKE $2 OR beneficiary ILIKE $2 OR registration ILIKE $2)
       AND ($3='' OR status::text=$3)

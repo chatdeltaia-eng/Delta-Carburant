@@ -18,13 +18,21 @@ class CreateCardDto {
   @IsOptional() @IsUUID() beneficiaryId?: string;
   @IsOptional() @IsUUID() vehicleId?: string;
   @IsOptional() @IsIn(['PERSONALIZED','OFF_PARK']) cardCategory?: 'PERSONALIZED'|'OFF_PARK';
+  @IsOptional() @IsUUID() responsibleUserId?: string;
+  @IsOptional() @IsUUID() companyId?:string;
 }
+class ResponsibleDto { @IsUUID() responsibleUserId!:string; }
+class AssignCardDto { @IsString() beneficiary!:string; @IsUUID() vehicleId!:string; }
 class ReplaceCardDto { @IsUUID() replacementCardId!: string; @IsString() reason!: string; }
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('cards')
 export class CardsController {
   constructor(private readonly cards: CardsService) {}
+  @Get('responsibles') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') responsibles(){return this.cards.responsibles();}
+  @Get('companies') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') companies(){return this.cards.companies();}
+  @Patch(':id/responsible') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') responsible(@Param('id',ParseUUIDPipe) id:string,@Body() dto:ResponsibleDto,@Req() req:{user:{sub:string;email:string;role:string}}){return this.cards.assignResponsible(id,dto.responsibleUserId,req.user);}
+  @Post(':id/assignment') @Roles('NAJIB_ASSIGNER') assignment(@Param('id',ParseUUIDPipe) id:string,@Body() dto:AssignCardDto,@Req() req:{user:{sub:string;email:string;role:string}}){return this.cards.assignVehicle(id,dto,req.user);}
   @Get() list(@Query('page') page='1', @Query('search') search='', @Query('status') status='',
     @Req() req: { user: { sub: string; role: string } }) {
     return this.cards.list(Math.max(1, Number(page) || 1), search, status, req.user);

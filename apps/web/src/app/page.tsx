@@ -15,6 +15,7 @@ type View =
   | "vehicles"
   | "transactions"
   | "requests"
+  | "mileage"
   | "anomalies"
   | "settings";
 type CardStatus =
@@ -46,6 +47,9 @@ type Card = {
   replacement_card_id?: string;
   card_category: "PERSONALIZED" | "OFF_PARK";
   activation_locked?: boolean;
+  consumed_amount?:number;
+  consumption_rate?:number;
+  responsible_user_id?:string;
 };
 type Row = { id: string; [key: string]: string | number };
 type Modal =
@@ -53,6 +57,7 @@ type Modal =
   | "cardAction"
   | "import"
   | "request"
+  | "mileage"
   | "beneficiary"
   | "vehicle"
   | "editRow"
@@ -97,7 +102,7 @@ const requestStatus: Record<string, string> = {
   CANCELLED: "ANNULEE_NAJIB",
 };
 const roleName: Record<string, string> = {
-  NAJIB_ASSIGNER: "Najib",
+  NAJIB_ASSIGNER: "Responsable hors parc",
   ZIN_FINANCE: "Zin",
   DIRECTION_GENERAL: "DG",
   SUPER_ADMIN: "Super Admin",
@@ -111,7 +116,7 @@ const requestTracking = (row: Record<string, unknown>) => {
     REPLACED: "Carte remplacée",
   };
   if (cardAction) {
-    const label = cardAction === "SOFT_DELETE" ? "Carte archivée" : cardAction === "REPLACE" ? "Carte remplacée" : cardAction === "LIMIT_CHANGE" ? "Plafond augmenté" : statusLabels[cardStatus] ?? "Carte mise à jour";
+    const label = cardAction === "SOFT_DELETE" ? "Carte archivée" : cardAction === "REPLACE" ? "Carte remplacée" : cardAction === "LIMIT_CHANGE" ? "Plafond augmenté" : cardAction==="CARD_FUNDING"?"Carte alimentée":statusLabels[cardStatus] ?? "Carte mise à jour";
     const author = roleName[String(row.cardActionByRole)] ?? "Utilisateur";
     const date = row.cardActionAt ? new Date(String(row.cardActionAt)).toLocaleString("fr-MA") : "";
     return `${label} par ${author}${date ? ` · ${date}` : ""}`;
@@ -125,13 +130,14 @@ const requestTracking = (row: Record<string, unknown>) => {
 const toRequestRow = (row: Record<string, unknown>): Row => ({
   id: String(row.id),
   numero: String(row.requestNumber ?? "—"),
-  type: String(row.requestType) === "LIMIT_CHANGE" ? "Augmentation de plafond" : "Nouvelle carte",
+  type: String(row.requestType) === "LIMIT_CHANGE" ? "Augmentation de plafond" : String(row.requestType)==="CARD_FUNDING"?"Alimentation de carte":"Nouvelle carte",
   beneficiaire: String(row.beneficiary ?? "—"),
   departement: String(row.department ?? "—"),
   voiture: String(row.vehicle ?? "—"),
   plafond: Number(row.requestedLimit ?? 0),
   plafondActuel: Number(row.currentLimit ?? 0),
   carte: String(row.cardNumber ?? "—"),
+  carteSource:String(row.sourceCardNumber??"—"),
   statut: requestStatus[String(row.status)] ?? String(row.status ?? "—"),
   motif: String(row.decisionReason ?? row.reason ?? "—"),
   suivi: requestTracking(row),
@@ -211,6 +217,7 @@ const seeds: Record<string, Row[]> = {
     }),
   transactions: [],
   requests: [],
+  mileage: [],
   anomalies: [],
 };
 const viewMeta: Record<View, [string, string]> = {
@@ -233,6 +240,7 @@ const viewMeta: Record<View, [string, string]> = {
     "Données importées de TotalEnergies ; correction Zin/DG avec historique.",
   ],
   requests: ["Demandes", "Suivez les workflows et validations."],
+  mileage: ["Kilométrage hebdomadaire", "Suivez les relevés, distances détectées et validations."],
   anomalies: ["Anomalies", "Analysez les alertes détectées."],
   settings: ["Paramètres", "Configurez l’application."],
 };
@@ -383,6 +391,8 @@ export default function Home() {
     [cards, setCards] = useState<Card[]>(initialCards),
     [data, setData] = useState(seeds),
     [databaseSummary, setDatabaseSummary] = useState<Record<string, number> | null>(null),
+    [responsibles,setResponsibles]=useState<{id:string;name:string;email:string}[]>([]),
+    [companies,setCompanies]=useState<{id:string;code:string;name:string}[]>([]),
     [notifications, setNotifications] = useState<Notification[]>([]),
     [showNotifications, setShowNotifications] = useState(false),
     [search, setSearch] = useState(""),
@@ -433,9 +443,13 @@ export default function Home() {
       fetch(`${API}/transactions`, { headers, cache: "no-store" }),
       fetch(`${API}/dashboard/summary`, { headers, cache: "no-store" }),
       canManage(user.role) ? fetch(`${API}/transactions/reviews`, { headers, cache: "no-store" }) : Promise.resolve(null),
+      fetch(`${API}/vehicles`, { headers, cache: "no-store" }),
+      fetch(`${API}/mileage`, { headers, cache: "no-store" }),
+      canManage(user.role)?fetch(`${API}/cards/responsibles`,{headers,cache:"no-store"}):Promise.resolve(null),
+      canManage(user.role)?fetch(`${API}/cards/companies`,{headers,cache:"no-store"}):Promise.resolve(null),
     ])
-      .then(async ([cardResponse, requestResponse, notificationResponse,transactionResponse,summaryResponse,reviewsResponse]) => {
-        if (!cardResponse.ok || !requestResponse.ok || !notificationResponse.ok || !transactionResponse.ok || !summaryResponse.ok)
+      .then(async ([cardResponse, requestResponse, notificationResponse,transactionResponse,summaryResponse,reviewsResponse,vehiclesResponse,mileageResponse,responsiblesResponse,companiesResponse]) => {
+        if (!cardResponse.ok || !requestResponse.ok || !notificationResponse.ok || !transactionResponse.ok || !summaryResponse.ok || !vehiclesResponse.ok || !mileageResponse.ok)
           throw new Error("Impossible de charger les données distantes");
         const cardPayload = await cardResponse.json();
         const requestPayload = await requestResponse.json();
@@ -443,6 +457,10 @@ export default function Home() {
         const transactionPayload = await transactionResponse.json();
         const summaryPayload = await summaryResponse.json();
         const reviewsPayload = reviewsResponse?.ok ? await reviewsResponse.json() : [];
+        const vehiclesPayload=await vehiclesResponse.json();
+        const mileagePayload=await mileageResponse.json();
+        if(responsiblesResponse?.ok)setResponsibles(await responsiblesResponse.json());
+        if(companiesResponse?.ok)setCompanies(await companiesResponse.json());
         setCards(cardPayload.items ?? cardPayload);
         setNotifications((notificationPayload.items ?? notificationPayload).map(
           (row: Record<string, unknown>) => toNotification(row, user.role),
@@ -450,8 +468,10 @@ export default function Home() {
         setData((current) => ({
           ...current,
           requests: (requestPayload.items ?? requestPayload).map(toRequestRow),
-          transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),montantReparti:Number(row.allocatedAmount??0),statut:"Importée Total",fichier:String(row.file??"—") })),
+          transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),statut:"Importée Total",fichier:String(row.file??"—") })),
           anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.issueType)==="UNKNOWN_CARD"?"Carte inconnue":"Véhicule inconnu",carte:String(row.cardNumber),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),gravite:"Haute",statut:String(row.status)==="PENDING"?"À vérifier":String(row.status)==="ACCEPTED"?"Acceptée":"Refusée" })),
+          vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numero:Number(row.fleetNumber??0),immatriculation:String(row.registration),type:String(row.vehicleType??row.model??"—"),societe:String(row.company??"—"),reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
+          mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:String(row.week??"—"),vehicule:String(row.vehicle),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),attendu:Number(row.expectedMileage??0),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—")})),
         }));
         setDatabaseSummary(summaryPayload);
       })
@@ -529,11 +549,14 @@ export default function Home() {
       const registration = String(f.get("registration") || "").trim() || null;
       const department = String(f.get("department") || "").trim() || null;
       const vehicleModel = String(f.get("vehicleModel") || "").trim() || null;
+      if(!token)return notify("Session distante expirée");
+      let remote:Record<string,unknown>;
+      try{const response=await fetch(`${API}/cards`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({cardNumber:number,monthlyLimit:Number(f.get("limit")),cardCategory:String(f.get("cardCategory")||"PERSONALIZED"),responsibleUserId:f.get("responsibleUserId")?String(f.get("responsibleUserId")):undefined,companyId:f.get("companyId")?String(f.get("companyId")):undefined})});if(!response.ok)throw new Error(await response.text());remote=await response.json();}catch(error){return notify(error instanceof Error?error.message:"La carte n’a pas été créée dans la base");}
       const next: Card[] = [
         {
-          id,
+          id:String(remote.id),
           masked_card_number: number,
-          company_code: String(f.get("company") || "NAJIB"),
+          company_code: companies.find(item=>item.id===String(f.get("companyId")))?.code??"DELTA",
           beneficiary,
           department,
           registration,
@@ -544,6 +567,7 @@ export default function Home() {
           created_at: today,
           updated_at: today,
           card_category: String(f.get("cardCategory") || "PERSONALIZED") as Card["card_category"],
+          responsible_user_id:String(f.get("responsibleUserId")||"")||undefined,
         },
         ...cards,
       ];
@@ -565,10 +589,12 @@ export default function Home() {
           if (previous && consumptionRate(previous) < 100)
             return notify(`Carte verrouillée : terminez d’abord l’ancienne carte ${previous.masked_card_number} (${consumptionRate(previous)} %)`);
         }
+        const vehicleId=String(f.get("vehicleId")||"");const vehicle=data.vehicles.find(row=>row.id===vehicleId);if(!vehicle)return notify("Sélectionnez un véhicule");
+        if(!token)return notify("Session distante expirée");try{const response=await fetch(`${API}/cards/${selected.id}/assignment`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({beneficiary:String(f.get("beneficiary")),vehicleId})});if(!response.ok)throw new Error(await response.text());}catch{return notify("L’affectation n’a pas été enregistrée");}
         change = {
           ...change,
           beneficiary: String(f.get("beneficiary")),
-          registration: String(f.get("registration")),
+          registration: String(vehicle.immatriculation),
           status: "ASSIGNED",
           finance_status: "PENDING",
         };
@@ -610,6 +636,10 @@ export default function Home() {
         if (!canManage(user.role))
           return notify("Déblocage réservé à Zin et à la Direction");
         change = { ...change, status: "ACTIVE" };
+      } else if(action==="responsible") {
+        if(!canManage(user.role)||!token)return notify("Attribution réservée à Zin et à la DG");
+        const responsibleUserId=String(f.get("responsibleUserId")||"");if(!responsibleUserId)return notify("Sélectionnez un responsable");
+        try{const response=await fetch(`${API}/cards/${selected.id}/responsible`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({responsibleUserId})});if(!response.ok)throw new Error(await response.text());change={...change,card_category:"OFF_PARK",responsible_user_id:responsibleUserId};}catch{return notify("L’attribution n’a pas été enregistrée");}
       } else if (action === "replace") {
         if (!canManage(user.role))
           return notify("Remplacement réservé à Zin et à la Direction");
@@ -777,6 +807,10 @@ export default function Home() {
         persist(next, data);
         notify("Carte mise à jour");
       }
+    } else if(modal==="mileage") {
+      if(user.role!=="NAJIB_ASSIGNER")return notify("Le relevé est saisi par un responsable hors parc");
+      if(!token)return notify("Session distante expirée");
+      try{const response=await fetch(`${API}/mileage`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({vehicleId:String(f.get("vehicleId")),mileage:Number(f.get("mileage")),note:String(f.get("note")??"")})});if(!response.ok)throw new Error(await response.text());const created=await response.json();notify(created.anomaly?`Anomalie détectée : kilométrage attendu ${created.expectedMileage}`:"Relevé envoyé à Zin et à la DG");}catch(error){return notify(error instanceof Error?error.message:"Échec du relevé kilométrique");}
     } else if (modal && ["beneficiary", "vehicle", "request"].includes(modal)) {
       if (modal === "request" && user.role !== "NAJIB_ASSIGNER")
         return notify(
@@ -803,9 +837,9 @@ export default function Home() {
       }
       if (modal === "request") {
         row.numero = `D-${new Date().getFullYear()}-${String(data.requests.length + 1).padStart(3, "0")}`;
-        row.type = String(row.typeDemande) === "LIMIT_CHANGE" ? "Augmentation de plafond" : "Nouvelle carte";
+        row.type = String(row.typeDemande) === "LIMIT_CHANGE" ? "Augmentation de plafond" : String(row.typeDemande)==="CARD_FUNDING"?"Alimentation de carte":"Nouvelle carte";
         if (row.carteId) row.carte = cards.find((item) => item.id === String(row.carteId))?.masked_card_number ?? "—";
-        row.demandeur = "Najib";
+        row.demandeur = user.name;
         row.date = today;
         row.statut = "EN_ATTENTE_ZIN";
         if (!token) return notify("Session distante expirée : reconnectez-vous");
@@ -819,6 +853,7 @@ export default function Home() {
             body: JSON.stringify({
               requestType: String(row.typeDemande || "NEW_CARD"),
               fuelCardId: row.carteId ? String(row.carteId) : undefined,
+              sourceCardId: row.carteSourceId ? String(row.carteSourceId) : undefined,
               beneficiary: String(row.beneficiaire),
               department: String(row.departement),
               vehicle: String(row.voiture),
@@ -842,7 +877,7 @@ export default function Home() {
         ).map((target) => ({
           id: crypto.randomUUID(),
           target,
-          title: String(row.typeDemande) === "LIMIT_CHANGE" ? "Demande d’augmentation de plafond" : "Nouvelle demande de carte",
+          title: String(row.typeDemande) === "LIMIT_CHANGE" ? "Demande d’augmentation de plafond" : String(row.typeDemande)==="CARD_FUNDING"?"Demande d’alimentation de carte":"Nouvelle demande de carte",
           message: `${row.numero} — ${row.beneficiaire}`,
           view: "requests",
           read: false,
@@ -912,7 +947,8 @@ export default function Home() {
       return notify("Le motif du refus est obligatoire");
 
     const isLimitChange = request.type === "Augmentation de plafond";
-    if (isLimitChange) {
+    const isFunding=request.type==="Alimentation de carte";
+    if (isLimitChange||isFunding) {
       if (!token) return notify("Session distante expirée : reconnectez-vous");
       try {
         const apiResponse = await fetch(`${API}/requests/${id}/decision`, {
@@ -923,7 +959,7 @@ export default function Home() {
         if (!apiResponse.ok) throw new Error(await apiResponse.text());
         if (accepted) setCards((current) => current.map((item) => item.id === String(request.carteId ?? "") || item.masked_card_number === String(request.carte) ? { ...item, monthly_limit: Number(request.plafond) } : item));
         setData((current) => ({ ...current, requests: current.requests.map((item) => item.id === id ? { ...item, statut: accepted ? "VALIDEE_ZIN" : "REFUSEE_ZIN", motif: reason || (accepted ? "Validée" : "Refusée") } : item) }));
-        notify(accepted ? `Plafond de la carte ${request.carte} augmenté à ${Number(request.plafond).toLocaleString("fr-FR")}` : "Demande d’augmentation refusée");
+        notify(accepted ? `${isFunding?"Alimentation":"Plafond"} de la carte ${request.carte} validée à ${Number(request.plafond).toLocaleString("fr-FR")}` : `Demande ${isFunding?"d’alimentation":"d’augmentation"} refusée`);
       } catch {
         notify("Échec de la décision distante : aucune modification enregistrée");
       }
@@ -1118,7 +1154,7 @@ export default function Home() {
   }
   async function cancelRequest(id: string) {
     if (!user || user.role !== "NAJIB_ASSIGNER")
-      return notify("Annulation réservée à Najib");
+      return notify("Annulation réservée au responsable ayant créé la demande");
     const request = data.requests.find((row) => row.id === id);
     if (!request) return notify("Demande introuvable");
     if (request.statut !== "EN_ATTENTE_ZIN")
@@ -1230,16 +1266,16 @@ export default function Home() {
     notify("Transaction corrigée — révision journalisée");
   }
   function allocateConsumption(row: Row) {
-    if (!user || user.role !== "NAJIB_ASSIGNER") return notify("Répartition réservée à Najib");
+    if (!user || user.role !== "NAJIB_ASSIGNER") return notify("Répartition réservée au responsable hors parc");
     const card = cards.find((item) => item.masked_card_number === String(row.carte));
-    if (!card || card.card_category !== "OFF_PARK") return notify("Seules les cartes hors parc peuvent être réparties par Najib");
+    if (!card || card.card_category !== "OFF_PARK") return notify("Seules les cartes hors parc peuvent être réparties par leur responsable");
     const originalAmount = parseNumeric(row.montant);
     const alreadyAllocated = parseNumeric(row.montantReparti);
     const remaining = Math.max(0, originalAmount - alreadyAllocated);
     if (!remaining) return notify("Cette transaction est entièrement répartie");
     setAllocationRow(row);
   }
-  function submitAllocation(e: FormEvent<HTMLFormElement>) {
+  async function submitAllocation(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!allocationRow || !user || user.role !== "NAJIB_ASSIGNER") return;
     const f = new FormData(e.currentTarget);
@@ -1252,16 +1288,19 @@ export default function Home() {
     if (!beneficiary) return notify("Le poseur est obligatoire");
     if (!vehicle) return notify("La matricule du véhicule est obligatoire");
     if (amount <= 0 || amount > remaining) return notify("Le montant réparti doit être positif et ne peut pas dépasser le reste");
+    if(!token)return notify("Session distante expirée");
+    let pendingAllocationId="";try{const response=await fetch(`${API}/transactions/${allocationRow.id}/allocations`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({beneficiary,vehicle,amount,note:"Répartition hebdomadaire du responsable hors parc"})});if(!response.ok)throw new Error(await response.text());const created=await response.json();pendingAllocationId=String(created.id);}catch{return notify("La répartition n’a pas été enregistrée dans la base");}
     const allocation = `${beneficiary} — ${vehicle} — ${amount.toFixed(3)} DT`;
     const next = { ...data, transactions: data.transactions.map((item) => item.id === allocationRow.id ? {
       ...item,
-      montantReparti: alreadyAllocated + amount,
+      montantReparti: alreadyAllocated,
+      repartitionEnAttente:pendingAllocationId,
       repartition: item.repartition ? `${item.repartition} | ${allocation}` : allocation,
       derniereRepartition: new Date().toLocaleString("fr-MA"),
     } : item) };
     setData(next); persist(cards, next);
     setAllocationRow(null);
-    notify(`Répartition enregistrée sans validation Zin. Total original inchangé : ${originalAmount.toFixed(3)} DT · reste : ${(remaining - amount).toFixed(3)} DT`);
+    notify(`Répartition envoyée pour validation Zin/DG. Total original inchangé : ${originalAmount.toFixed(3)} DT`);
   }
   const cardConsumption = (card: Card) =>
     data.transactions
@@ -1312,6 +1351,8 @@ export default function Home() {
       setData(current=>({...current,anomalies:current.anomalies.map(row=>row.id===id?{...row,statut:accepted?"Acceptée":"Refusée"}:row)})); notify(accepted?"Carte/véhicule intégré et transaction enregistrée":"Transaction déplacée dans les anomalies");
     } catch { notify("La décision n’a pas pu être enregistrée"); }
   }
+  async function decideMileage(id:string,accepted:boolean){if(!token)return notify("Session expirée");const reason=window.prompt(accepted?"Observation de validation (optionnelle)":"Motif du refus","");if(!accepted&&!reason?.trim())return notify("Le motif du refus est obligatoire");try{const response=await fetch(`${API}/mileage/${id}/decision`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({decision:accepted?"VALIDATED":"REJECTED",reason:reason||undefined})});if(!response.ok)throw new Error(await response.text());setData(current=>({...current,mileage:current.mileage.map(row=>row.id===id?{...row,statut:accepted?"VALIDEE_ZIN":"REFUSEE_ZIN"}:row)}));notify(accepted?"Kilométrage validé":"Kilométrage refusé");}catch{return notify("Décision kilométrique non enregistrée");}}
+  async function decideAllocation(id:string,accepted:boolean){if(!token)return notify("Session expirée");const reason=window.prompt(accepted?"Observation de validation (optionnelle)":"Motif du refus","");if(!accepted&&!reason?.trim())return notify("Motif obligatoire");try{const response=await fetch(`${API}/transactions/allocations/${id}/decision`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({decision:accepted?"APPROVED":"REJECTED",reason:reason||undefined})});if(!response.ok)throw new Error(await response.text());setData(current=>({...current,transactions:current.transactions.map(row=>row.repartitionEnAttente===id?{...row,repartitionEnAttente:""}:row)}));notify(accepted?"Répartition validée":"Répartition refusée");}catch{return notify("Décision non enregistrée");}}
   if (!token || !user)
     return <Login onSubmit={login} loading={loading} error={error} />;
   const localSummary = {
@@ -1341,12 +1382,13 @@ export default function Home() {
     ["vehicles", "◇", "Véhicules"],
     ["transactions", "↗", "Transactions"],
     ["requests", "☷", "Demandes"],
+    ["mileage", "⌁", "Kilométrage"],
     ["anomalies", "△", "Anomalies"],
   ];
   const nav =
     user.role === "NAJIB_ASSIGNER"
       ? allNav.filter(([v]) =>
-          ["dashboard", "cards", "transactions", "requests"].includes(v),
+          ["dashboard", "cards", "vehicles", "transactions", "requests", "mileage"].includes(v),
         )
       : isDirection(user.role)
         ? allNav
@@ -1389,7 +1431,7 @@ export default function Home() {
         <header>
           <div>
             <p className={styles.eyebrow}>
-              ESPACE {roleLabel(user.role).toUpperCase()} · MODE DÉMO
+              ESPACE {roleLabel(user.role).toUpperCase()} · DONNÉES SYNCHRONISÉES
             </p>
             <h1>{viewMeta[view][0]}</h1>
             <p>{viewMeta[view][1]}</p>
@@ -1476,6 +1518,8 @@ export default function Home() {
             }}
             resolve={resolveAnomaly}
             decideReview={decideTransactionReview}
+            decideMileage={decideMileage}
+            decideAllocation={decideAllocation}
             decideRequest={decideRequest}
             cancelRequest={cancelRequest}
           />
@@ -1530,7 +1574,7 @@ export default function Home() {
                 </label>
                 <div className={styles.workflowInfo}>
                   <b>Traçabilité TotalEnergies conservée</b>
-                  <span>La transaction originale reste inchangée. Najib enregistre uniquement sa répartition par poseur et véhicule, sans validation de Zin.</span>
+                  <span>La transaction originale reste inchangée. Le responsable enregistre sa répartition par poseur et véhicule avec une traçabilité complète.</span>
                 </div>
               </div>
               <div className={styles.modalActions}>
@@ -1548,6 +1592,8 @@ export default function Home() {
           card={selected}
           cards={cards}
           vehicles={data.vehicles}
+          responsibles={responsibles}
+          companies={companies}
           editingRow={editingRow}
           user={user}
           close={() => {
@@ -2136,6 +2182,8 @@ function DataView({
   editVehicle,
   resolve,
   decideReview,
+  decideMileage,
+  decideAllocation,
   decideRequest,
   cancelRequest,
 }: {
@@ -2156,6 +2204,8 @@ function DataView({
   editVehicle: (row: Row) => void;
   resolve: (id: string) => void;
   decideReview: (id:string,accepted:boolean)=>void;
+  decideMileage:(id:string,accepted:boolean)=>void;
+  decideAllocation:(id:string,accepted:boolean)=>void;
   decideRequest: (id: string, accepted: boolean) => void;
   cancelRequest: (id: string) => void;
 }) {
@@ -2218,11 +2268,13 @@ function DataView({
         "voiture",
         "plafond",
         "carte",
+        "carteSource",
         "statut",
         "motif",
         "suivi",
       ],
     },
+    mileage:{button:"Nouveau relevé hebdomadaire",modal:"mileage",cols:["semaine","vehicule","societe","responsable","precedent","distanceDetectee","attendu","kilometrage","anomalie","statut","validateur"]},
     anomalies: {
       button: "Exporter",
       modal: null,
@@ -2322,6 +2374,8 @@ function DataView({
       ? user.role === "NAJIB_ASSIGNER"
         ? c.button
         : ""
+      : view === "mileage"
+        ? user.role === "NAJIB_ASSIGNER" ? c.button : ""
       : view === "transactions"
         ? canManage(user.role)
           ? c.button
@@ -2339,7 +2393,7 @@ function DataView({
           <span>
             {canManage(user.role)
               ? "Zin et la Direction importent, corrigent ou suppriment. Toute correction conserve sa justification ; aucune validation manuelle."
-              : "Najib répartit directement les montants détectés des cartes hors parc entre les bénéficiaires et véhicules. Aucune validation Zin n’est requise et la transaction Total originale reste intacte."}
+              : "Chaque responsable répartit les montants détectés de ses cartes hors parc entre les bénéficiaires et véhicules. La transaction Total originale reste intacte."}
           </span>
         </div>
       )}
@@ -2414,11 +2468,14 @@ function DataView({
                     <><button className={styles.smallBtn} onClick={()=>decideReview(r.id,true)}>Accepter</button>{" "}<button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>decideReview(r.id,false)}>Refuser</button></>
                   ) : view === "anomalies" && r.statut !== "Résolue" && r.statut !== "Acceptée" && r.statut !== "Refusée" ? (
                     <button className={styles.smallBtn} onClick={() => resolve(r.id)}>Résoudre</button>
+                  ) : view === "mileage" && canManage(user.role) && r.statut === "EN_ATTENTE_ZIN" ? (
+                    <><button className={styles.smallBtn} onClick={()=>decideMileage(r.id,true)}>Valider</button>{" "}<button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>decideMileage(r.id,false)}>Refuser</button></>
                   ) : view === "transactions" ? (
                     user.role === "NAJIB_ASSIGNER" ? (
                       r.typeCarte === "Hors parc" ? <button className={styles.smallBtn} onClick={() => allocateConsumption(r)}>Répartir</button> : <span>Consultation</span>
                     ) : canManage(user.role) ? (
                       <>
+                        {r.repartitionEnAttente&&<><button className={styles.smallBtn} onClick={()=>decideAllocation(String(r.repartitionEnAttente),true)}>Valider répartition</button>{" "}<button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>decideAllocation(String(r.repartitionEnAttente),false)}>Refuser répartition</button>{" "}</>}
                         <button
                           className={styles.smallBtn}
                           onClick={() => editTransaction(r)}
@@ -2550,7 +2607,7 @@ function CardTable({
                 <td>
                   <b>{c.masked_card_number}</b>
                   <small>
-                    {c.company_code} · {c.card_category === "OFF_PARK" ? "Hors parc — Najib" : "Personnalisée"} · créée le {c.created_at}
+                    {c.company_code} · {c.card_category === "OFF_PARK" ? "Hors parc — responsable attribué" : "Personnalisée"} · créée le {c.created_at}
                   </small>
                 </td>
                 <td>
@@ -2607,7 +2664,7 @@ function CardTable({
                   <td colSpan={7}>
                     <div className={styles.allocationDetails}>
                       <div className={styles.allocationSummary}>
-                        <b>Détail de la répartition de Najib</b>
+                        <b>Détail de la répartition du responsable</b>
                         <span>
                           Détecté par Total : <strong>{consumed.toLocaleString("fr-FR")} TND</strong>
                           {" · "}Réparti : <strong>{allocated.toLocaleString("fr-FR")} TND</strong>
@@ -2645,6 +2702,8 @@ function ModalForm({
   card,
   cards,
   vehicles,
+  responsibles,
+  companies,
   editingRow,
   user,
   close,
@@ -2654,6 +2713,8 @@ function ModalForm({
   card: Card | null;
   cards: Card[];
   vehicles: Row[];
+  responsibles:{id:string;name:string;email:string}[];
+  companies:{id:string;code:string;name:string}[];
   editingRow: { view: "beneficiaries" | "vehicles"; row: Row } | null;
   user: User;
   close: () => void;
@@ -2663,9 +2724,9 @@ function ModalForm({
     (row) => String(row.immatriculation ?? "").trim() && String(row.immatriculation) !== "À COMPLÉTER",
   );
   const [selectedRegistration, setSelectedRegistration] = useState("");
-  const [requestType, setRequestType] = useState<"NEW_CARD" | "LIMIT_CHANGE">("NEW_CARD");
+  const [requestType, setRequestType] = useState<"NEW_CARD" | "LIMIT_CHANGE" | "CARD_FUNDING">("NEW_CARD");
   const [requestCardId, setRequestCardId] = useState("");
-  const requestCards = cards.filter((item) => item.card_category === "OFF_PARK" && item.status === "ACTIVE");
+  const requestCards = cards.filter((item) => item.card_category === "OFF_PARK" && ["ACTIVE","TO_ASSIGN"].includes(item.status));
   const requestCard = requestCards.find((item) => item.id === requestCardId);
   const selectedVehicle = selectableVehicles.find(
     (row) => String(row.immatriculation) === selectedRegistration,
@@ -2698,9 +2759,6 @@ function ModalForm({
   const fields: Record<string, [string, string, string?][]> = {
     card: [
       ["number", "Numéro de carte", "text"],
-      ["company", "Société", "text"],
-      ["beneficiary", "Bénéficiaire (optionnel)", "text"],
-      ["department", "Département", "text"],
       ["limit", "Plafond mensuel", "number"],
     ],
     beneficiary: [
@@ -2723,6 +2781,7 @@ function ModalForm({
     editRow: editFields,
     editTransaction: [],
     request: [],
+    mileage: [],
     settings: [["societe", "Nom de la société"]],
     import: [["file", "Fichier Excel Total (.xlsx ou .xls)", "file"]],
   };
@@ -2775,6 +2834,7 @@ function ModalForm({
                     <option value="replace">Lier une carte remplaçante</option>
                   </>
                 )}
+                {canManage(user.role)&&<option value="responsible">Attribuer à un responsable hors parc</option>}
                 {canConfirm(user.role) && (
                   <>
                     <option value="oppose">Mettre en opposition</option>
@@ -2797,13 +2857,13 @@ function ModalForm({
                 </label>
                 <label>
                   Véhicule / immatriculation
-                  <select name="registration" required defaultValue="">
+                  <select name="vehicleId" required defaultValue="">
                     <option value="" disabled>
                       Sélectionner un véhicule du parc
                     </option>
                     {selectableVehicles.map((vehicle) => (
                       <option
-                        value={String(vehicle.immatriculation)}
+                        value={String(vehicle.id)}
                         key={String(vehicle.id)}
                       >
                         {String(vehicle.immatriculation)} · {String(vehicle.type)} · {String(vehicle.reference)}
@@ -2832,6 +2892,7 @@ function ModalForm({
                 </select>
               </label>
             )}
+            {action==="responsible"&&<label className={styles.fullField}>Responsable hors parc<select name="responsibleUserId" required defaultValue={card?.responsible_user_id??""}><option value="" disabled>Sélectionner un responsable</option>{responsibles.map(item=><option value={item.id} key={item.id}>{item.name} · {item.email}</option>)}</select></label>}
             {["LOST", "STOLEN", "oppose", "replace"].includes(action) && (
               <label className={styles.fullField}>
                 Motif / observation
@@ -2844,7 +2905,7 @@ function ModalForm({
                 {action === "replace"
                   ? "Le bénéficiaire et le véhicule sont transférés. Les transactions restent sur la carte utilisée et sont agrégées dans le même cycle de vie."
                   : action === "assign"
-                    ? "Najib affecte la carte, puis Zin Finance confirme."
+                    ? "Le responsable affecte la carte, puis Zin Finance ou la DG confirme."
                     : action === "delete"
                       ? "Archivage logique uniquement : aucun historique financier n’est détruit."
                       : "Cette action est journalisée dans le processus."}
@@ -2857,20 +2918,22 @@ function ModalForm({
               <>
                 <label className={styles.fullField}>
                   Type de demande
-                  <select name="typeDemande" value={requestType} onChange={(event) => { setRequestType(event.target.value as "NEW_CARD" | "LIMIT_CHANGE"); setRequestCardId(""); }}>
+                  <select name="typeDemande" value={requestType} onChange={(event) => { setRequestType(event.target.value as "NEW_CARD" | "LIMIT_CHANGE" | "CARD_FUNDING"); setRequestCardId(""); }}>
                     <option value="NEW_CARD">Demande de nouvelle carte</option>
+                    <option value="CARD_FUNDING">Alimentation d’une carte disponible</option>
                     <option value="LIMIT_CHANGE">Demande d’augmentation de plafond</option>
                   </select>
                 </label>
-                {requestType === "LIMIT_CHANGE" ? (
+                {requestType === "LIMIT_CHANGE" || requestType === "CARD_FUNDING" ? (
                   <>
                     <label className={styles.fullField}>
-                      Carte disponible dans la base
+                      {requestType === "CARD_FUNDING" ? "Carte à alimenter disponible dans votre espace" : "Carte disponible dans la base"}
                       <select name="carteId" required value={requestCardId} onChange={(event) => setRequestCardId(event.target.value)}>
                         <option value="" disabled>Sélectionner une carte active</option>
                         {requestCards.map((item) => <option value={item.id} key={item.id}>{item.masked_card_number} · plafond actuel {item.monthly_limit.toLocaleString("fr-FR")}</option>)}
                       </select>
                     </label>
+                    {requestType === "CARD_FUNDING" && <label className={styles.fullField}>Carte source ayant consommé au moins 60 %<select name="carteSourceId" required defaultValue=""><option value="" disabled>Sélectionner la carte source</option>{cards.filter(item=>item.status==="ACTIVE"&&item.id!==requestCardId&&Number(item.consumption_rate??0)>=60).map(item=><option value={item.id} key={item.id}>{item.masked_card_number} · consommation {Number(item.consumption_rate??0).toFixed(0)} %</option>)}</select></label>}
                     {requestCard && <div className={styles.workflowInfo}><b>Plafond actuel</b><span>{requestCard.monthly_limit.toLocaleString("fr-FR")}</span></div>}
                     <input type="hidden" name="beneficiaire" value={requestCard?.beneficiary ?? "Najib"} />
                     <input type="hidden" name="departement" value={requestCard?.department ?? "Hors parc"} />
@@ -2928,47 +2991,15 @@ function ModalForm({
                 )}
               </label>
             ))}
-            {type === "card" && (
-              <>
-                <label>
-                  Matricule du véhicule
-                  <select
-                    name="registration"
-                    value={selectedRegistration}
-                    onChange={(event) => setSelectedRegistration(event.target.value)}
-                  >
-                    <option value="">Carte non affectée à un véhicule</option>
-                    {selectableVehicles.map((vehicle) => (
-                      <option value={String(vehicle.immatriculation)} key={String(vehicle.id)}>
-                        {String(vehicle.immatriculation)} · {String(vehicle.type)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Véhicule, marque et modèle
-                  <select value={selectedVehicle ? String(selectedVehicle.id) : ""} disabled>
-                    <option value="">Sélectionnez d’abord une matricule</option>
-                    {selectedVehicle && (
-                      <option value={String(selectedVehicle.id)}>
-                        {String(selectedVehicle.type)} · {String(selectedVehicle.reference)}
-                      </option>
-                    )}
-                  </select>
-                  <input
-                    type="hidden"
-                    name="vehicleModel"
-                    value={selectedVehicle ? String(selectedVehicle.reference) : ""}
-                  />
-                </label>
-              </>
-            )}
+            {type === "mileage" && <><label className={styles.fullField}>Véhicule de votre périmètre<select name="vehicleId" required defaultValue=""><option value="" disabled>Sélectionner un véhicule</option>{vehicles.map(vehicle=><option value={String(vehicle.id)} key={String(vehicle.id)}>{String(vehicle.immatriculation)} · dernier relevé {Number(vehicle.kilometrage??0).toLocaleString("fr-FR")} km</option>)}</select></label><label>Nouveau kilométrage<input name="mileage" type="number" min="0" step="0.1" required /></label><label>Observation<input name="note" /></label><div className={styles.workflowInfo}><b>Contrôle automatique</b><span>La plateforme compare le relevé au dernier kilométrage validé augmenté de la distance détectée dans les transactions. Tout écart est envoyé à Zin et à la DG.</span></div></>}
+            {type==="card"&&<label className={styles.fullField}>Responsable hors parc<select name="responsibleUserId" defaultValue=""><option value="">Aucun responsable</option>{responsibles.map(item=><option value={item.id} key={item.id}>{item.name} · {item.email}</option>)}</select></label>}
+            {type==="card"&&<label className={styles.fullField}>Société propriétaire<select name="companyId" required defaultValue=""><option value="" disabled>Sélectionner une société</option>{companies.map(item=><option value={item.id} key={item.id}>{item.code} · {item.name}</option>)}</select></label>}
             {type === "card" && (
               <label className={styles.fullField}>
                 Type de carte
                 <select name="cardCategory" defaultValue="PERSONALIZED">
-                  <option value="PERSONALIZED">Personnalisée — hors responsabilité Najib</option>
-                  <option value="OFF_PARK">Hors parc — responsabilité Najib</option>
+                  <option value="PERSONALIZED">Personnalisée</option>
+                  <option value="OFF_PARK">Hors parc — responsable attribué</option>
                 </select>
               </label>
             )}
@@ -3060,15 +3091,15 @@ function Settings({ reset }: { reset: () => void }) {
       <article>
         <h2>Règles des rôles</h2>
         <p>
-          Najib : affectations, demandes et consultation des transactions.
+          Responsables hors parc : affectations, demandes, répartitions et kilométrage hebdomadaire.
           <br />
           Zin, DG et Superadmin : gestion complète, imports, modifications et
           suppressions.
         </p>
       </article>
       <article>
-        <h2>Données de démonstration</h2>
-        <p>Les changements sont conservés dans ce navigateur.</p>
+        <h2>Cache local de l’interface</h2>
+        <p>Les données métier de référence sont enregistrées dans PostgreSQL.</p>
         <button className={styles.danger} onClick={reset}>
           Réinitialiser les données
         </button>
@@ -3083,6 +3114,7 @@ const titles: Record<string, string> = {
   editRow: "Modifier l’enregistrement",
   editTransaction: "Corriger une transaction",
   request: "Nouvelle demande",
+  mileage:"Relevé kilométrique hebdomadaire",
   settings: "Configuration",
   import: "Importer les transactions Total",
 };
@@ -3136,7 +3168,7 @@ function roleLabel(r: Role) {
     SUPER_ADMIN: "Superadmin",
     DIRECTION_GENERAL: "Direction Générale",
     ZIN_FINANCE: "Zin Finance",
-    NAJIB_ASSIGNER: "Najib — Affectation",
+    NAJIB_ASSIGNER: "Responsable hors parc",
   }[r];
 }
 function permissionText(r: Role) {

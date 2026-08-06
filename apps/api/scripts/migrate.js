@@ -18,6 +18,8 @@ const migrations = [
   '015_default_company.sql',
   '016_card_distribution_status.sql',
   '017_transaction_review_workflow.sql',
+  '018_off_park_responsibles_vehicles.sql',
+  '019_mileage_funding_workflow.sql',
 ];
 
 async function main() {

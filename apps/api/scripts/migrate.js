@@ -17,6 +17,7 @@ const migrations = [
   '014_default_users.sql',
   '015_default_company.sql',
   '016_card_distribution_status.sql',
+  '017_transaction_review_workflow.sql',
 ];
 
 async function main() {

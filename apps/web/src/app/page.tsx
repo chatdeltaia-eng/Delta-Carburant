@@ -382,6 +382,7 @@ export default function Home() {
     [view, setView] = useState<View>("dashboard"),
     [cards, setCards] = useState<Card[]>(initialCards),
     [data, setData] = useState(seeds),
+    [databaseSummary, setDatabaseSummary] = useState<Record<string, number> | null>(null),
     [notifications, setNotifications] = useState<Notification[]>([]),
     [showNotifications, setShowNotifications] = useState(false),
     [search, setSearch] = useState(""),
@@ -429,13 +430,19 @@ export default function Home() {
       fetch(`${API}/cards`, { headers, cache: "no-store" }),
       fetch(`${API}/requests`, { headers, cache: "no-store" }),
       fetch(`${API}/notifications`, { headers, cache: "no-store" }),
+      fetch(`${API}/transactions`, { headers, cache: "no-store" }),
+      fetch(`${API}/dashboard/summary`, { headers, cache: "no-store" }),
+      canManage(user.role) ? fetch(`${API}/transactions/reviews`, { headers, cache: "no-store" }) : Promise.resolve(null),
     ])
-      .then(async ([cardResponse, requestResponse, notificationResponse]) => {
-        if (!cardResponse.ok || !requestResponse.ok || !notificationResponse.ok)
+      .then(async ([cardResponse, requestResponse, notificationResponse,transactionResponse,summaryResponse,reviewsResponse]) => {
+        if (!cardResponse.ok || !requestResponse.ok || !notificationResponse.ok || !transactionResponse.ok || !summaryResponse.ok)
           throw new Error("Impossible de charger les données distantes");
         const cardPayload = await cardResponse.json();
         const requestPayload = await requestResponse.json();
         const notificationPayload = await notificationResponse.json();
+        const transactionPayload = await transactionResponse.json();
+        const summaryPayload = await summaryResponse.json();
+        const reviewsPayload = reviewsResponse?.ok ? await reviewsResponse.json() : [];
         setCards(cardPayload.items ?? cardPayload);
         setNotifications((notificationPayload.items ?? notificationPayload).map(
           (row: Record<string, unknown>) => toNotification(row, user.role),
@@ -443,7 +450,10 @@ export default function Home() {
         setData((current) => ({
           ...current,
           requests: (requestPayload.items ?? requestPayload).map(toRequestRow),
+          transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),montantReparti:Number(row.allocatedAmount??0),statut:"Importée Total",fichier:String(row.file??"—") })),
+          anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.issueType)==="UNKNOWN_CARD"?"Carte inconnue":"Véhicule inconnu",carte:String(row.cardNumber),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),gravite:"Haute",statut:String(row.status)==="PENDING"?"À vérifier":String(row.status)==="ACCEPTED"?"Acceptée":"Refusée" })),
         }));
+        setDatabaseSummary(summaryPayload);
       })
       .catch(() => setError("API distante indisponible — aucune donnée locale ne sera enregistrée"));
     refreshRemote();
@@ -870,22 +880,11 @@ export default function Home() {
         const normalized = sourceRows.map((source, index) =>
           totalTransaction(source, file.name, index),
         );
-        const existing = new Set(data.transactions.map(transactionKey));
-        const imported = normalized.filter((row) => {
-          const key = transactionKey(row);
-          if (existing.has(key)) return false;
-          existing.add(key);
-          return true;
-        });
-        const next = {
-          ...data,
-          transactions: [...imported, ...data.transactions],
-        };
-        setData(next);
-        persist(cards, next);
-        notify(
-          `${imported.length} transaction(s) Total importée(s) — ${normalized.length - imported.length} doublon(s) ignoré(s)`,
-        );
+        if (!token) return notify("Session distante expirée : reconnectez-vous");
+        const response=await fetch(`${API}/transactions/import`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({filename:file.name,rows:normalized.map(row=>({date:String(row.dateApi),cardNumber:String(row.carte),vehicle:String(row.vehicule??""),station:String(row.station??""),product:String(row.produit??""),liters:parseNumeric(row.litres),amount:parseNumeric(row.montant)}))})});
+        if(!response.ok) throw new Error(await response.text());
+        const result=await response.json();
+        notify(`${result.imported} transaction(s) enregistrée(s) · ${result.pendingReview} contrôle(s) requis · ${result.duplicates} doublon(s)`);
       } catch {
         return notify("Fichier Total illisible : vérifiez le format Excel");
       }
@@ -1305,9 +1304,17 @@ export default function Home() {
     persist(cards, next);
     notify("Anomalie résolue");
   }
+  async function decideTransactionReview(id:string,accepted:boolean) {
+    if(!token) return notify("Session expirée");
+    const reason=window.prompt(accepted?"Observation d’acceptation (optionnelle)":"Motif du refus","");
+    if(!accepted&&!reason?.trim()) return notify("Le motif du refus est obligatoire");
+    try { const response=await fetch(`${API}/transactions/reviews/${id}`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({decision:accepted?"ACCEPTED":"REJECTED",reason:reason||undefined})}); if(!response.ok) throw new Error(await response.text());
+      setData(current=>({...current,anomalies:current.anomalies.map(row=>row.id===id?{...row,statut:accepted?"Acceptée":"Refusée"}:row)})); notify(accepted?"Carte/véhicule intégré et transaction enregistrée":"Transaction déplacée dans les anomalies");
+    } catch { notify("La décision n’a pas pu être enregistrée"); }
+  }
   if (!token || !user)
     return <Login onSubmit={login} loading={loading} error={error} />;
-  const summary = {
+  const localSummary = {
     totalCards: cardsForUser.length,
     activeCards: cardsForUser.filter((c) =>
       ["ACTIVE", "DISTRIBUTED"].includes(c.status),
@@ -1325,6 +1332,7 @@ export default function Home() {
       0,
     ),
   };
+  const summary = databaseSummary ? { ...localSummary, ...databaseSummary, liters:Number(databaseSummary.liters??0), amount:Number(databaseSummary.amount??0), pending: Number(databaseSummary.openRequests??0), opposed:Number(databaseSummary.blockedCards??0) } : localSummary;
   const allNav: [View, string, string][] = [
     ["dashboard", "⌂", "Vue d’ensemble"],
     ["reports", "▥", "Rapports Direction"],
@@ -1467,6 +1475,7 @@ export default function Home() {
               setModal("editRow");
             }}
             resolve={resolveAnomaly}
+            decideReview={decideTransactionReview}
             decideRequest={decideRequest}
             cancelRequest={cancelRequest}
           />
@@ -2126,6 +2135,7 @@ function DataView({
   deleteRow,
   editVehicle,
   resolve,
+  decideReview,
   decideRequest,
   cancelRequest,
 }: {
@@ -2145,6 +2155,7 @@ function DataView({
   ) => void;
   editVehicle: (row: Row) => void;
   resolve: (id: string) => void;
+  decideReview: (id:string,accepted:boolean)=>void;
   decideRequest: (id: string, accepted: boolean) => void;
   cancelRequest: (id: string) => void;
 }) {
@@ -2215,7 +2226,7 @@ function DataView({
     anomalies: {
       button: "Exporter",
       modal: null,
-      cols: ["date", "type", "carte", "gravite", "statut"],
+      cols: ["date", "type", "carte", "vehicule", "station", "produit", "litres", "montant", "gravite", "statut"],
     },
   };
   const c = config[view];
@@ -2399,13 +2410,10 @@ function DataView({
                     >
                       Annuler la demande
                     </button>
-                  ) : view === "anomalies" && r.statut !== "Résolue" ? (
-                    <button
-                      className={styles.smallBtn}
-                      onClick={() => resolve(r.id)}
-                    >
-                      Résoudre
-                    </button>
+                  ) : view === "anomalies" && r.statut === "À vérifier" ? (
+                    <><button className={styles.smallBtn} onClick={()=>decideReview(r.id,true)}>Accepter</button>{" "}<button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>decideReview(r.id,false)}>Refuser</button></>
+                  ) : view === "anomalies" && r.statut !== "Résolue" && r.statut !== "Acceptée" && r.statut !== "Refusée" ? (
+                    <button className={styles.smallBtn} onClick={() => resolve(r.id)}>Résoudre</button>
                   ) : view === "transactions" ? (
                     user.role === "NAJIB_ASSIGNER" ? (
                       r.typeCarte === "Hors parc" ? <button className={styles.smallBtn} onClick={() => allocateConsumption(r)}>Répartir</button> : <span>Consultation</span>
@@ -3211,11 +3219,13 @@ function totalTransaction(
     "amount",
     "totalttc",
   ]);
+  const rawDate=totalValue(source, ["datetransaction", "dateoperation", "date"]);
+  const excelDate=typeof rawDate==="number"?XLSX.SSF.parse_date_code(rawDate):null;
+  const parsedDate=rawDate instanceof Date?rawDate:excelDate?new Date(Date.UTC(excelDate.y,excelDate.m-1,excelDate.d,excelDate.H,excelDate.M,Math.floor(excelDate.S))):new Date(String(rawDate));
   return {
     id: `total-${filename}-${index}-${crypto.randomUUID()}`,
-    date: displayDate(
-      totalValue(source, ["datetransaction", "dateoperation", "date"]),
-    ),
+    date: displayDate(rawDate),
+    dateApi: Number.isNaN(parsedDate.getTime()) ? new Date().toISOString() : parsedDate.toISOString(),
     carte: digits || rawCard || "Carte non reconnue",
     station: String(
       totalValue(source, [
@@ -3225,6 +3235,8 @@ function totalTransaction(
         "pointdevente",
       ]) || "—",
     ),
+    vehicule: String(totalValue(source,["immatriculation","matriculevehicule","vehicle","registration"])||""),
+    produit: String(totalValue(source,["produit","product","carburant"])||"Carburant"),
     litres: `${String(quantity || "0")} L`,
     montant: `${String(amount || "0")} MAD`,
     statut: "Importée Total",

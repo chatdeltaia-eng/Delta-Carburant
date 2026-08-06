@@ -1,11 +1,13 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { IsIn, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
+import { IsIn, IsNumber, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
 import { Roles } from '../common/roles';
 import { RolesGuard } from '../common/roles.guard';
 import { RequestsService } from './requests.service';
 
 class CreateRequestDto {
+  @IsIn(['NEW_CARD','LIMIT_CHANGE']) requestType!: 'NEW_CARD' | 'LIMIT_CHANGE';
+  @IsOptional() @IsUUID() fuelCardId?: string;
   @IsString() @MinLength(2) beneficiary!: string;
   @IsString() @MinLength(2) department!: string;
   @IsString() @MinLength(2) vehicle!: string;

@@ -111,7 +111,7 @@ const requestTracking = (row: Record<string, unknown>) => {
     REPLACED: "Carte remplacée",
   };
   if (cardAction) {
-    const label = cardAction === "SOFT_DELETE" ? "Carte archivée" : cardAction === "REPLACE" ? "Carte remplacée" : statusLabels[cardStatus] ?? "Carte mise à jour";
+    const label = cardAction === "SOFT_DELETE" ? "Carte archivée" : cardAction === "REPLACE" ? "Carte remplacée" : cardAction === "LIMIT_CHANGE" ? "Plafond augmenté" : statusLabels[cardStatus] ?? "Carte mise à jour";
     const author = roleName[String(row.cardActionByRole)] ?? "Utilisateur";
     const date = row.cardActionAt ? new Date(String(row.cardActionAt)).toLocaleString("fr-MA") : "";
     return `${label} par ${author}${date ? ` · ${date}` : ""}`;
@@ -125,10 +125,12 @@ const requestTracking = (row: Record<string, unknown>) => {
 const toRequestRow = (row: Record<string, unknown>): Row => ({
   id: String(row.id),
   numero: String(row.requestNumber ?? "—"),
+  type: String(row.requestType) === "LIMIT_CHANGE" ? "Augmentation de plafond" : "Nouvelle carte",
   beneficiaire: String(row.beneficiary ?? "—"),
   departement: String(row.department ?? "—"),
   voiture: String(row.vehicle ?? "—"),
   plafond: Number(row.requestedLimit ?? 0),
+  plafondActuel: Number(row.currentLimit ?? 0),
   carte: String(row.cardNumber ?? "—"),
   statut: requestStatus[String(row.status)] ?? String(row.status ?? "—"),
   motif: String(row.decisionReason ?? row.reason ?? "—"),
@@ -791,6 +793,8 @@ export default function Home() {
       }
       if (modal === "request") {
         row.numero = `D-${new Date().getFullYear()}-${String(data.requests.length + 1).padStart(3, "0")}`;
+        row.type = String(row.typeDemande) === "LIMIT_CHANGE" ? "Augmentation de plafond" : "Nouvelle carte";
+        if (row.carteId) row.carte = cards.find((item) => item.id === String(row.carteId))?.masked_card_number ?? "—";
         row.demandeur = "Najib";
         row.date = today;
         row.statut = "EN_ATTENTE_ZIN";
@@ -803,6 +807,8 @@ export default function Home() {
               Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify({
+              requestType: String(row.typeDemande || "NEW_CARD"),
+              fuelCardId: row.carteId ? String(row.carteId) : undefined,
               beneficiary: String(row.beneficiaire),
               department: String(row.departement),
               vehicle: String(row.voiture),
@@ -826,7 +832,7 @@ export default function Home() {
         ).map((target) => ({
           id: crypto.randomUUID(),
           target,
-          title: "Nouvelle demande de carte",
+          title: String(row.typeDemande) === "LIMIT_CHANGE" ? "Demande d’augmentation de plafond" : "Nouvelle demande de carte",
           message: `${row.numero} — ${row.beneficiaire}`,
           view: "requests",
           read: false,
@@ -905,6 +911,25 @@ export default function Home() {
     );
     if (!accepted && !reason?.trim())
       return notify("Le motif du refus est obligatoire");
+
+    const isLimitChange = request.type === "Augmentation de plafond";
+    if (isLimitChange) {
+      if (!token) return notify("Session distante expirée : reconnectez-vous");
+      try {
+        const apiResponse = await fetch(`${API}/requests/${id}/decision`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ decision: accepted ? "APPROVED" : "REJECTED", reason: reason || undefined }),
+        });
+        if (!apiResponse.ok) throw new Error(await apiResponse.text());
+        if (accepted) setCards((current) => current.map((item) => item.id === String(request.carteId ?? "") || item.masked_card_number === String(request.carte) ? { ...item, monthly_limit: Number(request.plafond) } : item));
+        setData((current) => ({ ...current, requests: current.requests.map((item) => item.id === id ? { ...item, statut: accepted ? "VALIDEE_ZIN" : "REFUSEE_ZIN", motif: reason || (accepted ? "Validée" : "Refusée") } : item) }));
+        notify(accepted ? `Plafond de la carte ${request.carte} augmenté à ${Number(request.plafond).toLocaleString("fr-FR")}` : "Demande d’augmentation refusée");
+      } catch {
+        notify("Échec de la décision distante : aucune modification enregistrée");
+      }
+      return;
+    }
 
     let nextCards = cards;
     let nextData: Record<string, Row[]>;
@@ -2176,6 +2201,7 @@ function DataView({
       modal: "request",
       cols: [
         "numero",
+        "type",
         "beneficiaire",
         "departement",
         "voiture",
@@ -2629,6 +2655,10 @@ function ModalForm({
     (row) => String(row.immatriculation ?? "").trim() && String(row.immatriculation) !== "À COMPLÉTER",
   );
   const [selectedRegistration, setSelectedRegistration] = useState("");
+  const [requestType, setRequestType] = useState<"NEW_CARD" | "LIMIT_CHANGE">("NEW_CARD");
+  const [requestCardId, setRequestCardId] = useState("");
+  const requestCards = cards.filter((item) => item.card_category === "OFF_PARK" && item.status === "ACTIVE");
+  const requestCard = requestCards.find((item) => item.id === requestCardId);
   const selectedVehicle = selectableVehicles.find(
     (row) => String(row.immatriculation) === selectedRegistration,
   );
@@ -2684,13 +2714,7 @@ function ModalForm({
     ],
     editRow: editFields,
     editTransaction: [],
-    request: [
-      ["beneficiaire", "Bénéficiaire"],
-      ["departement", "Département"],
-      ["voiture", "Voiture / immatriculation"],
-      ["plafond", "Plafond demandé", "number"],
-      ["motif", "Motif de la demande"],
-    ],
+    request: [],
     settings: [["societe", "Nom de la société"]],
     import: [["file", "Fichier Excel Total (.xlsx ou .xls)", "file"]],
   };
@@ -2821,6 +2845,40 @@ function ModalForm({
           </div>
         ) : (
           <div className={styles.formGrid}>
+            {type === "request" && (
+              <>
+                <label className={styles.fullField}>
+                  Type de demande
+                  <select name="typeDemande" value={requestType} onChange={(event) => { setRequestType(event.target.value as "NEW_CARD" | "LIMIT_CHANGE"); setRequestCardId(""); }}>
+                    <option value="NEW_CARD">Demande de nouvelle carte</option>
+                    <option value="LIMIT_CHANGE">Demande d’augmentation de plafond</option>
+                  </select>
+                </label>
+                {requestType === "LIMIT_CHANGE" ? (
+                  <>
+                    <label className={styles.fullField}>
+                      Carte disponible dans la base
+                      <select name="carteId" required value={requestCardId} onChange={(event) => setRequestCardId(event.target.value)}>
+                        <option value="" disabled>Sélectionner une carte active</option>
+                        {requestCards.map((item) => <option value={item.id} key={item.id}>{item.masked_card_number} · plafond actuel {item.monthly_limit.toLocaleString("fr-FR")}</option>)}
+                      </select>
+                    </label>
+                    {requestCard && <div className={styles.workflowInfo}><b>Plafond actuel</b><span>{requestCard.monthly_limit.toLocaleString("fr-FR")}</span></div>}
+                    <input type="hidden" name="beneficiaire" value={requestCard?.beneficiary ?? "Najib"} />
+                    <input type="hidden" name="departement" value={requestCard?.department ?? "Hors parc"} />
+                    <input type="hidden" name="voiture" value={requestCard?.registration ?? "Sans véhicule"} />
+                  </>
+                ) : (
+                  <>
+                    <label>Bénéficiaire<input name="beneficiaire" required /></label>
+                    <label>Département<input name="departement" required /></label>
+                    <label>Voiture / immatriculation<select name="voiture" required defaultValue=""><option value="" disabled>Sélectionner une matricule</option>{selectableVehicles.map((vehicle) => <option value={String(vehicle.immatriculation)} key={String(vehicle.id)}>{String(vehicle.immatriculation)} · {String(vehicle.type)} · {String(vehicle.reference)}</option>)}</select></label>
+                  </>
+                )}
+                <label>Plafond demandé<input name="plafond" type="number" min={requestType === "LIMIT_CHANGE" ? (requestCard?.monthly_limit ?? 0) + 0.001 : 0} step="0.001" required /></label>
+                <label className={styles.fullField}>Motif de la demande<input name="motif" required minLength={3} /></label>
+              </>
+            )}
             {fields[type].map((f) => (
               <label
                 key={f[0]}

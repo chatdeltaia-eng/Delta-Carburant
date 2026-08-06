@@ -22,6 +22,8 @@ const migrations = [
   '019_mileage_funding_workflow.sql',
   '020_totalenergies_transaction_details.sql',
   '021_vehicle_registration_dates.sql',
+  '022_company_driver_fuel_receipts.sql',
+  '023_card_company_view.sql',
 ];
 
 async function main() {

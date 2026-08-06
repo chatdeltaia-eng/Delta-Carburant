@@ -461,6 +461,10 @@ export default function Home() {
       canManage(user.role)?fetch(`${API}/cards/companies`,{headers,cache:"no-store"}):Promise.resolve(null),
     ])
       .then(async ([cardResponse, requestResponse, notificationResponse,transactionResponse,summaryResponse,reviewsResponse,vehiclesResponse,mileageResponse,driversResponse,fuelPricesResponse,responsiblesResponse,companiesResponse]) => {
+        // Management reference data must remain usable even if an unrelated
+        // dashboard endpoint is temporarily unavailable.
+        if(responsiblesResponse?.ok)setResponsibles(await responsiblesResponse.json());
+        if(companiesResponse?.ok)setCompanies(await companiesResponse.json());
         if (!cardResponse.ok || !requestResponse.ok || !notificationResponse.ok || !transactionResponse.ok || !summaryResponse.ok || !vehiclesResponse.ok || !mileageResponse.ok || !driversResponse.ok || !fuelPricesResponse.ok)
           throw new Error("Impossible de charger les données distantes");
         const cardPayload = await cardResponse.json();
@@ -472,8 +476,6 @@ export default function Home() {
         const vehiclesPayload=await vehiclesResponse.json();
         const mileagePayload=await mileageResponse.json();
         const driversPayload=await driversResponse.json(); const fuelPricesPayload=await fuelPricesResponse.json();
-        if(responsiblesResponse?.ok)setResponsibles(await responsiblesResponse.json());
-        if(companiesResponse?.ok)setCompanies(await companiesResponse.json());
         setCards(cardPayload.items ?? cardPayload);
         setNotifications((notificationPayload.items ?? notificationPayload).map(
           (row: Record<string, unknown>) => toNotification(row, user.role),

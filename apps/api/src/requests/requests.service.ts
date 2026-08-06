@@ -61,9 +61,10 @@ export class RequestsService {
           AND responsible_user_id=$2 AND card_category='OFF_PARK' AND deleted_at IS NULL`,[[dto.fuelCardId,dto.sourceCardId],actor.sub]);
         const target=cards.rows.find(card=>card.id===dto.fuelCardId),source=cards.rows.find(card=>card.id===dto.sourceCardId);
         if(!target||!source||target.id===source.id)throw new BadRequestException('Les deux cartes doivent appartenir au responsable hors parc');
-        const usage=await client.query(`SELECT coalesce(sum(amount_incl_tax),0)::float AS amount FROM fuel_transaction WHERE fuel_card_id=$1 AND deleted_at IS NULL`,[source.id]);
-        const rate=Number(source.monthly_limit)>0?100*Number(usage.rows[0].amount)/Number(source.monthly_limit):0;
-        if(rate<60)throw new BadRequestException(`La carte ${source.masked_card_number} n’a consommé que ${rate.toFixed(1)} %. Le minimum requis est 60 %`);
+        if(Number(source.monthly_limit)<=0)throw new BadRequestException(`La carte ${source.masked_card_number} ne possède pas de plafond valide. L’alimentation est impossible tant que Zin ou la DG n’a pas défini son plafond`);
+        const usage=await client.query(`SELECT coalesce(sum(amount_incl_tax),0)::float AS amount FROM fuel_transaction WHERE fuel_card_id=$1 AND deleted_at IS NULL AND transaction_date>=date_trunc('month',current_date)`,[source.id]);
+        const rate=100*Number(usage.rows[0].amount)/Number(source.monthly_limit);
+        if(rate<60)throw new BadRequestException(`Votre carte ${source.masked_card_number} n’a consommé que ${rate.toFixed(1)} % de son plafond ce mois-ci. Attendez qu’elle dépasse 60 % avant de demander une alimentation`);
         fuelCardId=target.id;
       }
       const inserted = await client.query(`INSERT INTO card_request(request_number,request_type,status,requested_by,

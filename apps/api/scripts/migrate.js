@@ -21,6 +21,7 @@ const migrations = [
   '018_off_park_responsibles_vehicles.sql',
   '019_mileage_funding_workflow.sql',
   '020_totalenergies_transaction_details.sql',
+  '021_vehicle_registration_dates.sql',
 ];
 
 async function main() {

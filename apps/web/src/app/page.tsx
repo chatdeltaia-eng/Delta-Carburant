@@ -470,7 +470,7 @@ export default function Home() {
           requests: (requestPayload.items ?? requestPayload).map(toRequestRow),
           transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),statut:"Importée Total",fichier:String(row.file??"—") })),
           anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.issueType)==="UNKNOWN_CARD"?"Carte inconnue":"Véhicule inconnu",carte:String(row.cardNumber),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),gravite:"Haute",statut:String(row.status)==="PENDING"?"À vérifier":String(row.status)==="ACCEPTED"?"Acceptée":"Refusée" })),
-          vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numero:Number(row.fleetNumber??0),immatriculation:String(row.registration),type:String(row.vehicleType??row.model??"—"),societe:String(row.company??"—"),reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
+          vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numero:Number(row.fleetNumber??0),immatriculation:String(row.registration),type:String(row.vehicleType??row.model??"—"),societe:String(row.company??"—"),mise_en_circulation:row.firstRegistrationDate?new Date(String(row.firstRegistrationDate)).toLocaleDateString("fr-FR"):"À compléter",reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
           mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:String(row.week??"—"),vehicule:String(row.vehicle),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),attendu:Number(row.expectedMileage??0),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—")})),
         }));
         setDatabaseSummary(summaryPayload);
@@ -865,8 +865,9 @@ export default function Home() {
           const created = await response.json();
           row.id = created.id;
           row.numero = created.requestNumber;
-        } catch {
-          return notify("Échec de l’envoi distant : la demande n’a pas été enregistrée");
+        } catch (error) {
+          const message=error instanceof Error?error.message:"";
+          try{const parsed=JSON.parse(message);return notify(String(parsed.message??message));}catch{return notify(message||"Échec de l’envoi distant : la demande n’a pas été enregistrée");}
         }
       }
       const next = { ...data, [key]: [row, ...data[key]] };
@@ -2728,6 +2729,7 @@ function ModalForm({
   const [requestCardId, setRequestCardId] = useState("");
   const requestCards = cards.filter((item) => item.card_category === "OFF_PARK" && ["ACTIVE","TO_ASSIGN"].includes(item.status));
   const requestCard = requestCards.find((item) => item.id === requestCardId);
+  const eligibleFundingSources=requestCards.filter(item=>item.status==="ACTIVE"&&item.id!==requestCardId&&Number(item.monthly_limit)>0&&Number(item.consumption_rate??0)>=60);
   const selectedVehicle = selectableVehicles.find(
     (row) => String(row.immatriculation) === selectedRegistration,
   );
@@ -2933,7 +2935,7 @@ function ModalForm({
                         {requestCards.map((item) => <option value={item.id} key={item.id}>{item.masked_card_number} · plafond actuel {item.monthly_limit.toLocaleString("fr-FR")}</option>)}
                       </select>
                     </label>
-                    {requestType === "CARD_FUNDING" && <label className={styles.fullField}>Carte source ayant consommé au moins 60 %<select name="carteSourceId" required defaultValue=""><option value="" disabled>Sélectionner la carte source</option>{cards.filter(item=>item.status==="ACTIVE"&&item.id!==requestCardId&&Number(item.consumption_rate??0)>=60).map(item=><option value={item.id} key={item.id}>{item.masked_card_number} · consommation {Number(item.consumption_rate??0).toFixed(0)} %</option>)}</select></label>}
+                    {requestType === "CARD_FUNDING" && <><label className={styles.fullField}>Carte source ayant consommé au moins 60 % ce mois-ci<select name="carteSourceId" required defaultValue=""><option value="" disabled>{eligibleFundingSources.length?"Sélectionner la carte source":"Aucune carte admissible"}</option>{eligibleFundingSources.map(item=><option value={item.id} key={item.id}>{item.masked_card_number} · consommation {Number(item.consumption_rate??0).toFixed(0)} %</option>)}</select></label>{!eligibleFundingSources.length&&<div className={styles.workflowInfo}><b>Alimentation indisponible</b><span>Vos cartes avec un plafond valide n’ont pas encore dépassé 60 % de consommation ce mois-ci. Attendez le dépassement du seuil ou demandez à Zin / la DG de définir le plafond.</span></div>}</>}
                     {requestCard && <div className={styles.workflowInfo}><b>Plafond actuel</b><span>{requestCard.monthly_limit.toLocaleString("fr-FR")}</span></div>}
                     <input type="hidden" name="beneficiaire" value={requestCard?.beneficiary ?? "Najib"} />
                     <input type="hidden" name="departement" value={requestCard?.department ?? "Hors parc"} />

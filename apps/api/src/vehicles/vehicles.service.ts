@@ -6,7 +6,7 @@ type Actor = { sub:string; email:string; companyId?:string };
 export class VehiclesService {
   constructor(private readonly db:DatabaseService) {}
   list(actor:{sub:string;role:string}){ const own=actor.role==='NAJIB_ASSIGNER'; return this.db.query(`SELECT v.id,v.registration_display AS registration,v.brand,v.model,v.active,
-    v.fleet_number AS "fleetNumber",v.vehicle_type AS "vehicleType",v.driver_name AS driver,v.notes,c.code AS company,
+    v.fleet_number AS "fleetNumber",v.vehicle_type AS "vehicleType",v.first_registration_date AS "firstRegistrationDate",v.driver_name AS driver,v.notes,c.code AS company,
     coalesce((SELECT max(mr.mileage) FROM mileage_reading mr WHERE mr.vehicle_id=v.id AND mr.status='VALIDATED'),0)::float AS "lastMileage",
     v.updated_at AS "updatedAt" FROM vehicle v JOIN company c ON c.id=v.company_id WHERE v.deleted_at IS NULL
     AND ($1::boolean=false OR v.company_id IN(SELECT fc.company_id FROM fuel_card fc

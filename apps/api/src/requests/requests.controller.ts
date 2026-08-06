@@ -1,13 +1,14 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { IsIn, IsNumber, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
+import { IsIn, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
 import { Roles } from '../common/roles';
 import { RolesGuard } from '../common/roles.guard';
 import { RequestsService } from './requests.service';
 
 class CreateRequestDto {
-  @IsUUID() beneficiaryId!: string;
-  @IsUUID() vehicleId!: string;
+  @IsString() @MinLength(2) beneficiary!: string;
+  @IsString() @MinLength(2) department!: string;
+  @IsString() @MinLength(2) vehicle!: string;
   @IsNumber() @Min(0) requestedLimit!: number;
   @IsString() @MinLength(3) reason!: string;
 }
@@ -24,7 +25,7 @@ export class RequestsController {
   @Get() @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE','NAJIB_ASSIGNER')
   list(@Req() req: { user: { sub: string; role: string } }) { return this.requests.list(req.user); }
   @Post() @Roles('NAJIB_ASSIGNER')
-  create(@Body() dto: CreateRequestDto, @Req() req: { user: { sub: string; email: string } }) { return this.requests.create(dto, req.user); }
+  create(@Body() dto: CreateRequestDto, @Req() req: { user: { sub: string; email: string; companyId?: string } }) { return this.requests.create(dto, req.user); }
   @Patch(':id/cancel') @Roles('NAJIB_ASSIGNER')
   cancel(@Param('id', ParseUUIDPipe) id: string,
     @Req() req: { user: { sub: string; email: string } }) { return this.requests.cancel(id, req.user); }

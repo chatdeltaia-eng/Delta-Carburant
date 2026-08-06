@@ -2,8 +2,8 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { DatabaseService } from '../database/database.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
-type Actor = { sub: string; email?: string; role?: string };
-type CreateRequest = { beneficiaryId: string; vehicleId: string; requestedLimit: number; reason: string };
+type Actor = { sub: string; email?: string; role?: string; companyId?: string };
+type CreateRequest = { beneficiary: string; department: string; vehicle: string; requestedLimit: number; reason: string };
 @Injectable()
 export class RequestsService {
   constructor(private readonly db: DatabaseService, private readonly notifications: NotificationsService) {}
@@ -18,10 +18,29 @@ export class RequestsService {
   }
   async create(dto: CreateRequest, actor: Actor) {
     const number = `D-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
-    const [row] = await this.db.query(`INSERT INTO card_request(request_number,request_type,status,requested_by,
-      beneficiary_id,vehicle_id,reason,requested_limit) VALUES($1,'NEW_CARD','SUBMITTED',$2,$3,$4,$5,$6)
-      RETURNING id,request_number AS "requestNumber",status`,
-      [number, actor.sub, dto.beneficiaryId, dto.vehicleId, dto.reason, dto.requestedLimit]);
+    const row = await this.db.transaction(async client => {
+      let companyId = actor.companyId;
+      if (!companyId) {
+        const company = await client.query('SELECT id FROM company WHERE active ORDER BY created_at LIMIT 1');
+        companyId = company.rows[0]?.id;
+      }
+      if (!companyId) throw new BadRequestException('Aucune société active n’est configurée');
+      const department = await client.query(`INSERT INTO department(company_id,name) VALUES($1,$2)
+        ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id`, [companyId,dto.department.trim()]);
+      const beneficiary = await client.query(`INSERT INTO beneficiary(company_id,department_id,display_name)
+        VALUES($1,$2,$3) ON CONFLICT(company_id,display_name) DO UPDATE SET department_id=excluded.department_id,active=true
+        RETURNING id`, [companyId,department.rows[0].id,dto.beneficiary.trim()]);
+      const registration = dto.vehicle.trim();
+      const normalized = registration.toUpperCase().replace(/[^A-Z0-9]/g,'');
+      const vehicle = await client.query(`INSERT INTO vehicle(company_id,registration_normalized,registration_display)
+        VALUES($1,$2,$3) ON CONFLICT(company_id,registration_normalized) DO UPDATE SET active=true
+        RETURNING id`, [companyId,normalized,registration]);
+      const inserted = await client.query(`INSERT INTO card_request(request_number,request_type,status,requested_by,
+        beneficiary_id,vehicle_id,reason,requested_limit) VALUES($1,'NEW_CARD','SUBMITTED',$2,$3,$4,$5,$6)
+        RETURNING id,request_number AS "requestNumber",status`,
+        [number,actor.sub,beneficiary.rows[0].id,vehicle.rows[0].id,dto.reason,dto.requestedLimit]);
+      return inserted.rows[0];
+    });
     await this.notifications.notifyRoles(['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'], 'Nouvelle demande de carte', `${number} attend votre traitement`, 'requests', 'card_request', row.id);
     return row;
   }

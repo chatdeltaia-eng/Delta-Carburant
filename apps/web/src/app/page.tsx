@@ -79,29 +79,24 @@ type WorkflowStep = {
 // Browser requests stay on the same origin. Next.js proxies this path to the
 // API service, so the API hostname does not need to be exposed to clients.
 const API = "/api/v1";
-const PASSWORD = "DeltaCarburant@2026";
-const profiles: Record<string, User> = {
-  "najib@deltacarburant.com": {
-    name: "Najib Admin",
-    role: "NAJIB_ASSIGNER",
-    email: "najib@deltacarburant.com",
-  },
-  "zin@deltacarburant.com": {
-    name: "Zin Finance",
-    role: "ZIN_FINANCE",
-    email: "zin@deltacarburant.com",
-  },
-  "dg@deltacarburant.com": {
-    name: "Direction Générale",
-    role: "DIRECTION_GENERAL",
-    email: "dg@deltacarburant.com",
-  },
-  "superadmin@deltacarburant.com": {
-    name: "Super Admin",
-    role: "SUPER_ADMIN",
-    email: "superadmin@deltacarburant.com",
-  },
+const requestStatus: Record<string, string> = {
+  SUBMITTED: "EN_ATTENTE_ZIN",
+  UNDER_REVIEW: "EN_ATTENTE_ZIN",
+  APPROVED: "VALIDEE_ZIN",
+  REJECTED: "REFUSEE_ZIN",
+  CANCELLED: "ANNULEE_NAJIB",
 };
+const toRequestRow = (row: Record<string, unknown>): Row => ({
+  id: String(row.id),
+  numero: String(row.requestNumber ?? "—"),
+  beneficiaire: String(row.beneficiary ?? "—"),
+  departement: String(row.department ?? "—"),
+  voiture: String(row.vehicle ?? "—"),
+  plafond: Number(row.requestedLimit ?? 0),
+  carte: "—",
+  statut: requestStatus[String(row.status)] ?? String(row.status ?? "—"),
+  motif: String(row.decisionReason ?? row.reason ?? "—"),
+});
 const initialCards: Card[] = [];
 const seeds: Record<string, Row[]> = {
   beneficiaries: [],
@@ -369,9 +364,11 @@ export default function Home() {
       saved = localStorage.getItem("delta_app_data_v1");
     // Retire définitivement les anciennes données fictives des versions démo.
     localStorage.removeItem("delta_demo_data_v6");
-    if (t && u) {
+    if (t && t !== "demo" && u) {
       setToken(t);
       setUser(JSON.parse(u));
+    } else if (t === "demo") {
+      sessionStorage.clear();
     }
     if (saved) {
       const x = JSON.parse(saved);
@@ -387,12 +384,24 @@ export default function Home() {
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
   useEffect(() => {
-    if (token && token !== "demo")
-      fetch(`${API}/cards`, { headers: { Authorization: `Bearer ${token}` } })
-        .then(async (r) => {
-          if (r.ok) setCards((await r.json()).items);
-        })
-        .catch(() => setError("API indisponible — mode local actif"));
+    if (!token) return;
+    const headers = { Authorization: `Bearer ${token}` };
+    Promise.all([
+      fetch(`${API}/cards`, { headers }),
+      fetch(`${API}/requests`, { headers }),
+    ])
+      .then(async ([cardResponse, requestResponse]) => {
+        if (!cardResponse.ok || !requestResponse.ok)
+          throw new Error("Impossible de charger les données distantes");
+        const cardPayload = await cardResponse.json();
+        const requestPayload = await requestResponse.json();
+        setCards(cardPayload.items ?? cardPayload);
+        setData((current) => ({
+          ...current,
+          requests: (requestPayload.items ?? requestPayload).map(toRequestRow),
+        }));
+      })
+      .catch(() => setError("API distante indisponible — aucune donnée locale ne sera enregistrée"));
   }, [token]);
   const persist = (
     nextCards = cards,
@@ -432,12 +441,7 @@ export default function Home() {
       setToken(x.accessToken);
       setUser(x.user);
     } catch {
-      if (profiles[email] && password === PASSWORD) {
-        sessionStorage.setItem("delta_access", "demo");
-        sessionStorage.setItem("delta_user", JSON.stringify(profiles[email]));
-        setToken("demo");
-        setUser(profiles[email]);
-      } else setError("Identifiants invalides");
+      setError("Connexion à l’API impossible ou identifiants invalides");
     } finally {
       setLoading(false);
     }
@@ -711,6 +715,29 @@ export default function Home() {
         row.demandeur = "Najib";
         row.date = today;
         row.statut = "EN_ATTENTE_ZIN";
+        if (!token) return notify("Session distante expirée : reconnectez-vous");
+        try {
+          const response = await fetch(`${API}/requests`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              beneficiary: String(row.beneficiaire),
+              department: String(row.departement),
+              vehicle: String(row.voiture),
+              requestedLimit: parseNumeric(row.plafond),
+              reason: String(row.motif),
+            }),
+          });
+          if (!response.ok) throw new Error(await response.text());
+          const created = await response.json();
+          row.id = created.id;
+          row.numero = created.requestNumber;
+        } catch {
+          return notify("Échec de l’envoi distant : la demande n’a pas été enregistrée");
+        }
       }
       const next = { ...data, [key]: [row, ...data[key]] };
       setData(next);
@@ -728,7 +755,7 @@ export default function Home() {
         }));
         const nextNotifications = [...created, ...notifications];
         setNotifications(nextNotifications);
-        persist(cards, next, nextNotifications);
+        setNotifications(nextNotifications);
       } else persist(cards, next);
       notify(
         modal === "request"
@@ -781,7 +808,7 @@ export default function Home() {
     setModal(null);
     setSelected(null);
   }
-  function decideRequest(id: string, accepted: boolean) {
+  async function decideRequest(id: string, accepted: boolean) {
     if (
       !user ||
       !["ZIN_FINANCE", "SUPER_ADMIN", "DIRECTION_GENERAL"].includes(user.role)
@@ -944,6 +971,25 @@ export default function Home() {
       };
     }
 
+    if (!token) return notify("Session distante expirée : reconnectez-vous");
+    try {
+      const apiResponse = await fetch(`${API}/requests/${id}/decision`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          decision: accepted ? "APPROVED" : "REJECTED",
+          reason: reason || undefined,
+          cardNumber: accepted ? cardNumber : undefined,
+        }),
+      });
+      if (!apiResponse.ok) throw new Error(await apiResponse.text());
+    } catch {
+      return notify("Échec de la décision distante : aucune modification enregistrée");
+    }
+
     const response: Notification = {
       id: crypto.randomUUID(),
       target: "NAJIB_ASSIGNER",
@@ -959,7 +1005,6 @@ export default function Home() {
     setCards(nextCards);
     setData(nextData);
     setNotifications(nextNotifications);
-    persist(nextCards, nextData, nextNotifications);
     notify(
       accepted
         ? nextCards[0]?.activation_locked
@@ -968,7 +1013,7 @@ export default function Home() {
         : "Demande refusée — Najib a été notifié",
     );
   }
-  function cancelRequest(id: string) {
+  async function cancelRequest(id: string) {
     if (!user || user.role !== "NAJIB_ASSIGNER")
       return notify("Annulation réservée à Najib");
     const request = data.requests.find((row) => row.id === id);
@@ -977,6 +1022,16 @@ export default function Home() {
       return notify("Seule une demande en attente peut être annulée");
     if (!window.confirm(`Annuler définitivement la demande ${request.numero} ?`))
       return;
+    if (!token) return notify("Session distante expirée : reconnectez-vous");
+    try {
+      const response = await fetch(`${API}/requests/${id}/cancel`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error(await response.text());
+    } catch {
+      return notify("Échec de l’annulation distante : aucune modification enregistrée");
+    }
     const nextData = {
       ...data,
       requests: data.requests.map((row) =>
@@ -1002,7 +1057,6 @@ export default function Home() {
     const nextNotifications = [...cancellations, ...notifications];
     setData(nextData);
     setNotifications(nextNotifications);
-    persist(cards, nextData, nextNotifications);
     notify("Demande annulée — Zin et la Direction ont été informés");
   }
   function deleteRow(

@@ -28,6 +28,9 @@ class ImportRowDto {
   @IsOptional() @IsString() product?: string;
   @IsNumber() @Min(0.001) liters!: number;
   @IsNumber() @Min(0) amount!: number;
+  @IsOptional() @IsNumber() @Min(0) previousMileage?: number;
+  @IsOptional() @IsNumber() @Min(0) mileage?: number;
+  @IsOptional() @IsString() authorizationCode?: string;
 }
 class ImportTransactionsDto {
   @IsString() filename!: string;

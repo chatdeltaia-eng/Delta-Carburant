@@ -20,6 +20,7 @@ const migrations = [
   '017_transaction_review_workflow.sql',
   '018_off_park_responsibles_vehicles.sql',
   '019_mileage_funding_workflow.sql',
+  '020_totalenergies_transaction_details.sql',
 ];
 
 async function main() {

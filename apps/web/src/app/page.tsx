@@ -916,7 +916,7 @@ export default function Home() {
           totalTransaction(source, file.name, index),
         );
         if (!token) return notify("Session distante expirée : reconnectez-vous");
-        const response=await fetch(`${API}/transactions/import`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({filename:file.name,rows:normalized.map(row=>({date:String(row.dateApi),cardNumber:String(row.carte),vehicle:String(row.vehicule??""),station:String(row.station??""),product:String(row.produit??""),liters:parseNumeric(row.litres),amount:parseNumeric(row.montant)}))})});
+        const response=await fetch(`${API}/transactions/import`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({filename:file.name,rows:normalized.map(row=>({date:String(row.dateApi),cardNumber:String(row.carte),vehicle:String(row.vehicule??""),station:String(row.station??""),product:String(row.produit??""),liters:parseNumeric(row.litres),amount:parseNumeric(row.montant),previousMileage:parseNumeric(row.kilometragePrecedent)||undefined,mileage:parseNumeric(row.kilometrage)||undefined,authorizationCode:String(row.codeAutorisation??"")||undefined}))})});
         if(!response.ok) throw new Error(await response.text());
         const result=await response.json();
         notify(`${result.imported} transaction(s) enregistrée(s) · ${result.pendingReview} contrôle(s) requis · ${result.duplicates} doublon(s)`);
@@ -3209,8 +3209,11 @@ function normalizedKey(value: string) {
 }
 function totalValue(source: Record<string, unknown>, aliases: string[]) {
   const wanted = aliases.map(normalizedKey);
-  const key = Object.keys(source).find((k) =>
-    wanted.some((alias) => normalizedKey(k).includes(alias)),
+  const keys = Object.keys(source);
+  // Prefer an exact header. TotalEnergies exports contain several columns named
+  // with the same stem (Montant preautorise, Montant, Montant bonus, etc.).
+  const key = keys.find((k) => wanted.includes(normalizedKey(k))) ?? keys.find((k) =>
+    wanted.some((alias) => alias.length >= 6 && normalizedKey(k).includes(alias)),
   );
   return key ? source[key] : "";
 }
@@ -3235,9 +3238,9 @@ function totalTransaction(
   filename: string,
   index: number,
 ): Row {
-  const rawCard = String(
-    totalValue(source, ["numerocarte", "ncarte", "carte", "cardnumber"]),
-  );
+  const rawCard = String(totalValue(source, [
+    "numerodutitulaire", "numerodecarte", "numerocarte", "ncarte", "cardnumber",
+  ]));
   const digits = rawCard.replace(/\D/g, "");
   const quantity = totalValue(source, [
     "quantite",
@@ -3245,15 +3248,13 @@ function totalTransaction(
     "litres",
     "quantity",
   ]);
-  const amount = totalValue(source, [
-    "montantttc",
-    "montant",
-    "amount",
-    "totalttc",
-  ]);
+  const amount = totalValue(source, ["montant", "montantttc", "amount", "totalttc"]);
   const rawDate=totalValue(source, ["datetransaction", "dateoperation", "date"]);
+  const rawTime=totalValue(source,["heuredelatransaction","heuretransaction","heure"]);
   const excelDate=typeof rawDate==="number"?XLSX.SSF.parse_date_code(rawDate):null;
-  const parsedDate=rawDate instanceof Date?rawDate:excelDate?new Date(Date.UTC(excelDate.y,excelDate.m-1,excelDate.d,excelDate.H,excelDate.M,Math.floor(excelDate.S))):new Date(String(rawDate));
+  const parsedDate=rawDate instanceof Date?new Date(rawDate):excelDate?new Date(Date.UTC(excelDate.y,excelDate.m-1,excelDate.d,excelDate.H,excelDate.M,Math.floor(excelDate.S))):new Date(String(rawDate));
+  const timeMatch=String(rawTime??"").match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if(!Number.isNaN(parsedDate.getTime())&&timeMatch) parsedDate.setHours(Number(timeMatch[1]),Number(timeMatch[2]),Number(timeMatch[3]??0),0);
   return {
     id: `total-${filename}-${index}-${crypto.randomUUID()}`,
     date: displayDate(rawDate),
@@ -3267,8 +3268,11 @@ function totalTransaction(
         "pointdevente",
       ]) || "—",
     ),
-    vehicule: String(totalValue(source,["immatriculation","matriculevehicule","vehicle","registration"])||""),
-    produit: String(totalValue(source,["produit","product","carburant"])||"Carburant"),
+    vehicule: String(totalValue(source,["plaquedimmatriculation","immatriculation","matriculevehicule","vehicle","registration"])||""),
+    produit: String(totalValue(source,["nomdeproduit","nomduproduit","produit","product","carburant"])||"Carburant"),
+    kilometragePrecedent: parseNumeric(totalValue(source,["kilometrageprecedent"])),
+    kilometrage: parseNumeric(totalValue(source,["kilometrage"])),
+    codeAutorisation: String(totalValue(source,["codedautorisation","codeautorisation","numerodetransaction"])||""),
     litres: `${String(quantity || "0")} L`,
     montant: `${String(amount || "0")} MAD`,
     statut: "Importée Total",

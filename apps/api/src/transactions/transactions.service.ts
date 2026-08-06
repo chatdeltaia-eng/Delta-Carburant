@@ -3,7 +3,7 @@ import { DatabaseService } from '../database/database.service';
 type Actor = { sub: string; email: string };
 type Correction = { station?: string; liters?: number; amount?: number; reason: string };
 type Allocation = { beneficiaryId?: string; vehicleId?: string; beneficiary?:string;vehicle?:string; amount: number; liters?: number; note?: string };
-type ImportRow = { date:string; cardNumber:string; vehicle?:string; station?:string; product?:string; liters:number; amount:number };
+type ImportRow = { date:string; cardNumber:string; vehicle?:string; station?:string; product?:string; liters:number; amount:number; previousMileage?:number; mileage?:number; authorizationCode?:string };
 @Injectable()
 export class TransactionsService {
   constructor(private readonly db: DatabaseService) {}
@@ -45,13 +45,13 @@ export class TransactionsService {
       const issue=!card.rows[0]?'UNKNOWN_CARD':vehicleKey&&(!vehicle.rows[0]||vehicle.rows[0].company_id!==card.rows[0].company_id)?'UNKNOWN_VEHICLE':null;
       if (issue) {
         await client.query(`INSERT INTO transaction_review(import_batch_id,source_row_number,issue_type,card_number,vehicle_registration,
-          transaction_date,station,product,quantity_liters,amount_incl_tax,fuel_card_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-          [batch.rows[0].id,index+1,issue,row.cardNumber,row.vehicle??null,row.date,row.station??null,row.product??null,row.liters,row.amount,card.rows[0]?.id??null]); review++; continue;
+          transaction_date,station,product,quantity_liters,amount_incl_tax,fuel_card_id,previous_mileage,reported_mileage,authorization_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+          [batch.rows[0].id,index+1,issue,row.cardNumber,row.vehicle??null,row.date,row.station??null,row.product??null,row.liters,row.amount,card.rows[0]?.id??null,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]); review++; continue;
       }
-      const external=`${dto.filename}:${index+1}:${cardKey}:${row.date}`;
+      const external=row.authorizationCode?.trim()?`TOTAL:${row.authorizationCode.trim()}`:`${dto.filename}:${index+1}:${cardKey}:${row.date}`;
       const inserted=await client.query(`INSERT INTO fuel_transaction(external_transaction_id,fuel_card_id,vehicle_id,transaction_date,station,product,
-        quantity_liters,amount_incl_tax,source,import_batch_id,source_row_number) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'TOTAL_EXCEL',$9,$10)
-        ON CONFLICT(external_transaction_id,source) DO NOTHING RETURNING id`,[external,card.rows[0].id,vehicle.rows[0]?.id??null,row.date,row.station??null,row.product??null,row.liters,row.amount,batch.rows[0].id,index+1]);
+        quantity_liters,amount_incl_tax,source,import_batch_id,source_row_number,previous_mileage,reported_mileage,authorization_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'TOTAL_EXCEL',$9,$10,$11,$12,$13)
+        ON CONFLICT(external_transaction_id,source) DO NOTHING RETURNING id`,[external,card.rows[0].id,vehicle.rows[0]?.id??null,row.date,row.station??null,row.product??null,row.liters,row.amount,batch.rows[0].id,index+1,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]);
       inserted.rowCount ? imported++ : duplicates++;
     }
     await client.query(`UPDATE transaction_import_batch SET imported_rows=$2,duplicate_rows=$3,rejected_rows=$4 WHERE id=$1`,[batch.rows[0].id,imported,duplicates,review]);
@@ -76,8 +76,8 @@ export class TransactionsService {
       let vehicleId=null;
       if(row.vehicle_registration) { const key=row.vehicle_registration.toUpperCase().replace(/[^A-Z0-9]/g,''); const vehicle=await client.query(`INSERT INTO vehicle(company_id,registration_normalized,registration_display,requires_review)
         VALUES($1,$2,$3,false) ON CONFLICT(company_id,registration_normalized) DO UPDATE SET active=true RETURNING id`,[company.rows[0].id,key,row.vehicle_registration]); vehicleId=vehicle.rows[0].id; }
-      await client.query(`INSERT INTO fuel_transaction(external_transaction_id,fuel_card_id,vehicle_id,transaction_date,station,product,quantity_liters,amount_incl_tax,source,import_batch_id,source_row_number)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,'TOTAL_EXCEL',$9,$10)`,[`review:${row.id}`,cardId,vehicleId,row.transaction_date,row.station,row.product,row.quantity_liters,row.amount_incl_tax,row.import_batch_id,row.source_row_number]);
+      await client.query(`INSERT INTO fuel_transaction(external_transaction_id,fuel_card_id,vehicle_id,transaction_date,station,product,quantity_liters,amount_incl_tax,source,import_batch_id,source_row_number,previous_mileage,reported_mileage,authorization_code)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,'TOTAL_EXCEL',$9,$10,$11,$12,$13)`,[row.authorization_code?`TOTAL:${row.authorization_code}`:`review:${row.id}`,cardId,vehicleId,row.transaction_date,row.station,row.product,row.quantity_liters,row.amount_incl_tax,row.import_batch_id,row.source_row_number,row.previous_mileage,row.reported_mileage,row.authorization_code]);
     }
     const result=await client.query(`UPDATE transaction_review SET status=$2,decided_by=$3,decided_at=now(),decision_reason=$4 WHERE id=$1 RETURNING *`,[id,dto.decision,actor.sub,dto.reason??null]);
     await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,$2,'transaction_review',$3,$4)`,[actor.email,dto.decision,id,{reason:dto.reason}]); return result.rows[0];

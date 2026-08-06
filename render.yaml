@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: delta-carburant-api
+    runtime: node
+    region: frankfurt
+    plan: free
+    buildCommand: npm ci --prefix apps/api && npm run build --prefix apps/api
+    startCommand: node apps/api/scripts/migrate.js && npm run start:prod --prefix apps/api
+    healthCheckPath: /api/v1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: delta-carburant-db
+          property: connectionString
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: CARD_ENCRYPTION_KEY
+        generateValue: true
+      - key: CARD_HMAC_KEY
+        generateValue: true
+      - key: PIN_ENCRYPTION_KEY
+        generateValue: true
+      - key: WEB_ORIGIN
+        sync: false
+
+  - type: web
+    name: delta-carburant-web
+    runtime: node
+    region: frankfurt
+    plan: free
+    buildCommand: npm ci --prefix apps/web && npm run build --prefix apps/web
+    startCommand: npm run start --prefix apps/web
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_INTERNAL_HOSTPORT
+        fromService:
+          type: web
+          name: delta-carburant-api
+          property: hostport
+
+databases:
+  - name: delta-carburant-db
+    region: frankfurt
+    plan: free
+    databaseName: delta_carburant
+    user: delta_carburant

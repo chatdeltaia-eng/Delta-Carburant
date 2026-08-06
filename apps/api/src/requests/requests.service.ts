@@ -1,0 +1,85 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { DatabaseService } from '../database/database.service';
+import { NotificationsService } from '../notifications/notifications.service';
+
+type Actor = { sub: string; email?: string; role?: string };
+type CreateRequest = { beneficiaryId: string; vehicleId: string; requestedLimit: number; reason: string };
+@Injectable()
+export class RequestsService {
+  constructor(private readonly db: DatabaseService, private readonly notifications: NotificationsService) {}
+  list(actor: Actor) {
+    const ownOnly = actor.role === 'NAJIB_ASSIGNER';
+    return this.db.query(`SELECT cr.id,cr.request_number AS "requestNumber",cr.status,cr.requested_limit AS "requestedLimit",
+      cr.reason,cr.decision_reason AS "decisionReason",cr.created_at AS "createdAt",b.display_name AS beneficiary,
+      d.name AS department,v.registration_display AS vehicle
+      FROM card_request cr JOIN beneficiary b ON b.id=cr.beneficiary_id
+      LEFT JOIN department d ON d.id=b.department_id LEFT JOIN vehicle v ON v.id=cr.vehicle_id
+      WHERE ($1::boolean=false OR cr.requested_by=$2) ORDER BY cr.created_at DESC`, [ownOnly, actor.sub]);
+  }
+  async create(dto: CreateRequest, actor: Actor) {
+    const number = `D-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
+    const [row] = await this.db.query(`INSERT INTO card_request(request_number,request_type,status,requested_by,
+      beneficiary_id,vehicle_id,reason,requested_limit) VALUES($1,'NEW_CARD','SUBMITTED',$2,$3,$4,$5,$6)
+      RETURNING id,request_number AS "requestNumber",status`,
+      [number, actor.sub, dto.beneficiaryId, dto.vehicleId, dto.reason, dto.requestedLimit]);
+    await this.notifications.notifyRoles(['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'], 'Nouvelle demande de carte', `${number} attend votre traitement`, 'requests', 'card_request', row.id);
+    return row;
+  }
+  async cancel(id: string, actor: Actor) {
+    const row = await this.db.transaction(async client => {
+      const result = await client.query(`SELECT id,request_number,status,requested_by FROM card_request
+        WHERE id=$1 FOR UPDATE`, [id]);
+      const request = result.rows[0];
+      if (!request || request.requested_by !== actor.sub) {
+        throw new NotFoundException('Demande introuvable');
+      }
+      if (!['SUBMITTED','UNDER_REVIEW'].includes(request.status)) {
+        throw new BadRequestException('Seule une demande en attente peut être annulée');
+      }
+      const updated = await client.query(`UPDATE card_request SET status='CANCELLED'::request_status,
+        decision_date=now(),decision_reason='Annulée par Najib' WHERE id=$1
+        RETURNING id,request_number AS "requestNumber",status,decision_reason AS "decisionReason"`, [id]);
+      await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
+        VALUES($1,'CANCELLED','card_request',$2,$3)`, [actor.email ?? actor.sub,id,{reason:'Annulée par le demandeur'}]);
+      return updated.rows[0];
+    });
+    await this.notifications.notifyRoles(['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'],
+      'Demande annulée', `${row.requestNumber} a été annulée par Najib`, 'requests', 'card_request', row.id);
+    return row;
+  }
+  async decide(id: string, dto: { decision: 'APPROVED'|'REJECTED'; reason?: string; cardNumber?: string }, actor: Actor) {
+    if (dto.decision === 'REJECTED' && !dto.reason?.trim()) throw new BadRequestException('Le motif du refus est obligatoire');
+    if (dto.decision === 'APPROVED' && !dto.cardNumber?.trim()) throw new BadRequestException('Le numéro de la carte attribuée est obligatoire');
+    const row = await this.db.transaction(async client => {
+      const requestResult = await client.query(`SELECT cr.*,b.company_id FROM card_request cr
+        JOIN beneficiary b ON b.id=cr.beneficiary_id WHERE cr.id=$1 FOR UPDATE`, [id]);
+      const request = requestResult.rows[0];
+      if (!request || !['SUBMITTED','UNDER_REVIEW'].includes(request.status)) throw new NotFoundException('Demande introuvable ou déjà traitée');
+      let fuelCardId: string | null = null;
+      if (dto.decision === 'APPROVED') {
+        const number = dto.cardNumber!.trim();
+        const inserted = await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,
+          masked_card_number,monthly_limit,status,card_category,responsible_user_id) VALUES($1,pgp_sym_encrypt($2,$3,'cipher-algo=aes256'),
+          hmac($2,$4,'sha256'),$2,$5,'ACTIVE','OFF_PARK',$6) RETURNING id`, [request.company_id, number,
+          process.env.CARD_ENCRYPTION_KEY ?? 'delta-development-card-key', process.env.CARD_HMAC_KEY ?? 'delta-development-hmac-key', request.requested_limit ?? 0, request.requested_by]);
+        fuelCardId = inserted.rows[0].id;
+        await client.query(`INSERT INTO card_assignment(fuel_card_id,beneficiary_id,vehicle_id,workflow_status,
+          requested_by,reviewed_by,reviewed_at) VALUES($1,$2,$3,'APPROVED_ZIN',$4,$5,now())`,
+          [fuelCardId,request.beneficiary_id,request.vehicle_id,request.requested_by,actor.sub]);
+      }
+      const updated = await client.query(`UPDATE card_request SET status=$2::request_status,approved_by=$3,
+        decision_date=now(),decision_reason=$4,fuel_card_id=coalesce($5,fuel_card_id) WHERE id=$1
+        RETURNING id,status,fuel_card_id AS "fuelCardId",decision_reason AS "decisionReason"`,
+        [id,dto.decision,actor.sub,dto.reason ?? null,fuelCardId]);
+      await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id)
+        VALUES($1,$2,$3,$4,'card_request',$5)`, [request.requested_by,
+        dto.decision === 'APPROVED' ? 'Carte créée et demande validée' : 'Demande refusée',
+        dto.decision === 'APPROVED' ? `La carte ${dto.cardNumber} est active et affectée` : dto.reason,
+        dto.decision === 'APPROVED' ? 'cards' : 'requests',id]);
+      await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
+        VALUES($1,$2,'card_request',$3,$4)`, [actor.email ?? actor.sub,dto.decision,id,{fuelCardId,cardNumber:dto.cardNumber,reason:dto.reason}]);
+      return updated.rows[0];
+    });
+    return row;
+  }
+}

@@ -35,8 +35,8 @@ export class CardsController {
   @Patch(':id')
   @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCardDto,
-    @Req() req: { user: { sub: string; email: string } }) {
-    return this.cards.update(id, dto, req.user.email);
+    @Req() req: { user: { sub: string; email: string; role: string } }) {
+    return this.cards.update(id, dto, req.user);
   }
   @Get(':id') details(@Param('id', ParseUUIDPipe) id: string) { return this.cards.details(id); }
   @Post(':id/replace') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE')

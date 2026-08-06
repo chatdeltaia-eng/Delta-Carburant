@@ -69,6 +69,16 @@ type Notification = {
   createdAt: string;
 };
 
+const toNotification = (row: Record<string, unknown>, role: Role): Notification => ({
+  id: String(row.id),
+  target: role,
+  title: String(row.title ?? "Notification"),
+  message: String(row.message ?? ""),
+  view: String(row.targetView ?? "dashboard") as View,
+  read: Boolean(row.readAt),
+  createdAt: new Date(String(row.createdAt)).toLocaleString("fr-MA"),
+});
+
 type WorkflowStep = {
   number: string;
   view: View;
@@ -384,25 +394,33 @@ export default function Home() {
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
   useEffect(() => {
-    if (!token) return;
+    if (!token || !user) return;
     const headers = { Authorization: `Bearer ${token}` };
-    Promise.all([
-      fetch(`${API}/cards`, { headers }),
-      fetch(`${API}/requests`, { headers }),
+    const refreshRemote = () => Promise.all([
+      fetch(`${API}/cards`, { headers, cache: "no-store" }),
+      fetch(`${API}/requests`, { headers, cache: "no-store" }),
+      fetch(`${API}/notifications`, { headers, cache: "no-store" }),
     ])
-      .then(async ([cardResponse, requestResponse]) => {
-        if (!cardResponse.ok || !requestResponse.ok)
+      .then(async ([cardResponse, requestResponse, notificationResponse]) => {
+        if (!cardResponse.ok || !requestResponse.ok || !notificationResponse.ok)
           throw new Error("Impossible de charger les données distantes");
         const cardPayload = await cardResponse.json();
         const requestPayload = await requestResponse.json();
+        const notificationPayload = await notificationResponse.json();
         setCards(cardPayload.items ?? cardPayload);
+        setNotifications((notificationPayload.items ?? notificationPayload).map(
+          (row: Record<string, unknown>) => toNotification(row, user.role),
+        ));
         setData((current) => ({
           ...current,
           requests: (requestPayload.items ?? requestPayload).map(toRequestRow),
         }));
       })
       .catch(() => setError("API distante indisponible — aucune donnée locale ne sera enregistrée"));
-  }, [token]);
+    refreshRemote();
+    const timer = window.setInterval(refreshRemote, 10000);
+    return () => window.clearInterval(timer);
+  }, [token, user]);
   const persist = (
     nextCards = cards,
     nextData = data,
@@ -610,6 +628,19 @@ export default function Home() {
         setModal(null);
         setSelected(null);
         return;
+      }
+      if (["block", "unblock", "oppose", "LOST", "STOLEN", "distributed"].includes(action)) {
+        if (!token) return notify("Session distante expirée : reconnectez-vous");
+        try {
+          const response = await fetch(`${API}/cards/${selected.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ status: change.status }),
+          });
+          if (!response.ok) throw new Error(await response.text());
+        } catch {
+          return notify("Échec de l’action distante : la carte n’a pas été modifiée");
+        }
       }
       const next = cards.map((c) =>
         c.id === selected.id ? { ...c, ...change } : c,
@@ -1178,6 +1209,11 @@ export default function Home() {
     );
     setNotifications(next);
     persist(cards, data, next);
+    if (token && !notification.read)
+      fetch(`${API}/notifications/${notification.id}/read`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => undefined);
     setShowNotifications(false);
     setView(notification.view);
   }

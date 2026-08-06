@@ -98,9 +98,10 @@ export class CardsService {
       return { success:true, oldCardId:id, replacementCardId:replacementId };
     });
   }
-  async update(id: string, change: UpdateCard, actor: string) {
+  async update(id: string, change: UpdateCard, actor: { sub: string; email: string; role: string }) {
     return this.db.transaction(async client => {
-      const before = await client.query('SELECT id,status,monthly_limit,threshold_alert_enabled,version FROM fuel_card WHERE id=$1 FOR UPDATE', [id]);
+      const before = await client.query(`SELECT id,status,monthly_limit,threshold_alert_enabled,version,
+        company_id,responsible_user_id,masked_card_number FROM fuel_card WHERE id=$1 FOR UPDATE`, [id]);
       if (!before.rows[0]) throw new NotFoundException('Carte introuvable');
       const current = before.rows[0];
       const result = await client.query(`UPDATE fuel_card SET status=coalesce($2::card_status,status),
@@ -108,7 +109,24 @@ export class CardsService {
         WHERE id=$1 RETURNING id,status,monthly_limit AS "monthlyLimit",threshold_alert_enabled AS "thresholdAlertEnabled",version,updated_at AS "updatedAt"`,
         [id, change.status ?? null, change.monthlyLimit ?? null, change.thresholdAlertEnabled ?? null]);
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,old_values,new_values)
-        VALUES ($1,'UPDATE','fuel_card',$2,$3,$4)`, [actor, id, current, result.rows[0]]);
+        VALUES ($1,'UPDATE','fuel_card',$2,$3,$4)`, [actor.email, id, current, result.rows[0]]);
+      if (change.status && change.status !== current.status) {
+        const actionLabel: Record<string, string> = {
+          SUSPENDED: 'bloquée', ACTIVE: 'débloquée et réactivée', OPPOSED: 'mise en opposition',
+          LOST: 'déclarée perdue', STOLEN: 'déclarée volée', REPLACED: 'remplacée',
+        };
+        const author = actor.role === 'ZIN_FINANCE' ? 'Zin' : actor.role === 'DIRECTION_GENERAL' ? 'la Direction Générale' : 'le Super Admin';
+        const label = actionLabel[change.status] ?? `passée au statut ${change.status}`;
+        await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
+          SELECT u.id,$2,$3,$4,'cards','fuel_card',$5
+          FROM app_user u
+          WHERE u.active AND u.role='NAJIB_ASSIGNER'
+            AND (u.id=$1 OR ($1::uuid IS NULL AND u.company_id=$6))
+          ON CONFLICT DO NOTHING`, [current.responsible_user_id,
+          change.status === 'SUSPENDED' ? 'Carte bloquée' : change.status === 'ACTIVE' ? 'Carte débloquée' : 'État de carte modifié',
+          `La carte ${current.masked_card_number} a été ${label} par ${author}.`,
+          change.status === 'SUSPENDED' ? 'WARNING' : 'INFO', id, current.company_id]);
+      }
       return result.rows[0];
     });
   }

@@ -1,11 +1,23 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 
-type UpdateCard = { status?: string; monthlyLimit?: number; thresholdAlertEnabled?: boolean };
+type UpdateCard = { status?: string; financeStatus?: string; monthlyLimit?: number; thresholdAlertEnabled?: boolean };
 type CreateCard = { cardNumber: string; monthlyLimit: number; beneficiaryId?: string; vehicleId?: string; cardCategory?: 'PERSONALIZED'|'OFF_PARK' };
+type Actor = { sub: string; email: string; role: string };
 @Injectable()
 export class CardsService {
   constructor(private readonly db: DatabaseService) {}
+  private author(role: string) {
+    return role === 'ZIN_FINANCE' ? 'Zin' : role === 'DIRECTION_GENERAL' ? 'la Direction Générale' : role === 'NAJIB_ASSIGNER' ? 'Najib' : 'le Super Admin';
+  }
+  private async notifyCompany(client: import('pg').PoolClient, companyId: string, actor: Actor,
+    title: string, message: string, cardId: string, severity = 'INFO') {
+    await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
+      SELECT u.id,$3,$4,$5,'cards','fuel_card',$6 FROM app_user u
+      WHERE u.active AND u.company_id=$1 AND u.id<>$2
+        AND u.role IN ('NAJIB_ASSIGNER','ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN')`,
+      [companyId, actor.sub, title, message, severity, cardId]);
+  }
   async create(dto: CreateCard, actorId: string, actor: string) {
     if (dto.vehicleId && !dto.beneficiaryId) throw new BadRequestException('Un véhicule doit être lié à un bénéficiaire');
     return this.db.transaction(async client => {
@@ -71,7 +83,7 @@ export class CardsService {
     if (!rows[0]) throw new NotFoundException('Carte introuvable');
     return rows[0];
   }
-  async replace(id: string, replacementId: string, reason: string, actorId: string, actor: string) {
+  async replace(id: string, replacementId: string, reason: string, actor: Actor) {
     return this.db.transaction(async client => {
       const old = await client.query('SELECT * FROM fuel_card WHERE id=$1 AND deleted_at IS NULL FOR UPDATE', [id]);
       const replacement = await client.query('SELECT * FROM fuel_card WHERE id=$1 AND deleted_at IS NULL FOR UPDATE', [replacementId]);
@@ -84,7 +96,7 @@ export class CardsService {
           throw new BadRequestException('La carte hors parc précédente doit atteindre 100 % de son plafond avant activation de la remplaçante');
       }
       await client.query(`UPDATE fuel_card SET status='REPLACED', replacement_card_id=$2,
-        opposition_reason=$3, opposed_at=coalesce(opposed_at,now()), opposed_by=$4 WHERE id=$1`, [id,replacementId,reason,actorId]);
+        opposition_reason=$3, opposed_at=coalesce(opposed_at,now()), opposed_by=$4 WHERE id=$1`, [id,replacementId,reason,actor.sub]);
       await client.query(`UPDATE fuel_card SET old_card_id=$2 WHERE id=$1`, [replacementId,id]);
       const assignment = await client.query(`SELECT beneficiary_id,vehicle_id FROM card_assignment
         WHERE fuel_card_id=$1 AND ends_at IS NULL AND is_primary LIMIT 1`, [id]);
@@ -94,53 +106,66 @@ export class CardsService {
           VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, [replacementId,assignment.rows[0].beneficiary_id,assignment.rows[0].vehicle_id]);
       }
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
-        VALUES($1,'REPLACE','fuel_card',$2,$3)`, [actor,id,{replacementId,reason}]);
+        VALUES($1,'REPLACE','fuel_card',$2,$3)`, [actor.email,id,{replacementId,reason}]);
+      await this.notifyCompany(client, old.rows[0].company_id, actor, 'Carte remplacée',
+        `La carte ${old.rows[0].masked_card_number} a été remplacée par ${replacement.rows[0].masked_card_number} par ${this.author(actor.role)}.`, id, 'WARNING');
       return { success:true, oldCardId:id, replacementCardId:replacementId };
     });
   }
   async update(id: string, change: UpdateCard, actor: { sub: string; email: string; role: string }) {
     return this.db.transaction(async client => {
-      const before = await client.query(`SELECT id,status,monthly_limit,threshold_alert_enabled,version,
-        company_id,responsible_user_id,masked_card_number FROM fuel_card WHERE id=$1 FOR UPDATE`, [id]);
+      const before = await client.query(`SELECT fc.id,fc.status,fc.monthly_limit,fc.threshold_alert_enabled,fc.version,
+        fc.company_id,fc.responsible_user_id,fc.masked_card_number,
+        (SELECT CASE ca.workflow_status WHEN 'APPROVED_ZIN' THEN 'CONFIRMED' WHEN 'REJECTED_ZIN' THEN 'REJECTED' ELSE 'PENDING' END
+          FROM card_assignment ca WHERE ca.fuel_card_id=fc.id AND ca.ends_at IS NULL ORDER BY ca.starts_at DESC LIMIT 1) AS finance_status
+        FROM fuel_card fc WHERE fc.id=$1 FOR UPDATE`, [id]);
       if (!before.rows[0]) throw new NotFoundException('Carte introuvable');
       const current = before.rows[0];
       const result = await client.query(`UPDATE fuel_card SET status=coalesce($2::card_status,status),
-        monthly_limit=coalesce($3,monthly_limit), threshold_alert_enabled=coalesce($4,threshold_alert_enabled)
-        WHERE id=$1 RETURNING id,status,monthly_limit AS "monthlyLimit",threshold_alert_enabled AS "thresholdAlertEnabled",version,updated_at AS "updatedAt"`,
+        monthly_limit=coalesce($3,monthly_limit), threshold_alert_enabled=coalesce($4,threshold_alert_enabled) WHERE id=$1
+        RETURNING id,status,monthly_limit AS "monthlyLimit",
+        threshold_alert_enabled AS "thresholdAlertEnabled",version,updated_at AS "updatedAt"`,
         [id, change.status ?? null, change.monthlyLimit ?? null, change.thresholdAlertEnabled ?? null]);
+      if (change.financeStatus) {
+        const workflow = change.financeStatus === 'CONFIRMED' ? 'APPROVED_ZIN' : change.financeStatus === 'REJECTED' ? 'REJECTED_ZIN' : 'PENDING_ZIN';
+        await client.query(`UPDATE card_assignment SET workflow_status=$2,reviewed_by=$3,reviewed_at=now()
+          WHERE fuel_card_id=$1 AND ends_at IS NULL`, [id, workflow, actor.sub]);
+      }
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,old_values,new_values)
         VALUES ($1,'UPDATE','fuel_card',$2,$3,$4)`, [actor.email, id, current, result.rows[0]]);
       if (change.status && change.status !== current.status) {
         const actionLabel: Record<string, string> = {
-          SUSPENDED: 'bloquée', ACTIVE: 'débloquée et réactivée', OPPOSED: 'mise en opposition',
+          SUSPENDED: 'bloquée', ACTIVE: 'débloquée et réactivée', DISTRIBUTED: 'marquée comme distribuée', OPPOSED: 'mise en opposition',
           LOST: 'déclarée perdue', STOLEN: 'déclarée volée', REPLACED: 'remplacée',
         };
-        const author = actor.role === 'ZIN_FINANCE' ? 'Zin' : actor.role === 'DIRECTION_GENERAL' ? 'la Direction Générale' : 'le Super Admin';
         const label = actionLabel[change.status] ?? `passée au statut ${change.status}`;
-        await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
-          SELECT u.id,$2,$3,$4,'cards','fuel_card',$5
-          FROM app_user u
-          WHERE u.active AND u.role='NAJIB_ASSIGNER'
-            AND (u.id=$1 OR ($1::uuid IS NULL AND u.company_id=$6))
-          ON CONFLICT DO NOTHING`, [current.responsible_user_id,
+        await this.notifyCompany(client, current.company_id, actor,
           change.status === 'SUSPENDED' ? 'Carte bloquée' : change.status === 'ACTIVE' ? 'Carte débloquée' : 'État de carte modifié',
-          `La carte ${current.masked_card_number} a été ${label} par ${author}.`,
-          change.status === 'SUSPENDED' ? 'WARNING' : 'INFO', id, current.company_id]);
+          `La carte ${current.masked_card_number} a été ${label} par ${this.author(actor.role)}.`, id,
+          ['SUSPENDED','OPPOSED','LOST','STOLEN'].includes(change.status) ? 'WARNING' : 'INFO');
+      } else if (change.financeStatus && change.financeStatus !== current.finance_status) {
+        const accepted = change.financeStatus === 'CONFIRMED';
+        await this.notifyCompany(client, current.company_id, actor,
+          accepted ? 'Affectation validée' : 'Affectation refusée',
+          `L’affectation de la carte ${current.masked_card_number} a été ${accepted ? 'validée' : 'refusée'} par ${this.author(actor.role)}.`,
+          id, accepted ? 'INFO' : 'WARNING');
       }
       return result.rows[0];
     });
   }
-  async remove(id: string, actorId: string, actor: string) {
+  async remove(id: string, actor: Actor) {
     return this.db.transaction(async client => {
-      const before = await client.query(`SELECT status,replacement_card_id FROM fuel_card WHERE id=$1 AND deleted_at IS NULL`, [id]);
+      const before = await client.query(`SELECT status,replacement_card_id,company_id,masked_card_number FROM fuel_card WHERE id=$1 AND deleted_at IS NULL`, [id]);
       if (!before.rows[0]) throw new NotFoundException('Carte introuvable');
       if (['STOLEN','LOST','OPPOSED'].includes(before.rows[0].status) && !before.rows[0].replacement_card_id)
         throw new BadRequestException('Créez et liez la carte remplaçante avant d’archiver cette carte');
       const result = await client.query(`UPDATE fuel_card SET deleted_at=now(),deleted_by=$2
-        WHERE id=$1 AND deleted_at IS NULL RETURNING id`, [id, actorId]);
+        WHERE id=$1 AND deleted_at IS NULL RETURNING id`, [id, actor.sub]);
       if (!result.rows[0]) throw new NotFoundException('Carte introuvable');
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
-        VALUES ($1,'SOFT_DELETE','fuel_card',$2,$3)`, [actor, id, { deleted: true }]);
+        VALUES ($1,'SOFT_DELETE','fuel_card',$2,$3)`, [actor.email, id, { deleted: true }]);
+      await this.notifyCompany(client, before.rows[0].company_id, actor, 'Carte archivée',
+        `La carte ${before.rows[0].masked_card_number} a été archivée par ${this.author(actor.role)}. Elle n’est désormais plus disponible.`, id, 'WARNING');
       return { success: true };
     });
   }

@@ -5,9 +5,10 @@ import { CardsService } from './cards.service';
 import { Roles } from '../common/roles';
 import { RolesGuard } from '../common/roles.guard';
 
-const statuses = ['DRAFT','REQUESTED','ORDERED','RECEIVED','TO_ASSIGN','ASSIGNED','ACTIVE','SUSPENDED','OPPOSED','LOST','STOLEN','DAMAGED','EXPIRED','REPLACED','CANCELLED','RETURNED','SAFE'];
+const statuses = ['DRAFT','REQUESTED','ORDERED','RECEIVED','TO_ASSIGN','ASSIGNED','DISTRIBUTED','ACTIVE','SUSPENDED','OPPOSED','LOST','STOLEN','DAMAGED','EXPIRED','REPLACED','CANCELLED','RETURNED','SAFE'];
 class UpdateCardDto {
   @IsOptional() @IsIn(statuses) status?: string;
+  @IsOptional() @IsIn(['PENDING','CONFIRMED','REJECTED']) financeStatus?: string;
   @IsOptional() @IsNumber() @Min(0) monthlyLimit?: number;
   @IsOptional() @IsBoolean() thresholdAlertEnabled?: boolean;
 }
@@ -41,12 +42,12 @@ export class CardsController {
   @Get(':id') details(@Param('id', ParseUUIDPipe) id: string) { return this.cards.details(id); }
   @Post(':id/replace') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE')
   replace(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ReplaceCardDto,
-    @Req() req: { user: { sub: string; email: string } }) {
-    return this.cards.replace(id,dto.replacementCardId,dto.reason,req.user.sub,req.user.email);
+    @Req() req: { user: { sub: string; email: string; role: string } }) {
+    return this.cards.replace(id,dto.replacementCardId,dto.reason,req.user);
   }
   @Delete(':id')
   @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE')
-  remove(@Param('id', ParseUUIDPipe) id: string, @Req() req: { user: { sub: string; email: string } }) {
-    return this.cards.remove(id, req.user.sub, req.user.email);
+  remove(@Param('id', ParseUUIDPipe) id: string, @Req() req: { user: { sub: string; email: string; role: string } }) {
+    return this.cards.remove(id, req.user);
   }
 }

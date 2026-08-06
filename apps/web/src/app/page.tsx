@@ -578,6 +578,17 @@ export default function Home() {
         const replacement = cards.find((c) => c.id === replacementId);
         if (!replacement) return notify("Sélectionnez une carte remplaçante");
         const reason = String(f.get("reason") || "Remplacement");
+        if (!token) return notify("Session distante expirée : reconnectez-vous");
+        try {
+          const response = await fetch(`${API}/cards/${selected.id}/replace`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ replacementCardId: replacement.id, reason }),
+          });
+          if (!response.ok) throw new Error(await response.text());
+        } catch {
+          return notify("Échec du remplacement distant : aucune carte n’a été modifiée");
+        }
         const inherited = {
           beneficiary: selected.beneficiary,
           department: selected.department,
@@ -619,6 +630,16 @@ export default function Home() {
           return notify(
             "Créez et liez d’abord la carte remplaçante pour conserver l’historique",
           );
+        if (!token) return notify("Session distante expirée : reconnectez-vous");
+        try {
+          const response = await fetch(`${API}/cards/${selected.id}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!response.ok) throw new Error(await response.text());
+        } catch {
+          return notify("Échec de l’archivage distant : la carte reste disponible");
+        }
         const next = cards.filter((c) => c.id !== selected.id);
         setCards(next);
         persist(next, data);
@@ -629,13 +650,13 @@ export default function Home() {
         setSelected(null);
         return;
       }
-      if (["block", "unblock", "oppose", "LOST", "STOLEN", "distributed"].includes(action)) {
+      if (["block", "unblock", "oppose", "LOST", "STOLEN", "distributed", "confirm", "reject"].includes(action)) {
         if (!token) return notify("Session distante expirée : reconnectez-vous");
         try {
           const response = await fetch(`${API}/cards/${selected.id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ status: change.status }),
+            body: JSON.stringify({ status: change.status, financeStatus: change.finance_status }),
           });
           if (!response.ok) throw new Error(await response.text());
         } catch {

@@ -16,6 +16,7 @@ const migrations = [
   '013_user_password.sql',
   '014_default_users.sql',
   '015_default_company.sql',
+  '016_card_distribution_status.sql',
 ];
 
 async function main() {

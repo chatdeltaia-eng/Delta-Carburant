@@ -1,0 +1,5 @@
+import { Body,Controller,Get,Post,Query,Req,UseGuards } from '@nestjs/common'; import { AuthGuard } from '@nestjs/passport'; import { IsDateString,IsNumber,IsOptional,IsString,IsUUID,Min } from 'class-validator'; import { Roles } from '../common/roles'; import { RolesGuard } from '../common/roles.guard'; import { FuelPricesService } from './fuel-prices.service';
+class PriceDto{@IsUUID() companyId!:string;@IsString() product!:string;@IsNumber()@Min(0.001) newPrice!:number;@IsOptional()@IsDateString() effectiveDate?:string;}
+@UseGuards(AuthGuard('jwt'),RolesGuard) @Controller('fuel-prices') export class FuelPricesController{constructor(private readonly service:FuelPricesService){}
+ @Get() @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE','NAJIB_ASSIGNER') list(@Query('companyId') companyId=''){return this.service.list(companyId);}
+ @Post() @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') create(@Body() dto:PriceDto,@Req() req:{user:{sub:string;email:string}}){return this.service.create(dto,req.user);}}

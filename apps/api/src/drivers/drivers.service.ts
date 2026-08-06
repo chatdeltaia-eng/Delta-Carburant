@@ -1,0 +1,12 @@
+import { Injectable,NotFoundException } from '@nestjs/common'; import { DatabaseService } from '../database/database.service';
+type D={companyId:string;fullName:string;cin?:string;phone?:string;licenseNumber?:string;active?:boolean}; type A={sub:string;email:string};
+@Injectable() export class DriversService{constructor(private readonly db:DatabaseService){}
+ list(companyId:string,actor:{sub:string;role:string}){return this.db.query(`SELECT d.id,d.company_id AS "companyId",c.code AS company,d.full_name AS "fullName",d.cin,d.phone,d.license_number AS "licenseNumber",d.active,
+  coalesce(jsonb_agg(jsonb_build_object('id',v.id,'registration',v.registration_display)) FILTER(WHERE v.id IS NOT NULL),'[]') AS vehicles
+  FROM driver d JOIN company c ON c.id=d.company_id LEFT JOIN vehicle v ON v.driver_id=d.id AND v.deleted_at IS NULL WHERE d.deleted_at IS NULL
+  AND ($1='' OR d.company_id=$1::uuid) AND ($2::boolean=false OR EXISTS(SELECT 1 FROM fuel_card fc WHERE fc.company_id=d.company_id AND fc.responsible_user_id=$3 AND fc.deleted_at IS NULL))
+  GROUP BY d.id,c.code ORDER BY c.code,d.full_name`,[companyId,actor.role==='NAJIB_ASSIGNER',actor.sub]);}
+ async create(dto:D,a:A){const [r]=await this.db.query(`INSERT INTO driver(company_id,full_name,cin,phone,license_number,active) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,[dto.companyId,dto.fullName.trim(),dto.cin??null,dto.phone??null,dto.licenseNumber??null,dto.active??true]);await this.audit(a,'CREATE',r.id,r);return r;}
+ async update(id:string,dto:D,a:A){const [r]=await this.db.query(`UPDATE driver SET company_id=$2,full_name=$3,cin=$4,phone=$5,license_number=$6,active=$7,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING *`,[id,dto.companyId,dto.fullName.trim(),dto.cin??null,dto.phone??null,dto.licenseNumber??null,dto.active??true]);if(!r)throw new NotFoundException('Chauffeur introuvable');await this.audit(a,'UPDATE',id,r);return r;}
+ async remove(id:string,a:A){const [r]=await this.db.query(`UPDATE driver SET deleted_at=now(),active=false WHERE id=$1 AND deleted_at IS NULL RETURNING id`,[id]);if(!r)throw new NotFoundException('Chauffeur introuvable');await this.audit(a,'SOFT_DELETE',id,{deleted:true});return {success:true};}
+ private audit(a:A,action:string,id:string,v:unknown){return this.db.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,$2,'driver',$3,$4)`,[a.email,action,id,v]);}}

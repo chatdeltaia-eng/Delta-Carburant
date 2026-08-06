@@ -637,3 +637,4 @@
   }
   .settings{grid-template-columns:1fr}.formGrid{grid-template-columns:1fr}.toolbar{align-items:stretch;flex-direction:column}.toolbar input{width:100%}
 }
+.companyFilter{display:flex;align-items:center;gap:.75rem;margin:.75rem 0;font-weight:700;color:#334155}.companyFilter select{min-width:220px;padding:.65rem .8rem;border:1px solid #d7e0dc;border-radius:8px;background:#fff}

@@ -13,6 +13,8 @@ type View =
   | "cards"
   | "beneficiaries"
   | "vehicles"
+  | "drivers"
+  | "fuelPrices"
   | "transactions"
   | "requests"
   | "mileage"
@@ -50,6 +52,7 @@ type Card = {
   consumed_amount?:number;
   consumption_rate?:number;
   responsible_user_id?:string;
+  company_id?:string;
 };
 type Row = { id: string; [key: string]: string | number };
 type Modal =
@@ -60,6 +63,8 @@ type Modal =
   | "mileage"
   | "beneficiary"
   | "vehicle"
+  | "driver"
+  | "fuelPrice"
   | "editRow"
   | "editTransaction"
   | "settings"
@@ -141,6 +146,7 @@ const toRequestRow = (row: Record<string, unknown>): Row => ({
   statut: requestStatus[String(row.status)] ?? String(row.status ?? "—"),
   motif: String(row.decisionReason ?? row.reason ?? "—"),
   suivi: requestTracking(row),
+  recu: String(row.receiptNumber ?? "—"),
 });
 const initialCards: Card[] = [];
 const seeds: Record<string, Row[]> = {
@@ -219,6 +225,8 @@ const seeds: Record<string, Row[]> = {
   requests: [],
   mileage: [],
   anomalies: [],
+  drivers: [],
+  fuelPrices: [],
 };
 const viewMeta: Record<View, [string, string]> = {
   dashboard: ["Vue d’ensemble", "Voici la situation de votre parc carburant."],
@@ -235,6 +243,8 @@ const viewMeta: Record<View, [string, string]> = {
     "Gérez les collaborateurs et leurs affectations.",
   ],
   vehicles: ["Véhicules", "Suivez tous les véhicules du parc."],
+  drivers: ["Chauffeurs", "Gérez les chauffeurs par société et leurs véhicules."],
+  fuelPrices: ["Prix carburants", "Historique des prix et ajustement automatique des plafonds."],
   transactions: [
     "Transactions Total",
     "Données importées de TotalEnergies ; correction Zin/DG avec historique.",
@@ -445,11 +455,13 @@ export default function Home() {
       canManage(user.role) ? fetch(`${API}/transactions/reviews`, { headers, cache: "no-store" }) : Promise.resolve(null),
       fetch(`${API}/vehicles`, { headers, cache: "no-store" }),
       fetch(`${API}/mileage`, { headers, cache: "no-store" }),
+      fetch(`${API}/drivers`, { headers, cache: "no-store" }),
+      fetch(`${API}/fuel-prices`, { headers, cache: "no-store" }),
       canManage(user.role)?fetch(`${API}/cards/responsibles`,{headers,cache:"no-store"}):Promise.resolve(null),
       canManage(user.role)?fetch(`${API}/cards/companies`,{headers,cache:"no-store"}):Promise.resolve(null),
     ])
-      .then(async ([cardResponse, requestResponse, notificationResponse,transactionResponse,summaryResponse,reviewsResponse,vehiclesResponse,mileageResponse,responsiblesResponse,companiesResponse]) => {
-        if (!cardResponse.ok || !requestResponse.ok || !notificationResponse.ok || !transactionResponse.ok || !summaryResponse.ok || !vehiclesResponse.ok || !mileageResponse.ok)
+      .then(async ([cardResponse, requestResponse, notificationResponse,transactionResponse,summaryResponse,reviewsResponse,vehiclesResponse,mileageResponse,driversResponse,fuelPricesResponse,responsiblesResponse,companiesResponse]) => {
+        if (!cardResponse.ok || !requestResponse.ok || !notificationResponse.ok || !transactionResponse.ok || !summaryResponse.ok || !vehiclesResponse.ok || !mileageResponse.ok || !driversResponse.ok || !fuelPricesResponse.ok)
           throw new Error("Impossible de charger les données distantes");
         const cardPayload = await cardResponse.json();
         const requestPayload = await requestResponse.json();
@@ -459,6 +471,7 @@ export default function Home() {
         const reviewsPayload = reviewsResponse?.ok ? await reviewsResponse.json() : [];
         const vehiclesPayload=await vehiclesResponse.json();
         const mileagePayload=await mileageResponse.json();
+        const driversPayload=await driversResponse.json(); const fuelPricesPayload=await fuelPricesResponse.json();
         if(responsiblesResponse?.ok)setResponsibles(await responsiblesResponse.json());
         if(companiesResponse?.ok)setCompanies(await companiesResponse.json());
         setCards(cardPayload.items ?? cardPayload);
@@ -472,6 +485,8 @@ export default function Home() {
           anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.issueType)==="UNKNOWN_CARD"?"Carte inconnue":"Véhicule inconnu",carte:String(row.cardNumber),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),gravite:"Haute",statut:String(row.status)==="PENDING"?"À vérifier":String(row.status)==="ACCEPTED"?"Acceptée":"Refusée" })),
           vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numero:Number(row.fleetNumber??0),immatriculation:String(row.registration),type:String(row.vehicleType??row.model??"—"),societe:String(row.company??"—"),mise_en_circulation:row.firstRegistrationDate?new Date(String(row.firstRegistrationDate)).toLocaleDateString("fr-FR"):"À compléter",reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
           mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:String(row.week??"—"),vehicule:String(row.vehicle),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),attendu:Number(row.expectedMileage??0),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—")})),
+          drivers:(driversPayload.items??driversPayload).map((row:Record<string,unknown>)=>({id:String(row.id),societe:String(row.company),nom:String(row.fullName),cin:String(row.cin??"—"),telephone:String(row.phone??"—"),permis:String(row.licenseNumber??"—"),vehicules:Array.isArray(row.vehicles)?(row.vehicles as {registration:string}[]).map(item=>item.registration).join(", "):"—",statut:Boolean(row.active)?"Actif":"Inactif"})),
+          fuelPrices:(fuelPricesPayload.items??fuelPricesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),societe:String(row.company),produit:String(row.product),ancienPrix:Number(row.oldPrice),nouveauPrix:Number(row.newPrice),variation:`${Number(row.variationPercent).toFixed(2)} %`,date:new Date(String(row.effectiveDate)).toLocaleDateString("fr-FR"),auteur:String(row.createdBy??"—")})),
         }));
         setDatabaseSummary(summaryPayload);
       })
@@ -811,6 +826,11 @@ export default function Home() {
       if(user.role!=="NAJIB_ASSIGNER")return notify("Le relevé est saisi par un responsable hors parc");
       if(!token)return notify("Session distante expirée");
       try{const response=await fetch(`${API}/mileage`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({vehicleId:String(f.get("vehicleId")),mileage:Number(f.get("mileage")),note:String(f.get("note")??"")})});if(!response.ok)throw new Error(await response.text());const created=await response.json();notify(created.anomaly?`Anomalie détectée : kilométrage attendu ${created.expectedMileage}`:"Relevé envoyé à Zin et à la DG");}catch(error){return notify(error instanceof Error?error.message:"Échec du relevé kilométrique");}
+    } else if(modal==="driver"||modal==="fuelPrice"){
+      if(!canManage(user.role)||!token)return notify("Action réservée à Zin et à la DG");
+      const endpoint=modal==="driver"?"drivers":"fuel-prices";
+      const body=modal==="driver"?{companyId:String(f.get("companyId")),fullName:String(f.get("fullName")),cin:String(f.get("cin")||"")||undefined,phone:String(f.get("phone")||"")||undefined,licenseNumber:String(f.get("licenseNumber")||"")||undefined}:{companyId:String(f.get("companyId")),product:String(f.get("product")),newPrice:Number(f.get("newPrice")),effectiveDate:String(f.get("effectiveDate")||"")||undefined};
+      try{const response=await fetch(`${API}/${endpoint}`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify(body)});if(!response.ok)throw new Error(await response.text());notify(modal==="driver"?"Chauffeur ajouté":"Prix enregistré et plafonds ajustés");}catch(error){return notify(error instanceof Error?error.message:"Enregistrement impossible");}
     } else if (modal && ["beneficiary", "vehicle", "request"].includes(modal)) {
       if (modal === "request" && user.role !== "NAJIB_ASSIGNER")
         return notify(
@@ -834,6 +854,10 @@ export default function Home() {
         row.immatriculation = registration;
         row.numero = String(data.vehicles.length + 1);
         row.carte = "—";
+        const company=companies.find(item=>item.code.toLowerCase()===String(row.societe??"").trim().toLowerCase());
+        if(!company)return notify("Société inconnue : utilisez un code disponible (DC, DCD, TCM ou IKIT)");
+        if(!token)return notify("Session distante expirée");
+        try{const response=await fetch(`${API}/vehicles`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({companyId:company.id,registration,brand:String(row.reference??""),model:String(row.type??"")})});if(!response.ok)throw new Error(await response.text());const created=await response.json();row.id=String(created.id);row.societe=company.code;}catch(error){return notify(error instanceof Error?error.message:"Le véhicule n’a pas été enregistré dans PostgreSQL");}
       }
       if (modal === "request") {
         row.numero = `D-${new Date().getFullYear()}-${String(data.requests.length + 1).padStart(3, "0")}`;
@@ -897,8 +921,8 @@ export default function Home() {
       if (!canManage(user.role))
         return notify("Najib peut seulement consulter les transactions");
       const file = f.get("file");
-      if (!(file instanceof File) || !file.name.match(/\.xlsx?$/i))
-        return notify("Sélectionnez un fichier Excel Total (.xlsx ou .xls)");
+      if (!(file instanceof File) || !file.name.match(/\.(xlsx?|csv)$/i))
+        return notify("Sélectionnez un fichier Total Excel ou CSV (.xlsx, .xls, .csv)");
       try {
         const workbook = XLSX.read(await file.arrayBuffer(), {
           type: "array",
@@ -922,7 +946,7 @@ export default function Home() {
         const result=await response.json();
         notify(`${result.imported} transaction(s) enregistrée(s) · ${result.pendingReview} contrôle(s) requis · ${result.duplicates} doublon(s)`);
       } catch {
-        return notify("Fichier Total illisible : vérifiez le format Excel");
+        return notify("Fichier Total illisible : vérifiez le format Excel ou CSV");
       }
     } else notify("Paramètres enregistrés");
     setModal(null);
@@ -1269,7 +1293,7 @@ export default function Home() {
   function allocateConsumption(row: Row) {
     if (!user || user.role !== "NAJIB_ASSIGNER") return notify("Répartition réservée au responsable hors parc");
     const card = cards.find((item) => item.masked_card_number === String(row.carte));
-    if (!card || card.card_category !== "OFF_PARK") return notify("Seules les cartes hors parc peuvent être réparties par leur responsable");
+    if (!card) return notify("Carte introuvable dans votre périmètre");
     const originalAmount = parseNumeric(row.montant);
     const alreadyAllocated = parseNumeric(row.montantReparti);
     const remaining = Math.max(0, originalAmount - alreadyAllocated);
@@ -1381,15 +1405,17 @@ export default function Home() {
     ["cards", "▣", "Cartes carburant"],
     ["beneficiaries", "♙", "Bénéficiaires"],
     ["vehicles", "◇", "Véhicules"],
+    ["drivers", "♙", "Chauffeurs"],
     ["transactions", "↗", "Transactions"],
     ["requests", "☷", "Demandes"],
     ["mileage", "⌁", "Kilométrage"],
+    ["fuelPrices", "⛽", "Prix carburants"],
     ["anomalies", "△", "Anomalies"],
   ];
   const nav =
     user.role === "NAJIB_ASSIGNER"
       ? allNav.filter(([v]) =>
-          ["dashboard", "cards", "vehicles", "transactions", "requests", "mileage"].includes(v),
+          ["dashboard", "cards", "vehicles", "drivers", "transactions", "requests", "mileage", "fuelPrices"].includes(v),
         )
       : isDirection(user.role)
         ? allNav
@@ -2210,6 +2236,7 @@ function DataView({
   decideRequest: (id: string, accepted: boolean) => void;
   cancelRequest: (id: string) => void;
 }) {
+  const [selectedCompany,setSelectedCompany]=useState("Toutes");
   const config: Record<
     string,
     { button: string; modal: Modal; cols: string[] }
@@ -2238,6 +2265,8 @@ function DataView({
         "statut",
       ],
     },
+    drivers:{button:"Nouveau chauffeur",modal:"driver",cols:["societe","nom","cin","telephone","permis","vehicules","statut"]},
+    fuelPrices:{button:"Nouveau prix",modal:"fuelPrice",cols:["societe","produit","ancienPrix","nouveauPrix","variation","date","auteur"]},
     transactions: {
       button: "Importer Excel Total",
       modal: "import",
@@ -2273,6 +2302,7 @@ function DataView({
         "statut",
         "motif",
         "suivi",
+        "recu",
       ],
     },
     mileage:{button:"Nouveau relevé hebdomadaire",modal:"mileage",cols:["semaine","vehicule","societe","responsable","precedent","distanceDetectee","attendu","kilometrage","anomalie","statut","validateur"]},
@@ -2288,8 +2318,9 @@ function DataView({
       user.role === "NAJIB_ASSIGNER"
         ? cards.filter((x) => x.card_category === "OFF_PARK")
         : cards;
+    const companyChoices=[...new Set(visibleCards.map(x=>x.company_code).filter(Boolean))];
     const filtered = visibleCards.filter((x) =>
-      Object.values(x).join(" ").toLowerCase().includes(search.toLowerCase()),
+      (selectedCompany==="Toutes"||x.company_code===selectedCompany)&&Object.values(x).join(" ").toLowerCase().includes(search.toLowerCase()),
     );
     return (
       <section className={styles.fullPanel}>
@@ -2299,6 +2330,7 @@ function DataView({
           button={canCreate(user.role) ? c.button : ""}
           click={() => open("card")}
         />
+        {canManage(user.role)&&<label className={styles.companyFilter}>Société <select value={selectedCompany} onChange={event=>setSelectedCompany(event.target.value)}><option>Toutes</option>{companyChoices.map(company=><option key={company}>{company}</option>)}</select></label>}
         <CardTable cards={filtered} transactions={data.transactions} full user={user} edit={edit} />
       </section>
     );
@@ -2367,7 +2399,9 @@ function DataView({
     return { ...row, typeCarte: card?.card_category === "OFF_PARK" ? "Hors parc" : "Personnalisée", plafond: card ? `${card.monthly_limit.toLocaleString("fr-FR")} DT` : "Carte inconnue", reparti: `${allocated.toFixed(3)} DT`, reste: `${Math.max(0, amount - allocated).toFixed(3)} DT`, detailRepartition: row.repartition || "Non répartie" };
   });
   const sourceRows = view === "beneficiaries" ? beneficiaryRows : view === "vehicles" ? vehicleRows : view === "transactions" ? transactionRows : (data[view] ?? []);
+  const companyChoices=[...new Set((view==="vehicles"?vehicleRows:cards.map(card=>({societe:card.company_code}))).map(row=>String(row.societe??"")).filter(Boolean))];
   const rows = sourceRows.filter((x) =>
+    (view!=="vehicles"||selectedCompany==="Toutes"||String(x.societe)===selectedCompany)&&
     Object.values(x).join(" ").toLowerCase().includes(search.toLowerCase()),
   );
   const button =
@@ -2382,6 +2416,8 @@ function DataView({
           ? c.button
           : ""
         : view === "vehicles"
+          ? canManage(user.role) ? c.button : ""
+        : view === "drivers" || view === "fuelPrices"
           ? canManage(user.role) ? c.button : ""
         : view === "beneficiaries"
           ? ""
@@ -2398,13 +2434,14 @@ function DataView({
           </span>
         </div>
       )}
-      {(view === "beneficiaries" || view === "vehicles") && (
+      {(view === "beneficiaries" || view === "vehicles" || view === "drivers") && (
         <div className={styles.importNotice}>
-          <b>{view === "vehicles" ? "Référentiel du parc automobile" : "Module alimenté automatiquement"}</b>
+          <b>{view === "vehicles" ? "Référentiel du parc automobile" : view==="drivers"?"Chauffeurs par société":"Module alimenté automatiquement"}</b>
           <span>{view === "vehicles"
             ? canManage(user.role)
               ? "Vous pouvez ajouter, corriger et archiver les véhicules. Les cartes liées restent synchronisées par matricule."
               : "Consultation uniquement. Les véhicules sont gérés par Zin Finance et la Direction Générale."
+            : view==="drivers"?"Chaque chauffeur appartient à une société et peut être relié aux véhicules de cette même société."
             : "Les données proviennent des cartes confirmées et de leurs affectations. Aucun ajout manuel n’est nécessaire."}</span>
         </div>
       )}
@@ -2414,6 +2451,7 @@ function DataView({
         button={button}
         click={() => (c.modal ? open(c.modal) : download(rows, view))}
       />
+      {view==="vehicles"&&canManage(user.role)&&<label className={styles.companyFilter}>Société <select value={selectedCompany} onChange={event=>setSelectedCompany(event.target.value)}><option>Toutes</option>{companyChoices.map(company=><option key={company}>{company}</option>)}</select></label>}
       {view === "transactions" && canManage(user.role) && rows.length > 0 && (
         <div className={styles.bulkBar}>
           <span>{rows.length} transaction(s)</span>
@@ -2465,6 +2503,8 @@ function DataView({
                     >
                       Annuler la demande
                     </button>
+                  ) : view === "requests" && r.statut === "VALIDEE_ZIN" && r.recu !== "—" ? (
+                    <button className={styles.smallBtn} onClick={()=>printReceipt(r)}>Imprimer reçu PDF</button>
                   ) : view === "anomalies" && r.statut === "À vérifier" ? (
                     <><button className={styles.smallBtn} onClick={()=>decideReview(r.id,true)}>Accepter</button>{" "}<button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>decideReview(r.id,false)}>Refuser</button></>
                   ) : view === "anomalies" && r.statut !== "Résolue" && r.statut !== "Acceptée" && r.statut !== "Refusée" ? (
@@ -2473,7 +2513,7 @@ function DataView({
                     <><button className={styles.smallBtn} onClick={()=>decideMileage(r.id,true)}>Valider</button>{" "}<button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>decideMileage(r.id,false)}>Refuser</button></>
                   ) : view === "transactions" ? (
                     user.role === "NAJIB_ASSIGNER" ? (
-                      r.typeCarte === "Hors parc" ? <button className={styles.smallBtn} onClick={() => allocateConsumption(r)}>Répartir</button> : <span>Consultation</span>
+                      <button className={styles.smallBtn} onClick={() => allocateConsumption(r)}>Répartir</button>
                     ) : canManage(user.role) ? (
                       <>
                         {r.repartitionEnAttente&&<><button className={styles.smallBtn} onClick={()=>decideAllocation(String(r.repartitionEnAttente),true)}>Valider répartition</button>{" "}<button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>decideAllocation(String(r.repartitionEnAttente),false)}>Refuser répartition</button>{" "}</>}
@@ -2498,6 +2538,8 @@ function DataView({
                       <button className={styles.smallBtn} onClick={() => editVehicle(r)}>Modifier</button>{" "}
                       <button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={() => deleteRow("vehicles", r.id)}>Supprimer</button>
                     </> : <span>Consultation</span>
+                  ) : view === "drivers" || view === "fuelPrices" ? (
+                    <span>{canManage(user.role)?"Gestion centralisée Zin / DG":"Consultation"}</span>
                   ) : view === "beneficiaries" ? (
                     <span>Synchronisé depuis la carte</span>
                   ) : (
@@ -2511,6 +2553,11 @@ function DataView({
       </div>
     </section>
   );
+}
+function printReceipt(row:Row){
+  const popup=window.open("","_blank","width=850,height=1100"); if(!popup)return;
+  const safe=(value:unknown)=>String(value??"—").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]??char));
+  popup.document.write(`<!doctype html><html><head><title>${safe(row.recu)}</title><style>body{font-family:Arial,sans-serif;color:#14213d;padding:48px}header{border-bottom:3px solid #1f8f5f;padding-bottom:18px;margin-bottom:30px}h1{margin:0;color:#1f8f5f}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.box{border:1px solid #dce4e0;border-radius:8px;padding:14px}.sign{display:flex;justify-content:space-between;margin-top:70px}.sign div{width:42%;border-top:1px solid #333;padding-top:10px}@media print{button{display:none}}</style></head><body><header><h1>DeltaCarburant</h1><p>Reçu officiel d’attribution / validation</p></header><h2>${safe(row.recu)}</h2><div class="grid"><div class="box"><b>Demande</b><br>${safe(row.numero)}</div><div class="box"><b>Type</b><br>${safe(row.type)}</div><div class="box"><b>Responsable</b><br>${safe(row.beneficiaire)}</div><div class="box"><b>Société / service</b><br>${safe(row.departement)}</div><div class="box"><b>Carte</b><br>${safe(row.carte)}</div><div class="box"><b>Véhicule</b><br>${safe(row.voiture)}</div><div class="box"><b>Plafond</b><br>${safe(row.plafond)} TND</div><div class="box"><b>Décision</b><br>${safe(row.suivi)}</div></div><p><b>Motif / observation :</b> ${safe(row.motif)}</p><div class="sign"><div>Signature responsable</div><div>Validation Zin / Direction Générale</div></div><button onclick="window.print()">Imprimer / Enregistrer en PDF</button><script>window.onload=()=>window.print()</script></body></html>`);popup.document.close();
 }
 function Toolbar({
   search,
@@ -2727,7 +2774,7 @@ function ModalForm({
   const [selectedRegistration, setSelectedRegistration] = useState("");
   const [requestType, setRequestType] = useState<"NEW_CARD" | "LIMIT_CHANGE" | "CARD_FUNDING">("NEW_CARD");
   const [requestCardId, setRequestCardId] = useState("");
-  const requestCards = cards.filter((item) => item.card_category === "OFF_PARK" && ["ACTIVE","TO_ASSIGN"].includes(item.status));
+  const requestCards = cards.filter((item) => ["ACTIVE","TO_ASSIGN"].includes(item.status));
   const requestCard = requestCards.find((item) => item.id === requestCardId);
   const eligibleFundingSources=requestCards.filter(item=>item.status==="ACTIVE"&&item.id!==requestCardId&&Number(item.monthly_limit)>0&&Number(item.consumption_rate??0)>=60);
   const selectedVehicle = selectableVehicles.find(
@@ -2784,8 +2831,10 @@ function ModalForm({
     editTransaction: [],
     request: [],
     mileage: [],
+    driver: [],
+    fuelPrice: [],
     settings: [["societe", "Nom de la société"]],
-    import: [["file", "Fichier Excel Total (.xlsx ou .xls)", "file"]],
+    import: [["file", "Fichier Total Excel ou CSV (.xlsx, .xls, .csv)", "file"]],
   };
   return (
     <div
@@ -2981,7 +3030,7 @@ function ModalForm({
                         ? String(editingRow?.row[f[0]] ?? "")
                         : undefined
                     }
-                    accept={type === "import" ? ".xlsx,.xls" : undefined}
+                    accept={type === "import" ? ".xlsx,.xls,.csv,text/csv" : undefined}
                     required={
                       !(
                       ["beneficiary", "department", "registration", "vehicleModel"].includes(
@@ -2994,14 +3043,16 @@ function ModalForm({
               </label>
             ))}
             {type === "mileage" && <><label className={styles.fullField}>Véhicule de votre périmètre<select name="vehicleId" required defaultValue=""><option value="" disabled>Sélectionner un véhicule</option>{vehicles.map(vehicle=><option value={String(vehicle.id)} key={String(vehicle.id)}>{String(vehicle.immatriculation)} · dernier relevé {Number(vehicle.kilometrage??0).toLocaleString("fr-FR")} km</option>)}</select></label><label>Nouveau kilométrage<input name="mileage" type="number" min="0" step="0.1" required /></label><label>Observation<input name="note" /></label><div className={styles.workflowInfo}><b>Contrôle automatique</b><span>La plateforme compare le relevé au dernier kilométrage validé augmenté de la distance détectée dans les transactions. Tout écart est envoyé à Zin et à la DG.</span></div></>}
-            {type==="card"&&<label className={styles.fullField}>Responsable hors parc<select name="responsibleUserId" defaultValue=""><option value="">Aucun responsable</option>{responsibles.map(item=><option value={item.id} key={item.id}>{item.name} · {item.email}</option>)}</select></label>}
+            {type==="driver"&&<><label>Société<select name="companyId" required defaultValue=""><option value="" disabled>Sélectionner</option>{companies.map(item=><option value={item.id} key={item.id}>{item.code} · {item.name}</option>)}</select></label><label>Nom complet<input name="fullName" required minLength={2}/></label><label>CIN<input name="cin"/></label><label>Téléphone<input name="phone"/></label><label className={styles.fullField}>Numéro de permis<input name="licenseNumber"/></label></>}
+            {type==="fuelPrice"&&<><label>Société<select name="companyId" required defaultValue=""><option value="" disabled>Sélectionner</option>{companies.map(item=><option value={item.id} key={item.id}>{item.code} · {item.name}</option>)}</select></label><label>Produit<input name="product" placeholder="Gasoil" required/></label><label>Nouveau prix / litre<input name="newPrice" type="number" min="0.001" step="0.001" required/></label><label>Date d’effet<input name="effectiveDate" type="date"/></label><div className={styles.workflowInfo}><b>Ajustement automatique</b><span>La variation du prix est appliquée dans la même proportion à tous les plafonds actifs de la société, avec audit et notifications.</span></div></>}
+            {type==="card"&&<label className={styles.fullField}>Responsable de la carte<select name="responsibleUserId" required defaultValue=""><option value="" disabled>Sélectionner un responsable</option>{responsibles.map(item=><option value={item.id} key={item.id}>{item.name} · {item.email}</option>)}</select></label>}
             {type==="card"&&<label className={styles.fullField}>Société propriétaire<select name="companyId" required defaultValue=""><option value="" disabled>Sélectionner une société</option>{companies.map(item=><option value={item.id} key={item.id}>{item.code} · {item.name}</option>)}</select></label>}
             {type === "card" && (
               <label className={styles.fullField}>
                 Type de carte
                 <select name="cardCategory" defaultValue="PERSONALIZED">
-                  <option value="PERSONALIZED">Personnalisée</option>
-                  <option value="OFF_PARK">Hors parc — responsable attribué</option>
+                  <option value="PERSONALIZED">Carte personnalisée — distribution par le responsable</option>
+                  <option value="OFF_PARK">Carte hors parc — distribution par le responsable</option>
                 </select>
               </label>
             )}
@@ -3113,6 +3164,8 @@ const titles: Record<string, string> = {
   card: "Créer une carte",
   beneficiary: "Nouveau bénéficiaire",
   vehicle: "Nouveau véhicule",
+  driver: "Nouveau chauffeur",
+  fuelPrice: "Mise à jour du prix carburant",
   editRow: "Modifier l’enregistrement",
   editTransaction: "Corriger une transaction",
   request: "Nouvelle demande",

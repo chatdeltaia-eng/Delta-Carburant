@@ -26,7 +26,7 @@ export class TransactionsService {
     LEFT JOIN beneficiary b ON b.id=ft.beneficiary_id LEFT JOIN vehicle v ON v.id=ft.vehicle_id
     LEFT JOIN transaction_import_batch tib ON tib.id=ft.import_batch_id
     LEFT JOIN transaction_allocation ta ON ta.fuel_transaction_id=ft.id
-    WHERE ft.deleted_at IS NULL AND ($1::boolean=false OR (fc.card_category='OFF_PARK' AND fc.responsible_user_id=$2))
+    WHERE ft.deleted_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2)
     GROUP BY ft.id,fc.id,tib.source_filename,b.display_name,v.registration_display
     ORDER BY ft.transaction_date DESC`, [actor.role==='NAJIB_ASSIGNER',actor.sub]); }
   reviews() { return this.db.query(`SELECT id,issue_type AS "issueType",status,card_number AS "cardNumber",
@@ -52,7 +52,24 @@ export class TransactionsService {
       const inserted=await client.query(`INSERT INTO fuel_transaction(external_transaction_id,fuel_card_id,vehicle_id,transaction_date,station,product,
         quantity_liters,amount_incl_tax,source,import_batch_id,source_row_number,previous_mileage,reported_mileage,authorization_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'TOTAL_EXCEL',$9,$10,$11,$12,$13)
         ON CONFLICT(external_transaction_id,source) DO NOTHING RETURNING id`,[external,card.rows[0].id,vehicle.rows[0]?.id??null,row.date,row.station??null,row.product??null,row.liters,row.amount,batch.rows[0].id,index+1,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]);
-      inserted.rowCount ? imported++ : duplicates++;
+      if(inserted.rowCount){
+        imported++;
+        const monthUsage=await client.query(`SELECT coalesce(sum(amount_incl_tax),0)::float AS consumed FROM fuel_transaction
+          WHERE fuel_card_id=$1 AND deleted_at IS NULL AND transaction_date>=date_trunc('month',$2::timestamptz)
+          AND transaction_date<date_trunc('month',$2::timestamptz)+interval '1 month'`,[card.rows[0].id,row.date]);
+        const limit=await client.query(`SELECT monthly_limit,masked_card_number,responsible_user_id FROM fuel_card WHERE id=$1`,[card.rows[0].id]);
+        if(Number(limit.rows[0].monthly_limit)>0&&Number(monthUsage.rows[0].consumed)>Number(limit.rows[0].monthly_limit)){
+          const anomaly=await client.query(`INSERT INTO anomaly(fuel_card_id,anomaly_type,severity,status,description,assigned_to,metadata)
+            VALUES($1,'MONTHLY_LIMIT_EXCEEDED','HIGH','OPEN',$2,$3,$4)
+            ON CONFLICT(fuel_card_id,anomaly_type) WHERE status='OPEN' AND anomaly_type='MONTHLY_LIMIT_EXCEEDED'
+            DO UPDATE SET description=excluded.description,metadata=excluded.metadata,created_at=now() RETURNING id`,[card.rows[0].id,
+            `La carte ${limit.rows[0].masked_card_number} dépasse son plafond mensuel : ${Number(monthUsage.rows[0].consumed).toFixed(3)} / ${Number(limit.rows[0].monthly_limit).toFixed(3)} DT`,limit.rows[0].responsible_user_id,
+            {consumed:Number(monthUsage.rows[0].consumed),limit:Number(limit.rows[0].monthly_limit),transactionId:inserted.rows[0].id}]);
+          await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
+            SELECT id,'Dépassement de plafond',$2,'CRITICAL','anomalies','anomaly',$3 FROM app_user
+            WHERE active AND (id=$1 OR role::text=ANY($4::text[]))`,[limit.rows[0].responsible_user_id,`La carte ${limit.rows[0].masked_card_number} a dépassé son plafond mensuel`,anomaly.rows[0].id,['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN']]);
+        }
+      } else duplicates++;
     }
     await client.query(`UPDATE transaction_import_batch SET imported_rows=$2,duplicate_rows=$3,rejected_rows=$4 WHERE id=$1`,[batch.rows[0].id,imported,duplicates,review]);
     if(review) await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
@@ -85,10 +102,10 @@ export class TransactionsService {
   async allocate(id: string, dto: Allocation, actor: Actor) { return this.db.transaction(async client => {
     const transaction = await client.query(`SELECT ft.amount_incl_tax,ft.quantity_liters,fc.responsible_user_id,
       fc.company_id FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
-      WHERE ft.id=$1 AND ft.deleted_at IS NULL AND fc.card_category='OFF_PARK' FOR UPDATE OF ft,fc`, [id]);
+      WHERE ft.id=$1 AND ft.deleted_at IS NULL FOR UPDATE OF ft,fc`, [id]);
     const source = transaction.rows[0];
-    if (!source) throw new NotFoundException('Transaction hors parc introuvable');
-    if (source.responsible_user_id !== actor.sub) throw new NotFoundException('Cette carte hors parc ne relève pas de ce responsable');
+    if (!source) throw new NotFoundException('Transaction introuvable');
+    if (source.responsible_user_id !== actor.sub) throw new NotFoundException('Cette carte ne relève pas de ce responsable');
     if (!Number.isFinite(dto.amount) || dto.amount <= 0) throw new BadRequestException('Le montant à répartir doit être positif');
     const allocationTotal = await client.query(`SELECT coalesce(sum(allocated_amount),0) AS allocated
       FROM transaction_allocation WHERE fuel_transaction_id=$1 AND workflow_status IN('PENDING','APPROVED')`, [id]);

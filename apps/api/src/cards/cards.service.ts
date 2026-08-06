@@ -7,7 +7,9 @@ type Actor = { sub: string; email: string; role: string };
 @Injectable()
 export class CardsService {
   constructor(private readonly db: DatabaseService) {}
-  responsibles(){return this.db.query(`SELECT id,display_name AS name,email FROM app_user WHERE active AND role='NAJIB_ASSIGNER' ORDER BY display_name`);}
+  responsibles(companyId=''){return this.db.query(`SELECT u.id,u.display_name AS name,u.email,u.company_id AS "companyId",c.code AS company
+    FROM app_user u LEFT JOIN company c ON c.id=u.company_id WHERE u.active AND u.role='NAJIB_ASSIGNER'
+    AND ($1='' OR u.company_id=$1::uuid) ORDER BY c.code,u.display_name`,[companyId]);}
   companies(){return this.db.query(`SELECT id,code,name FROM company WHERE active ORDER BY code`);}
   async assignResponsible(id:string,responsibleUserId:string,actor:Actor){return this.db.transaction(async client=>{
     const responsible=await client.query(`SELECT id,display_name FROM app_user WHERE id=$1 AND active AND role='NAJIB_ASSIGNER'`,[responsibleUserId]);
@@ -17,7 +19,7 @@ export class CardsService {
     await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id) VALUES($1,'Carte hors parc attribuée',$2,'cards','fuel_card',$3)`,[responsibleUserId,`La carte ${card.rows[0].masked_card_number} vous a été attribuée`,id]);
     await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'ASSIGN_RESPONSIBLE','fuel_card',$2,$3)`,[actor.email,id,{responsibleUserId}]);return card.rows[0];});}
   async assignVehicle(id:string,dto:{beneficiary:string;vehicleId:string},actor:Actor){return this.db.transaction(async client=>{
-    const card=await client.query(`SELECT id,company_id,masked_card_number FROM fuel_card WHERE id=$1 AND responsible_user_id=$2 AND card_category='OFF_PARK' AND deleted_at IS NULL FOR UPDATE`,[id,actor.sub]);if(!card.rows[0])throw new NotFoundException('Carte hors parc non attribuée à ce responsable');
+    const card=await client.query(`SELECT id,company_id,masked_card_number FROM fuel_card WHERE id=$1 AND responsible_user_id=$2 AND deleted_at IS NULL FOR UPDATE`,[id,actor.sub]);if(!card.rows[0])throw new NotFoundException('Carte non attribuée à ce responsable');
     const vehicle=await client.query(`SELECT id,company_id,registration_display FROM vehicle WHERE id=$1 AND active AND deleted_at IS NULL`,[dto.vehicleId]);if(!vehicle.rows[0]||vehicle.rows[0].company_id!==card.rows[0].company_id)throw new BadRequestException('Le véhicule doit appartenir à la société de la carte');
     const department=await client.query(`INSERT INTO department(company_id,name) VALUES($1,'Hors parc') ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id`,[card.rows[0].company_id]);
     const beneficiary=await client.query(`INSERT INTO beneficiary(company_id,department_id,display_name) VALUES($1,$2,$3) ON CONFLICT(company_id,display_name) DO UPDATE SET active=true RETURNING id`,[card.rows[0].company_id,department.rows[0].id,dto.beneficiary.trim()]);
@@ -48,12 +50,9 @@ export class CardsService {
       if ((row.beneficiary_company && row.beneficiary_company !== row.company_id) || (row.vehicle_company && row.vehicle_company !== row.company_id))
         throw new BadRequestException('La carte, le bénéficiaire et le véhicule doivent appartenir à la même société');
       const number = dto.cardNumber.trim();
-      let responsibleUserId: string | null = null;
-      if (dto.cardCategory === 'OFF_PARK') {
-        const responsible = await client.query(`SELECT id FROM app_user WHERE id=coalesce($1,id) AND role='NAJIB_ASSIGNER' AND active ORDER BY display_name LIMIT 1`, [dto.responsibleUserId??null]);
-        if (!responsible.rows[0]) throw new BadRequestException('Aucun responsable hors parc actif');
-        responsibleUserId = responsible.rows[0].id;
-      }
+      const responsible = await client.query(`SELECT id,company_id FROM app_user WHERE id=$1 AND role='NAJIB_ASSIGNER' AND active`, [dto.responsibleUserId??null]);
+      if (!responsible.rows[0]) throw new BadRequestException('Le responsable de la carte est obligatoire');
+      const responsibleUserId: string = responsible.rows[0].id;
       const inserted = await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,
         masked_card_number,monthly_limit,status,card_category,responsible_user_id) VALUES($1,pgp_sym_encrypt($2,$3,'cipher-algo=aes256'),
         hmac($2,$4,'sha256'),$2,$5,$6,$7,$8) RETURNING id`, [row.company_id,number,
@@ -69,12 +68,12 @@ export class CardsService {
       return result.rows[0];
     });
   }
-  async list(page: number, search: string, status: string, actor: { sub: string; role: string }) {
+  async list(page: number, search: string, status: string, companyId:string, actor: { sub: string; role: string }) {
     const limit = 200, offset = (page - 1) * limit;
     const term = `%${search.trim()}%`;
     const where = `WHERE ($1='' OR masked_card_number ILIKE $2 OR beneficiary ILIKE $2 OR registration ILIKE $2)
       AND ($3='' OR status::text=$3)
-      AND ($6::boolean=false OR (card_category='OFF_PARK' AND responsible_user_id=$7))`;
+      AND ($6::boolean=false OR responsible_user_id=$7) AND ($8='' OR company_id=$8::uuid)`;
     const items = await this.db.query(`SELECT v.*,
       coalesce((SELECT sum(ft.amount_incl_tax) FROM fuel_transaction ft
         WHERE ft.fuel_card_id=v.id AND ft.deleted_at IS NULL
@@ -83,12 +82,12 @@ export class CardsService {
         FROM fuel_transaction ft WHERE ft.fuel_card_id=v.id AND ft.deleted_at IS NULL
           AND ft.transaction_date>=date_trunc('month',current_date)),0) / v.monthly_limit)) ELSE 0 END AS consumption_rate
       FROM v_fuel_card_list v ${where}
-      ORDER BY updated_at DESC LIMIT $4 OFFSET $5`, [search.trim(), term, status, limit, offset, actor.role==='NAJIB_ASSIGNER', actor.sub]);
+      ORDER BY updated_at DESC LIMIT $4 OFFSET $5`, [search.trim(), term, status, limit, offset, actor.role==='NAJIB_ASSIGNER', actor.sub,companyId]);
     const countWhere = `WHERE ($1='' OR masked_card_number ILIKE $2 OR beneficiary ILIKE $2 OR registration ILIKE $2)
       AND ($3='' OR status::text=$3)
-      AND ($4::boolean=false OR (card_category='OFF_PARK' AND responsible_user_id=$5))`;
+      AND ($4::boolean=false OR responsible_user_id=$5) AND ($6='' OR company_id=$6::uuid)`;
     const [count] = await this.db.query<{ total: number }>(`SELECT count(*)::int AS total FROM v_fuel_card_list ${countWhere}`,
-      [search.trim(), term, status, actor.role==='NAJIB_ASSIGNER', actor.sub]);
+      [search.trim(), term, status, actor.role==='NAJIB_ASSIGNER', actor.sub,companyId]);
     return { items, total: count.total, page, pageSize: limit };
   }
   async details(id: string) {

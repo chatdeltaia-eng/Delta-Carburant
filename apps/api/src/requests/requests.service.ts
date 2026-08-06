@@ -10,7 +10,7 @@ export class RequestsService {
   list(actor: Actor) {
     const ownOnly = actor.role === 'NAJIB_ASSIGNER';
     return this.db.query(`SELECT cr.id,cr.request_number AS "requestNumber",CASE WHEN cr.request_type='REACTIVATION' THEN 'CARD_FUNDING' ELSE cr.request_type::text END AS "requestType",cr.status,cr.requested_limit AS "requestedLimit",
-      cr.reason,cr.decision_reason AS "decisionReason",cr.created_at AS "createdAt",cr.decision_date AS "decisionDate",
+      cr.reason,cr.decision_reason AS "decisionReason",cr.created_at AS "createdAt",cr.decision_date AS "decisionDate",cr.receipt_number AS "receiptNumber",cr.receipt_issued_at AS "receiptIssuedAt",
       b.display_name AS beneficiary,d.name AS department,v.registration_display AS vehicle,
       fc.masked_card_number AS "cardNumber",source.masked_card_number AS "sourceCardNumber",fc.monthly_limit AS "currentLimit", requester.role::text AS "requestedByRole",requester.display_name AS "requestedByName",
       approver.role::text AS "decisionByRole", latest.action AS "cardAction",
@@ -58,7 +58,7 @@ export class RequestsService {
         fuelCardId = card.rows[0].id;
       } else if(dto.requestType==='CARD_FUNDING') {
         const cards=await client.query(`SELECT id,masked_card_number,monthly_limit,status FROM fuel_card WHERE id=ANY($1::uuid[])
-          AND responsible_user_id=$2 AND card_category='OFF_PARK' AND deleted_at IS NULL`,[[dto.fuelCardId,dto.sourceCardId],actor.sub]);
+          AND responsible_user_id=$2 AND deleted_at IS NULL`,[[dto.fuelCardId,dto.sourceCardId],actor.sub]);
         const target=cards.rows.find(card=>card.id===dto.fuelCardId),source=cards.rows.find(card=>card.id===dto.sourceCardId);
         if(!target||!source||target.id===source.id)throw new BadRequestException('Les deux cartes doivent appartenir au responsable hors parc');
         if(Number(source.monthly_limit)<=0)throw new BadRequestException(`La carte ${source.masked_card_number} ne possède pas de plafond valide. L’alimentation est impossible tant que Zin ou la DG n’a pas défini son plafond`);
@@ -128,10 +128,11 @@ export class RequestsService {
         if(!funded.rows[0])throw new BadRequestException('La carte à alimenter n’est plus disponible');
         await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'CARD_FUNDING','fuel_card',$2,$3)`,[actor.email??actor.sub,request.fuel_card_id,{amount:request.requested_limit,sourceCardId:request.source_card_id}]);
       }
+      const receiptNumber=dto.decision==='APPROVED'?`RC-${new Date().getFullYear()}-${request.request_number.replace(/\D/g,'').slice(-10)}`:null;
       const updated = await client.query(`UPDATE card_request SET status=$2::request_status,approved_by=$3,
-        decision_date=now(),decision_reason=$4,fuel_card_id=coalesce($5,fuel_card_id) WHERE id=$1
-        RETURNING id,status,fuel_card_id AS "fuelCardId",decision_reason AS "decisionReason"`,
-        [id,dto.decision,actor.sub,dto.reason ?? null,fuelCardId]);
+        decision_date=now(),decision_reason=$4,fuel_card_id=coalesce($5,fuel_card_id),receipt_number=$6,receipt_issued_at=CASE WHEN $6 IS NULL THEN NULL ELSE now() END WHERE id=$1
+        RETURNING id,status,fuel_card_id AS "fuelCardId",decision_reason AS "decisionReason",receipt_number AS "receiptNumber",receipt_issued_at AS "receiptIssuedAt"`,
+        [id,dto.decision,actor.sub,dto.reason ?? null,fuelCardId,receiptNumber]);
       const author = actor.role === 'ZIN_FINANCE' ? 'Zin' : actor.role === 'DIRECTION_GENERAL' ? 'la Direction Générale' : 'le Super Admin';
       await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id)
         VALUES($1,$2,$3,$4,'card_request',$5)`, [request.requested_by,

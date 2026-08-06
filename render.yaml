@@ -4,7 +4,7 @@ services:
     runtime: node
     region: frankfurt
     plan: free
-    buildCommand: npm ci --prefix apps/api && npm run build --prefix apps/api
+    buildCommand: npm ci --include=dev --prefix apps/api && npm run build --prefix apps/api
     startCommand: node apps/api/scripts/migrate.js && npm run start:prod --prefix apps/api
     healthCheckPath: /api/v1
     envVars:
@@ -30,7 +30,7 @@ services:
     runtime: node
     region: frankfurt
     plan: free
-    buildCommand: npm ci --prefix apps/web && npm run build --prefix apps/web
+    buildCommand: npm ci --include=dev --prefix apps/web && npm run build --prefix apps/web
     startCommand: npm run start --prefix apps/web
     healthCheckPath: /
     envVars:

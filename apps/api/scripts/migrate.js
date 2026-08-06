@@ -12,6 +12,7 @@ const migrations = [
   '009_card_lifecycle_reporting.sql',
   '010_request_card_synchronization.sql',
   '011_off_park_consumption_allocation.sql',
+  '012_user_email_domain.sql',
 ];
 
 async function main() {

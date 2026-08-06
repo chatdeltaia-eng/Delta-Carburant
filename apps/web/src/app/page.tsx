@@ -81,25 +81,25 @@ type WorkflowStep = {
 const API = "/api/v1";
 const PASSWORD = "DeltaDemo2026";
 const profiles: Record<string, User> = {
-  "najib@deltacarburant.ma": {
+  "najib@deltacarburant.com": {
     name: "Najib Admin",
     role: "NAJIB_ASSIGNER",
-    email: "najib@deltacarburant.ma",
+    email: "najib@deltacarburant.com",
   },
-  "zin@deltacarburant.ma": {
+  "zin@deltacarburant.com": {
     name: "Zin Finance",
     role: "ZIN_FINANCE",
-    email: "zin@deltacarburant.ma",
+    email: "zin@deltacarburant.com",
   },
-  "dg@deltacarburant.ma": {
+  "dg@deltacarburant.com": {
     name: "Direction Générale",
     role: "DIRECTION_GENERAL",
-    email: "dg@deltacarburant.ma",
+    email: "dg@deltacarburant.com",
   },
-  "superadmin@deltacarburant.ma": {
+  "superadmin@deltacarburant.com": {
     name: "Super Admin",
     role: "SUPER_ADMIN",
-    email: "superadmin@deltacarburant.ma",
+    email: "superadmin@deltacarburant.com",
   },
 };
 const initialCards: Card[] = [];

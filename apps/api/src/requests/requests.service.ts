@@ -10,10 +10,21 @@ export class RequestsService {
   list(actor: Actor) {
     const ownOnly = actor.role === 'NAJIB_ASSIGNER';
     return this.db.query(`SELECT cr.id,cr.request_number AS "requestNumber",cr.status,cr.requested_limit AS "requestedLimit",
-      cr.reason,cr.decision_reason AS "decisionReason",cr.created_at AS "createdAt",b.display_name AS beneficiary,
-      d.name AS department,v.registration_display AS vehicle
+      cr.reason,cr.decision_reason AS "decisionReason",cr.created_at AS "createdAt",cr.decision_date AS "decisionDate",
+      b.display_name AS beneficiary,d.name AS department,v.registration_display AS vehicle,
+      fc.masked_card_number AS "cardNumber", requester.role::text AS "requestedByRole",
+      approver.role::text AS "decisionByRole", latest.action AS "cardAction",
+      latest.new_values->>'status' AS "cardStatusAction",latest.created_at AS "cardActionAt",
+      action_user.role::text AS "cardActionByRole"
       FROM card_request cr JOIN beneficiary b ON b.id=cr.beneficiary_id
       LEFT JOIN department d ON d.id=b.department_id LEFT JOIN vehicle v ON v.id=cr.vehicle_id
+      LEFT JOIN fuel_card fc ON fc.id=cr.fuel_card_id
+      LEFT JOIN app_user requester ON requester.id=cr.requested_by
+      LEFT JOIN app_user approver ON approver.id=cr.approved_by
+      LEFT JOIN LATERAL (SELECT al.action,al.actor,al.new_values,al.created_at FROM audit_log al
+        WHERE al.entity_type='fuel_card' AND al.entity_id=cr.fuel_card_id::text
+        ORDER BY al.created_at DESC LIMIT 1) latest ON true
+      LEFT JOIN app_user action_user ON lower(action_user.email::text)=lower(latest.actor)
       WHERE ($1::boolean=false OR cr.requested_by=$2) ORDER BY cr.created_at DESC`, [ownOnly, actor.sub]);
   }
   async create(dto: CreateRequest, actor: Actor) {

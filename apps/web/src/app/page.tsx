@@ -96,6 +96,32 @@ const requestStatus: Record<string, string> = {
   REJECTED: "REFUSEE_ZIN",
   CANCELLED: "ANNULEE_NAJIB",
 };
+const roleName: Record<string, string> = {
+  NAJIB_ASSIGNER: "Najib",
+  ZIN_FINANCE: "Zin",
+  DIRECTION_GENERAL: "DG",
+  SUPER_ADMIN: "Super Admin",
+};
+const requestTracking = (row: Record<string, unknown>) => {
+  const cardAction = String(row.cardAction ?? "");
+  const cardStatus = String(row.cardStatusAction ?? "");
+  const statusLabels: Record<string, string> = {
+    SUSPENDED: "Carte bloquée", ACTIVE: "Carte débloquée", DISTRIBUTED: "Carte distribuée",
+    OPPOSED: "Carte mise en opposition", LOST: "Carte déclarée perdue", STOLEN: "Carte déclarée volée",
+    REPLACED: "Carte remplacée",
+  };
+  if (cardAction) {
+    const label = cardAction === "SOFT_DELETE" ? "Carte archivée" : cardAction === "REPLACE" ? "Carte remplacée" : statusLabels[cardStatus] ?? "Carte mise à jour";
+    const author = roleName[String(row.cardActionByRole)] ?? "Utilisateur";
+    const date = row.cardActionAt ? new Date(String(row.cardActionAt)).toLocaleString("fr-MA") : "";
+    return `${label} par ${author}${date ? ` · ${date}` : ""}`;
+  }
+  const status = String(row.status ?? "");
+  const authorRole = status === "CANCELLED" ? row.requestedByRole : row.decisionByRole ?? row.requestedByRole;
+  const label = status === "APPROVED" ? "Demande validée" : status === "REJECTED" ? "Demande refusée" : status === "CANCELLED" ? "Demande annulée" : "Demande créée";
+  const dateValue = status === "SUBMITTED" ? row.createdAt : row.decisionDate ?? row.createdAt;
+  return `${label} par ${roleName[String(authorRole)] ?? "Utilisateur"} · ${new Date(String(dateValue)).toLocaleString("fr-MA")}`;
+};
 const toRequestRow = (row: Record<string, unknown>): Row => ({
   id: String(row.id),
   numero: String(row.requestNumber ?? "—"),
@@ -103,9 +129,10 @@ const toRequestRow = (row: Record<string, unknown>): Row => ({
   departement: String(row.department ?? "—"),
   voiture: String(row.vehicle ?? "—"),
   plafond: Number(row.requestedLimit ?? 0),
-  carte: "—",
+  carte: String(row.cardNumber ?? "—"),
   statut: requestStatus[String(row.status)] ?? String(row.status ?? "—"),
   motif: String(row.decisionReason ?? row.reason ?? "—"),
+  suivi: requestTracking(row),
 });
 const initialCards: Card[] = [];
 const seeds: Record<string, Row[]> = {
@@ -2156,6 +2183,7 @@ function DataView({
         "carte",
         "statut",
         "motif",
+        "suivi",
       ],
     },
     anomalies: {

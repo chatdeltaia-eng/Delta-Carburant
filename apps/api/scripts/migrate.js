@@ -14,6 +14,7 @@ const migrations = [
   '011_off_park_consumption_allocation.sql',
   '012_user_email_domain.sql',
   '013_user_password.sql',
+  '014_default_users.sql',
 ];
 
 async function main() {

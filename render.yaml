@@ -36,11 +36,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: API_INTERNAL_HOSTPORT
-        fromService:
-          type: web
-          name: delta-carburant-api
-          property: hostport
+      - key: API_BASE_URL
+        value: https://delta-carburant-api.onrender.com
 
 databases:
   - name: delta-carburant-db

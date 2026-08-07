@@ -147,7 +147,7 @@ export class TransactionsService {
       WHERE active AND role::text=ANY($1::text[])`,[['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'],`${review} transaction(s) nécessitent la vérification d’une carte ou d’un véhicule`,batch.rows[0].id]);
     return {batchId:batch.rows[0].id,imported,duplicates,pendingReview:review};
   }); }
-  async review(id:string,dto:{decision:'ACCEPTED'|'REJECTED';reason?:string},actor:Actor) { return this.db.transaction(async client => {
+  async review(id:string,dto:{decision:'ACCEPTED'|'REJECTED';reason?:string;fuelCardId?:string;vehicleId?:string},actor:Actor) { return this.db.transaction(async client => {
     const found=await client.query(`SELECT * FROM transaction_review WHERE id=$1 AND status='PENDING' FOR UPDATE`,[id]);
     const row=found.rows[0]; if(!row) throw new NotFoundException('Contrôle introuvable ou déjà traité');
     if(dto.decision==='REJECTED') {
@@ -155,22 +155,30 @@ export class TransactionsService {
         VALUES($1,$2,'HIGH','OPEN',$3,$4)`,[row.fuel_card_id,row.issue_type,row.issue_type==='UNKNOWN_CARD'?`Carte ${row.card_number} inconnue de DeltaCarburant ayant effectué une transaction de ${row.amount_incl_tax}`:row.issue_type==='MISSING_BENEFICIARY'?`Aucun bénéficiaire identifié pour le véhicule ${row.vehicle_registration}`:`Véhicule ${row.vehicle_registration} externe utilisant la carte ${row.card_number}`,actor.sub]);
     } else {
       const vehicleKey=(row.vehicle_registration??'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-      const vehicle=vehicleKey?await client.query(`SELECT v.id,v.company_id,v.driver_name,d.full_name AS driver_full_name
+      const vehicle=dto.vehicleId?await client.query(`SELECT v.id,v.company_id,v.driver_name,d.full_name AS driver_full_name,v.registration_display
+        FROM vehicle v LEFT JOIN driver d ON d.id=v.driver_id AND d.deleted_at IS NULL AND d.active
+        WHERE v.id=$1 AND v.active AND v.deleted_at IS NULL`,[dto.vehicleId]):vehicleKey?await client.query(`SELECT v.id,v.company_id,v.driver_name,d.full_name AS driver_full_name,v.registration_display
         FROM vehicle v LEFT JOIN driver d ON d.id=v.driver_id AND d.deleted_at IS NULL AND d.active
         WHERE regexp_replace(upper(coalesce(v.registration_normalized::text,v.registration_display)),'[^A-Z0-9]','','g')=$1
         AND v.active AND v.deleted_at IS NULL LIMIT 1`,[vehicleKey]):{rows:[]};
-      if(!vehicle.rows[0]) throw new BadRequestException(`Le véhicule ${row.vehicle_registration??''} est introuvable dans le référentiel.`);
+      if(!vehicle.rows[0]) throw new BadRequestException('Sélectionnez un véhicule existant pour enregistrer cette transaction.');
       const companyId=vehicle.rows[0].company_id;
       const cardKey=String(row.card_number).replace(/\D/g,'');
-      let card=await client.query(`SELECT id,company_id FROM fuel_card WHERE deleted_at IS NULL
-        AND regexp_replace(masked_card_number,'[^0-9]','','g')=$1 LIMIT 1 FOR UPDATE`,[cardKey]);
-      if(card.rows[0]&&card.rows[0].company_id!==companyId)
-        throw new BadRequestException('Cette carte existe déjà dans une autre société. Contactez l’administrateur.');
+      let card=dto.fuelCardId?await client.query(`SELECT id,company_id,holder_name FROM fuel_card
+        WHERE id=$1 AND deleted_at IS NULL LIMIT 1 FOR UPDATE`,[dto.fuelCardId]):await client.query(`SELECT id,company_id,holder_name FROM fuel_card WHERE deleted_at IS NULL AND (
+          total_payment_number=$1 OR (length($1)>6 AND total_payment_number=right($1,6))
+          OR regexp_replace(masked_card_number,'[^0-9]','','g')=$1 OR official_card_number=$1)
+        ORDER BY CASE WHEN total_payment_number=$1 THEN 0 WHEN length($1)>6 AND total_payment_number=right($1,6) THEN 1 ELSE 2 END
+        LIMIT 1 FOR UPDATE`,[cardKey]);
       if(!card.rows[0]) card=await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,masked_card_number,monthly_limit,status,card_category)
         VALUES($1,pgp_sym_encrypt($2,$3,'cipher-algo=aes256'),hmac($2,$4,'sha256'),$2,0,'ACTIVE','PERSONALIZED')
         ON CONFLICT(card_number_hmac) DO UPDATE SET updated_at=now()
         RETURNING id,company_id`,[companyId,row.card_number,process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key']);
-      const beneficiaryName=(row.beneficiary_name??vehicle.rows[0].driver_full_name??vehicle.rows[0].driver_name??`Conducteur ${row.vehicle_registration}`).trim();
+      // Le choix manuel de Zin devient la nouvelle reference pour les imports
+      // suivants : carte, plaque et societe restent synchronisees.
+      await client.query(`UPDATE fuel_card SET company_id=$2,official_registration=$3,
+        card_category='PERSONALIZED',updated_at=now() WHERE id=$1`,[card.rows[0].id,companyId,vehicle.rows[0].registration_display]);
+      const beneficiaryName=(row.beneficiary_name??card.rows[0].holder_name??vehicle.rows[0].driver_full_name??vehicle.rows[0].driver_name??`Conducteur ${vehicle.rows[0].registration_display}`).trim();
       const department=await client.query(`INSERT INTO department(company_id,name) VALUES($1,'Transactions importées')
         ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id`,[companyId]);
       const beneficiary=await client.query(`INSERT INTO beneficiary(company_id,department_id,display_name) VALUES($1,$2,$3)

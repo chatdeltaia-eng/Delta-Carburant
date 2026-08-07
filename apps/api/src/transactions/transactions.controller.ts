@@ -40,6 +40,8 @@ class ImportTransactionsDto {
 class ReviewDecisionDto {
   @IsIn(['ACCEPTED','REJECTED']) decision!: 'ACCEPTED'|'REJECTED';
   @IsOptional() @IsString() reason?: string;
+  @IsOptional() @IsUUID() fuelCardId?: string;
+  @IsOptional() @IsUUID() vehicleId?: string;
 }
 class AllocationDecisionDto { @IsIn(['APPROVED','REJECTED']) decision!:'APPROVED'|'REJECTED'; @IsOptional() @IsString() reason?:string; }
 

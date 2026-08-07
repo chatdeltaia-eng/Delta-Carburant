@@ -1661,12 +1661,19 @@ export default function Home() {
                     const company=companies.find(item=>item.code.toLowerCase()===String(values.societe).trim().toLowerCase());
                     if(!company)return notify("Société inconnue : choisissez une société existante");
                     if(!token)return notify("Session distante expirée");
+                    let reconciliation:{matched?:number;transactions?:number;cards?:{number:string;holder?:string}[]}={};
                     try {
                       const response=await fetch(`${API}/vehicles/${values.id}`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({companyId:company.id,registration,brand:String(values.reference??"")||undefined,model:String(values.type),active:String(values.statut??"Actif")!=="Inactif"})});
                       if(!response.ok)throw new Error(await response.text());
+                      const saved=await response.json(); reconciliation=saved.reconciliation??{};
                     } catch(error) {
                       return notify(error instanceof Error?error.message:"La modification du véhicule n’a pas été enregistrée");
                     }
+                    setRefreshTick(value=>value+1);
+                    if(Number(reconciliation.matched)>0){
+                      const found=reconciliation.cards?.map(card=>`${card.number}${card.holder?` (${card.holder})`:""}`).join(", ");
+                      notify(`Correspondance Total trouvée : carte ${found} · ${reconciliation.transactions??0} transaction(s) liée(s) au véhicule ${registration}`);
+                    } else notify(`Véhicule ${registration} enregistré. Aucune carte Total correspondante trouvée pour cette plaque.`);
                   }
                   const next = {
                     ...data,
@@ -1678,7 +1685,7 @@ export default function Home() {
                   persist(cards, next);
                   setModal(null);
                   setEditingRow(null);
-                  notify("Modification enregistrée");
+                  if(editingRow.view!=="vehicles") notify("Modification enregistrée");
                 }
               : submit
           }
@@ -2652,7 +2659,7 @@ function CardTable({
               <th>BÉNÉFICIAIRE / DÉPARTEMENT</th>
               <th>VÉHICULE</th>
               <th>ANCIENNE → NOUVELLE</th>
-              <th>PLAFOND</th>
+              <th>PLAFOND / CONSOMMATION DU MOIS</th>
               <th>STATUT</th>
               <th>ACTION</th>
             </tr>

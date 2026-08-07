@@ -58,7 +58,8 @@ WITH cards(card_no,payment_no,registration,holder) AS (VALUES
  INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,masked_card_number,monthly_limit,status,
    card_category,official_card_number,total_payment_number,holder_name,official_registration,expires_on)
  SELECT r.company_id,pgp_sym_encrypt(r.payment_no,$1,'cipher-algo=aes256'),hmac(r.payment_no,$2,'sha256'),
-   r.payment_no,0,'ACTIVE',CASE WHEN r.registration ILIKE 'HORS%' THEN 'OFF_PARK' ELSE 'PERSONALIZED' END,
+   r.payment_no,0,'ACTIVE',
+   (CASE WHEN r.registration ILIKE 'HORS%' THEN 'OFF_PARK' ELSE 'PERSONALIZED' END)::card_category,
    r.card_no,r.payment_no,r.holder,r.registration,date '2030-06-30' FROM resolved r
  WHERE NOT EXISTS(SELECT 1 FROM fuel_card fc WHERE fc.official_card_number=r.card_no OR
    regexp_replace(fc.masked_card_number,'[^0-9]','','g') IN (r.card_no,r.payment_no))

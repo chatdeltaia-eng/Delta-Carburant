@@ -48,10 +48,15 @@ async function main() {
       const sqlPath = path.resolve(__dirname, '../../../sql', filename);
       const sql = fs.readFileSync(sqlPath, 'utf8');
       if (filename === '025_total_card_reference.sql') {
-        await client.query(sql, [
-          process.env.CARD_ENCRYPTION_KEY ?? 'delta-development-card-key',
-          process.env.CARD_HMAC_KEY ?? 'delta-development-hmac-key',
-        ]);
+        // node-postgres cannot use the extended (parameterized) protocol for a
+        // migration containing several SQL commands. Escape the two server-side
+        // secrets, then execute the migration through PostgreSQL's simple query
+        // protocol without ever logging their values.
+        const literal = (value) => `'${String(value).replace(/'/g, "''")}'`;
+        const migrationSql = sql
+          .replaceAll('$1', literal(process.env.CARD_ENCRYPTION_KEY ?? 'delta-development-card-key'))
+          .replaceAll('$2', literal(process.env.CARD_HMAC_KEY ?? 'delta-development-hmac-key'));
+        await client.query(migrationSql);
       } else await client.query(sql);
       await client.query('INSERT INTO schema_migration(filename) VALUES ($1)', [filename]);
       console.log(`Applied ${filename}`);

@@ -943,6 +943,13 @@ export default function Home() {
           return notify(
             "Le fichier Excel Total ne contient aucune transaction",
           );
+        const hasAmountColumn = Object.keys(sourceRows[0]).some(
+          (header) => normalizedKey(header) === "montant",
+        );
+        if (!hasAmountColumn)
+          return notify(
+            'Colonne "Montant" introuvable : utilisez le fichier de transactions exporté depuis TotalEnergies',
+          );
         const normalized = sourceRows.map((source, index) =>
           totalTransaction(source, file.name, index),
         );
@@ -3359,7 +3366,13 @@ function totalTransaction(
     "litres",
     "quantity",
   ]);
-  const amount = totalValue(source, ["montant", "montantttc", "amount", "totalttc"]);
+  // La consommation d'une ligne est exclusivement la valeur de la colonne
+  // "Montant" du fichier Total. Les autres colonnes (montant préautorisé,
+  // bonus, plafond, etc.) ne sont pas des consommations.
+  const amountKey = Object.keys(source).find(
+    (header) => normalizedKey(header) === "montant",
+  );
+  const amount = amountKey ? source[amountKey] : "";
   const rawDate=totalValue(source, ["datetransaction", "dateoperation", "date"]);
   const rawTime=totalValue(source,["heuredelatransaction","heuretransaction","heure"]);
   const excelDate=typeof rawDate==="number"?XLSX.SSF.parse_date_code(rawDate):null;
@@ -3398,13 +3411,27 @@ function transactionKey(row: Row) {
     .toLowerCase();
 }
 function parseNumeric(value: unknown) {
-  return (
-    Number(
-      String(value ?? 0)
-        .replace(/[^0-9,.-]/g, "")
-        .replace(",", "."),
-    ) || 0
-  );
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  let raw = String(value ?? "").trim().replace(/[^0-9,.-]/g, "");
+  if (!raw) return 0;
+  const comma = raw.lastIndexOf(",");
+  const dot = raw.lastIndexOf(".");
+  if (comma >= 0 && dot >= 0) {
+    const decimalSeparator = comma > dot ? "," : ".";
+    const thousandsSeparator = decimalSeparator === "," ? "." : ",";
+    raw = raw.split(thousandsSeparator).join("");
+    if (decimalSeparator === ",") raw = raw.replace(",", ".");
+  } else if (comma >= 0) {
+    raw = raw.replace(/\./g, "").replace(",", ".");
+  } else {
+    const dotCount = (raw.match(/\./g) ?? []).length;
+    if (dotCount > 1) {
+      const parts = raw.split(".");
+      raw = `${parts.slice(0, -1).join("")}.${parts.at(-1)}`;
+    }
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 function download(rows: Row[], name: string) {
   const blob = new Blob([JSON.stringify(rows, null, 2)], {

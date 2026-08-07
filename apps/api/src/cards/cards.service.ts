@@ -78,6 +78,8 @@ export class CardsService {
       coalesce((SELECT sum(ft.amount_incl_tax) FROM fuel_transaction ft
         WHERE ft.fuel_card_id=v.id AND ft.deleted_at IS NULL
           AND ft.transaction_date>=date_trunc('month',current_date)),0) AS consumed_amount,
+      coalesce((SELECT sum(ft.amount_incl_tax) FROM fuel_transaction ft
+        WHERE ft.fuel_card_id=v.id AND ft.deleted_at IS NULL),0) AS total_consumed_amount,
       CASE WHEN v.monthly_limit > 0 THEN least(100,round(100 * coalesce((SELECT sum(ft.amount_incl_tax)
         FROM fuel_transaction ft WHERE ft.fuel_card_id=v.id AND ft.deleted_at IS NULL
           AND ft.transaction_date>=date_trunc('month',current_date)),0) / v.monthly_limit)) ELSE 0 END AS consumption_rate

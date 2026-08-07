@@ -222,7 +222,8 @@ export class TransactionsService {
     const result = await client.query('UPDATE fuel_transaction SET deleted_at=now(),deleted_by=$1 WHERE deleted_at IS NULL', [actor.sub]);
     const reviews = await client.query(`UPDATE transaction_review SET status='REJECTED',decided_by=$1,decided_at=now(),
       decision_reason='Suppression des transactions par Zin' WHERE status='PENDING'`, [actor.sub]);
-    await client.query(`INSERT INTO audit_log(actor,action,entity_type,new_values) VALUES($1,'BATCH_SOFT_DELETE','fuel_transaction',$2)`, [actor.email,{count:result.rowCount}]);
+    await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
+      VALUES($1,'BATCH_SOFT_DELETE','fuel_transaction','ALL',$2)`, [actor.email,{count:result.rowCount,clearedReviews:reviews.rowCount}]);
     return { success: true, deleted: result.rowCount, clearedReviews: reviews.rowCount };
   }); }
 }

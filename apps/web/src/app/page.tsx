@@ -50,6 +50,7 @@ type Card = {
   card_category: "PERSONALIZED" | "OFF_PARK";
   activation_locked?: boolean;
   consumed_amount?:number;
+  total_consumed_amount?:number;
   consumption_rate?:number;
   responsible_user_id?:string;
   company_id?:string;
@@ -1256,6 +1257,9 @@ export default function Home() {
           { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
         );
         if (!response.ok) throw new Error(await response.text());
+        const result = await response.json() as { deleted?: number };
+        if (!id && Number(result.deleted ?? 0) < 1 && data.transactions.length > 0)
+          throw new Error("Aucune transaction n’a été supprimée par l’API");
       } catch (error) {
         const raw = error instanceof Error ? error.message : "";
         try {
@@ -1272,6 +1276,7 @@ export default function Home() {
     };
     setData(next);
     persist(cards, next);
+    setRefreshTick((value) => value + 1);
     notify(
       id
         ? "Enregistrement supprimé"
@@ -2679,7 +2684,7 @@ function CardTable({
               <th>BÉNÉFICIAIRE / DÉPARTEMENT</th>
               <th>VÉHICULE</th>
               <th>ANCIENNE → NOUVELLE</th>
-              <th>PLAFOND / CONSOMMATION DU MOIS</th>
+              <th>PLAFOND / CONSOMMATION TOTALE</th>
               <th>STATUT</th>
               <th>ACTION</th>
             </tr>
@@ -2692,6 +2697,7 @@ function CardTable({
               // Le plafond est mensuel : le cumul affiché doit donc provenir du
               // calcul mensuel de l'API, et non de toutes les lignes chargées.
               const consumed = Number(c.consumed_amount ?? 0);
+              const totalConsumed = Number(c.total_consumed_amount ?? consumed);
               const allocations = allocationDetails(cardTransactions);
               const allocated = allocations.reduce((sum, item) => sum + item.amount, 0);
               const rate = c.monthly_limit > 0 ? Math.min(100, Math.round(consumed / c.monthly_limit * 100)) : 0;
@@ -2724,10 +2730,11 @@ function CardTable({
                       : "—"}
                 </td>
                 <td>
-                  {c.monthly_limit.toLocaleString("fr-FR")} TND
+                  <b>Plafond : {c.monthly_limit.toLocaleString("fr-FR")} TND</b>
                   <small>
-                    Consommé : {consumed.toLocaleString("fr-FR")} TND · {rate}%
-                    {" · "}Solde : {Math.max(0, c.monthly_limit-consumed).toLocaleString("fr-FR")} TND
+                    Total consommé : {totalConsumed.toLocaleString("fr-FR")} TND
+                    {" · "}Ce mois : {consumed.toLocaleString("fr-FR")} TND · {rate}%
+                    {" · "}Solde mensuel : {Math.max(0, c.monthly_limit-consumed).toLocaleString("fr-FR")} TND
                   </small>
                 </td>
                 <td>

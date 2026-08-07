@@ -3352,8 +3352,16 @@ function totalPaymentNumberKey(source: Record<string, unknown>) {
     "numerodumodedepaiement",
     "numeromodedepaiement",
     "numerodemodedepaiement",
+    "numerodumoyendepaiement",
+    "numeromoyendepaiement",
+    "numerodemoyendepaiement",
     "nmodedepaiement",
     "nomodedepaiement",
+    "nmoyendepaiement",
+    "nomoyendepaiement",
+    "numerodusupportdepaiement",
+    "numerosupportdepaiement",
+    "nsupportdepaiement",
     "numpaiement",
     "paymentmethodnumber",
   ]);
@@ -3361,7 +3369,12 @@ function totalPaymentNumberKey(source: Record<string, unknown>) {
   // TotalEnergies utilise selon l'export « Numéro du mode de paiement »,
   // « N° mode de paiement » ou « N° du mode de paiement ».
   return keys.find((header) => exactAliases.has(normalizedKey(header))) ??
-    keys.find((header) => normalizedKey(header).endsWith("modedepaiement"));
+    keys.find((header) => {
+      const key = normalizedKey(header);
+      return key.endsWith("modedepaiement") ||
+        key.endsWith("moyendepaiement") ||
+        key.endsWith("supportdepaiement");
+    });
 }
 function displayDate(value: unknown) {
   if (value instanceof Date) return value.toLocaleString("fr-MA");

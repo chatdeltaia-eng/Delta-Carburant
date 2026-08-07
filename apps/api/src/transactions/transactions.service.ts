@@ -59,9 +59,13 @@ export class TransactionsService {
       if (!cardKey) throw new BadRequestException(
         `Numéro du mode de paiement absent à la ligne ${index+2}. Import annulé : aucune consommation n'a été regroupée sur une carte inconnue.`,
       );
-      let card=await client.query(`SELECT id,company_id,official_registration,holder_name FROM fuel_card WHERE deleted_at IS NULL AND (
+      let card=await client.query(`SELECT id,company_id,official_registration,holder_name,card_category FROM fuel_card WHERE deleted_at IS NULL AND (
         regexp_replace(masked_card_number,'[^0-9]','','g')=$1 OR official_card_number=$1 OR total_payment_number=$1
-      ) ORDER BY CASE WHEN total_payment_number=$1 THEN 0 ELSE 1 END LIMIT 1`,[cardKey]);
+        OR nullif(ltrim(regexp_replace(masked_card_number,'[^0-9]','','g'),'0'),'')=nullif(ltrim($1,'0'),'')
+        OR nullif(ltrim(official_card_number,'0'),'')=nullif(ltrim($1,'0'),'')
+        OR nullif(ltrim(total_payment_number,'0'),'')=nullif(ltrim($1,'0'),'')
+      ) ORDER BY CASE WHEN total_payment_number=$1 THEN 0
+        WHEN nullif(ltrim(total_payment_number,'0'),'')=nullif(ltrim($1,'0'),'') THEN 1 ELSE 2 END LIMIT 1`,[cardKey]);
       const vehicleKey=(row.vehicle??'').toUpperCase().replace(/[^A-Z0-9]/g,'');
       const vehicleKeys=this.registrationKeys(vehicleKey);
       let vehicle=vehicleKey ? await client.query(`SELECT v.id,v.company_id,v.driver_name,d.full_name AS driver_full_name
@@ -73,8 +77,12 @@ export class TransactionsService {
         ca.beneficiary_id,b.display_name AS beneficiary_name FROM card_assignment ca
         LEFT JOIN vehicle v ON v.id=ca.vehicle_id LEFT JOIN driver d ON d.id=v.driver_id AND d.active AND d.deleted_at IS NULL
         JOIN beneficiary b ON b.id=ca.beneficiary_id WHERE ca.fuel_card_id=$1 AND ca.ends_at IS NULL AND ca.is_primary LIMIT 1`,[card.rows[0].id]):{rows:[]};
-      if(!vehicle.rows[0]&&currentAssignment.rows[0]?.id) vehicle={rows:[currentAssignment.rows[0]]} as any;
-      const isOffPark=String(row.vehicle??card.rows[0]?.official_registration??'').toUpperCase().replace(/[\s-]/g,'')==='HORSPARC';
+      // Une carte du référentiel possède déjà son affectation officielle. Elle
+      // prime sur une plaque absente, mal espacée ou descriptive dans le fichier
+      // Total (par exemple "C4").
+      if(currentAssignment.rows[0]?.id) vehicle={rows:[currentAssignment.rows[0]]} as any;
+      const isOffPark=card.rows[0]?.card_category==='OFF_PARK' ||
+        String(row.vehicle??card.rows[0]?.official_registration??'').toUpperCase().replace(/[\s-]/g,'')==='HORSPARC';
       const beneficiaryName=(row.beneficiary??currentAssignment.rows[0]?.beneficiary_name??card.rows[0]?.holder_name??vehicle.rows[0]?.driver_full_name??vehicle.rows[0]?.driver_name??'').trim();
       const companyId=vehicle.rows[0]?.company_id??card.rows[0]?.company_id;
       // Le véhicule est la source de vérité pour la société. Une carte Total

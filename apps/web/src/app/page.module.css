@@ -299,6 +299,7 @@
   gap: 17px;
   margin-top: 18px;
 }
+.overviewPanel{margin-top:18px;background:white;border:1px solid #e4e9e6;border-radius:15px;overflow:hidden}.overviewToolbar{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 21px;border-bottom:1px solid #edf0ee}.overviewToolbar h2{font-size:16px;margin-bottom:4px}.overviewToolbar p{font-size:11px;color:#78837d}.overviewToolbar input{width:min(390px,42%);border:1px solid #dce4df;border-radius:9px;padding:11px 13px;outline-color:#39865f}.overviewPanel .panelHead{display:none}.overviewPanel .tableWrap{max-height:560px}.overviewPanel .tableWrap thead{position:sticky;top:0;z-index:2}.dashboardActions{margin-top:17px}.dashboardActions>.panel{max-width:100%}.dashboardActions .actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
 .panel {
   background: white;
   border: 1px solid #e4e9e6;

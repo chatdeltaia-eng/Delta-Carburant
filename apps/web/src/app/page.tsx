@@ -1801,6 +1801,20 @@ function Dashboard({
   open: (m: Modal) => void;
   edit: (c: Card) => void;
 }) {
+  const [overviewSearch, setOverviewSearch] = useState("");
+  const query = normalizedKey(overviewSearch);
+  const overviewCards = cards.filter((card) => !query || [
+    card.masked_card_number,
+    card.beneficiary,
+    card.department,
+    card.registration,
+    card.vehicle_model,
+    card.company_code,
+    status(card.status),
+  ].some((value) => normalizedKey(String(value ?? "")).includes(query)));
+  const totalLimit = cards.reduce((sum, card) => sum + Number(card.monthly_limit ?? 0), 0);
+  const monthlyConsumed = cards.reduce((sum, card) => sum + Number(card.consumed_amount ?? 0), 0);
+  const totalConsumed = cards.reduce((sum, card) => sum + Number(card.total_consumed_amount ?? 0), 0);
   return (
     <>
       <section className={styles.metrics}>
@@ -1812,29 +1826,42 @@ function Dashboard({
           note={`${summary.totalCards} cartes au total`}
         />
         <Metric
-          icon="⛽"
+          icon="▤"
           color="blue"
-          label="Consommation importée"
-          value={`${summary.liters.toLocaleString("fr-FR")} L`}
-          note={`${summary.amount.toLocaleString("fr-FR")} MAD`}
+          label="Plafonds mensuels"
+          value={`${totalLimit.toLocaleString("fr-FR")} TND`}
+          note={`${cards.length} carte(s) contrôlée(s)`}
         />
         <Metric
-          icon="✓"
+          icon="⛽"
           color="violet"
-          label="À valider par Zin"
-          value={summary.pending}
-          note="Affectations financières"
+          label="Consommation du mois"
+          value={`${monthlyConsumed.toLocaleString("fr-FR")} TND`}
+          note={`${summary.liters.toLocaleString("fr-FR")} litres importés`}
         />
         <Metric
-          icon="!"
+          icon="Σ"
           color="orange"
-          label="Oppositions"
-          value={summary.opposed}
-          note="Perdues, volées ou opposées"
+          label="Consommation totale"
+          value={`${totalConsumed.toLocaleString("fr-FR")} TND`}
+          note={`${summary.pending} validation(s) · ${summary.opposed} opposition(s)`}
         />
       </section>
-      <section className={styles.grid}>
-        <CardTable cards={cards.slice(0, 5)} transactions={transactions} user={user} edit={edit} />
+      <section className={styles.overviewPanel}>
+        <div className={styles.overviewToolbar}>
+          <div>
+            <h2>Contrôle global des cartes et consommations</h2>
+            <p>{overviewCards.length} carte(s) affichée(s) sur {cards.length} · bénéficiaires, véhicules, plafonds et consommations</p>
+          </div>
+          <input
+            value={overviewSearch}
+            onChange={(event) => setOverviewSearch(event.target.value)}
+            placeholder="Carte, bénéficiaire, véhicule, société…"
+          />
+        </div>
+        <CardTable cards={overviewCards} transactions={transactions} user={user} edit={edit} full />
+      </section>
+      <section className={styles.dashboardActions}>
         <div className={styles.panel}>
           <div className={styles.panelHead}>
             <div>

@@ -29,6 +29,7 @@ const migrations = [
   '026_reconcile_blocked_total_transactions.sql',
   '027_complete_total_card_reference.sql',
   '028_deduplicate_total_cards.sql',
+  '029_strict_total_card_reconciliation.sql',
 ];
 
 async function main() {

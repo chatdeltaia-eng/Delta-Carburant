@@ -3403,6 +3403,25 @@ function totalPaymentNumberKey(source: Record<string, unknown>) {
         key.endsWith("supportdepaiement");
     });
 }
+function totalHolderName(source: Record<string, unknown>) {
+  const exactAliases = new Set([
+    "nomdutitulairedumodedepaiement",
+    "nomdutitulairedumoyendepaiement",
+    "nomdutitulaire",
+    "titulaire",
+    "cardholdername",
+  ]);
+  const key = Object.keys(source).find((header) =>
+    exactAliases.has(normalizedKey(header)),
+  );
+  const holder = key ? String(source[key] ?? "").trim() : "";
+  if (holder) return holder;
+  // Le chauffeur n'est qu'un secours : dans les exports Total il est souvent
+  // vide, tandis que le titulaire identifie toujours la carte de référence.
+  return String(
+    totalValue(source, ["nomdechauffeur", "nomduchauffeur", "conducteur"]) ?? "",
+  ).trim();
+}
 function displayDate(value: unknown) {
   if (value instanceof Date) return value.toLocaleString("fr-MA");
   if (typeof value === "number") {
@@ -3460,10 +3479,10 @@ function totalTransaction(
       ]) || "—",
     ),
     vehicule: String(totalValue(source,["plaquedimmatriculation","immatriculation","matriculevehicule","vehicle","registration"])||""),
-    beneficiaire: String(totalValue(source,["beneficiaire","chauffeur","conducteur","nomduchauffeur","titulaire","nomdutitulaire"])||""),
+    beneficiaire: totalHolderName(source),
     produit: String(totalValue(source,["nomdeproduit","nomduproduit","produit","product","carburant"])||"Carburant"),
     kilometragePrecedent: parseNumeric(totalValue(source,["kilometrageprecedent"])),
-    kilometrage: parseNumeric(totalValue(source,["kilometrage"])),
+    kilometrage: parseNumeric(totalValue(source,["kilometrageactuelle","kilometrageactuel"])),
     codeAutorisation: String(totalValue(source,["codedautorisation","codeautorisation","numerodetransaction"])||""),
     litres: `${String(quantity || "0")} L`,
     montant: `${String(amount || "0")} MAD`,

@@ -60,14 +60,13 @@ export class TransactionsService {
         `Numéro du mode de paiement absent à la ligne ${index+2}. Import annulé : aucune consommation n'a été regroupée sur une carte inconnue.`,
       );
       let card=await client.query(`SELECT id,company_id,official_registration,holder_name,card_category FROM fuel_card WHERE deleted_at IS NULL AND (
-        regexp_replace(masked_card_number,'[^0-9]','','g')=$1 OR official_card_number=$1 OR total_payment_number=$1
+        total_payment_number=$1
         OR (length($1)>6 AND total_payment_number=right($1,6))
-        OR nullif(ltrim(regexp_replace(masked_card_number,'[^0-9]','','g'),'0'),'')=nullif(ltrim($1,'0'),'')
-        OR nullif(ltrim(official_card_number,'0'),'')=nullif(ltrim($1,'0'),'')
-        OR nullif(ltrim(total_payment_number,'0'),'')=nullif(ltrim($1,'0'),'')
+        OR regexp_replace(masked_card_number,'[^0-9]','','g')=$1
+        OR official_card_number=$1
       ) ORDER BY CASE WHEN total_payment_number=$1 THEN 0
         WHEN length($1)>6 AND total_payment_number=right($1,6) THEN 1
-        WHEN nullif(ltrim(total_payment_number,'0'),'')=nullif(ltrim($1,'0'),'') THEN 2 ELSE 3 END LIMIT 1`,[cardKey]);
+        WHEN regexp_replace(masked_card_number,'[^0-9]','','g')=$1 THEN 2 ELSE 3 END LIMIT 1`,[cardKey]);
       const vehicleKey=(row.vehicle??'').toUpperCase().replace(/[^A-Z0-9]/g,'');
       const vehicleKeys=this.registrationKeys(vehicleKey);
       let vehicle=vehicleKey ? await client.query(`SELECT v.id,v.company_id,v.driver_name,d.full_name AS driver_full_name

@@ -415,6 +415,7 @@ export default function Home() {
     } | null>(null),
     [toast, setToast] = useState(""),
     [error, setError] = useState(""),
+    [refreshTick,setRefreshTick]=useState(0),
     [loading, setLoading] = useState(false);
   // Hydrate the browser-only demo session after the client mounts.
   /* eslint-disable react-hooks/set-state-in-effect */
@@ -496,7 +497,7 @@ export default function Home() {
     refreshRemote();
     const timer = window.setInterval(refreshRemote, 10000);
     return () => window.clearInterval(timer);
-  }, [token, user]);
+  }, [token, user, refreshTick]);
   const persist = (
     nextCards = cards,
     nextData = data,
@@ -946,9 +947,13 @@ export default function Home() {
         const response=await fetch(`${API}/transactions/import`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({filename:file.name,rows:normalized.map(row=>({date:String(row.dateApi),cardNumber:String(row.carte),vehicle:String(row.vehicule??""),beneficiary:String(row.beneficiaire??""),station:String(row.station??""),product:String(row.produit??""),liters:parseNumeric(row.litres),amount:parseNumeric(row.montant),previousMileage:parseNumeric(row.kilometragePrecedent)||undefined,mileage:parseNumeric(row.kilometrage)||undefined,authorizationCode:String(row.codeAutorisation??"")||undefined}))})});
         if(!response.ok) throw new Error(await response.text());
         const result=await response.json();
-        notify(`${result.imported} transaction(s) enregistrée(s) · ${result.pendingReview} contrôle(s) requis · ${result.duplicates} doublon(s)`);
-      } catch {
-        return notify("Fichier Total illisible : vérifiez le format Excel ou CSV");
+        setRefreshTick(value=>value+1);
+        setView("dashboard");
+        notify(`${result.imported} transaction(s) liée(s) automatiquement · ${result.duplicates} doublon(s) · ${result.pendingReview} ligne(s) non rapprochée(s)`);
+      } catch (error) {
+        const raw=error instanceof Error?error.message:"";
+        try { const parsed=JSON.parse(raw); return notify(String(parsed.message??raw)); }
+        catch { return notify(raw||"Fichier Total illisible : vérifiez le format Excel ou CSV"); }
       }
     } else notify("Paramètres enregistrés");
     setModal(null);
@@ -3302,7 +3307,7 @@ function totalTransaction(
   index: number,
 ): Row {
   const rawCard = String(totalValue(source, [
-    "numerodutitulaire", "numerodecarte", "numerocarte", "ncarte", "cardnumber",
+    "numerodumodedepaiement", "numeromodedepaiement", "numerodecarte", "numerocarte", "ncarte", "cardnumber",
   ]));
   const digits = rawCard.replace(/\D/g, "");
   const quantity = totalValue(source, [

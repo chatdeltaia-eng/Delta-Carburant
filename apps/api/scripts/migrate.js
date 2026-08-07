@@ -25,6 +25,7 @@ const migrations = [
   '022_company_driver_fuel_receipts.sql',
   '023_card_company_view.sql',
   '024_transaction_beneficiary_linking.sql',
+  '025_total_card_reference.sql',
 ];
 
 async function main() {
@@ -45,7 +46,13 @@ async function main() {
       );
       if (applied.rowCount) continue;
       const sqlPath = path.resolve(__dirname, '../../../sql', filename);
-      await client.query(fs.readFileSync(sqlPath, 'utf8'));
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      if (filename === '025_total_card_reference.sql') {
+        await client.query(sql, [
+          process.env.CARD_ENCRYPTION_KEY ?? 'delta-development-card-key',
+          process.env.CARD_HMAC_KEY ?? 'delta-development-hmac-key',
+        ]);
+      } else await client.query(sql);
       await client.query('INSERT INTO schema_migration(filename) VALUES ($1)', [filename]);
       console.log(`Applied ${filename}`);
     }

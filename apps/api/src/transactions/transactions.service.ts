@@ -56,6 +56,9 @@ export class TransactionsService {
     let imported=0,review=0,duplicates=0;
     for (let index=0;index<dto.rows.length;index++) {
       const row=dto.rows[index], cardKey=row.cardNumber.replace(/\D/g,'');
+      if (!cardKey) throw new BadRequestException(
+        `Numéro du mode de paiement absent à la ligne ${index+2}. Import annulé : aucune consommation n'a été regroupée sur une carte inconnue.`,
+      );
       let card=await client.query(`SELECT id,company_id,official_registration,holder_name FROM fuel_card WHERE deleted_at IS NULL AND (
         regexp_replace(masked_card_number,'[^0-9]','','g')=$1 OR official_card_number=$1 OR total_payment_number=$1
       ) ORDER BY CASE WHEN total_payment_number=$1 THEN 0 ELSE 1 END LIMIT 1`,[cardKey]);

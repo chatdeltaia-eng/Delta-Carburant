@@ -950,9 +950,21 @@ export default function Home() {
           return notify(
             'Colonne "Montant" introuvable : utilisez le fichier de transactions exporté depuis TotalEnergies',
           );
+        const paymentNumberKey = totalPaymentNumberKey(sourceRows[0]);
+        if (!paymentNumberKey)
+          return notify(
+            'Colonne « Numéro du mode de paiement » introuvable dans le fichier TotalEnergies',
+          );
         const normalized = sourceRows.map((source, index) =>
           totalTransaction(source, file.name, index),
         );
+        const missingCardRow = normalized.findIndex(
+          (row) => !String(row.carte).replace(/\D/g, ""),
+        );
+        if (missingCardRow >= 0)
+          return notify(
+            `Numéro du mode de paiement absent à la ligne ${missingCardRow + 2}. Import annulé pour éviter de regrouper les consommations sur une seule carte.`,
+          );
         if (!token) return notify("Session distante expirée : reconnectez-vous");
         const response=await fetch(`${API}/transactions/import`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({filename:file.name,rows:normalized.map(row=>({date:String(row.dateApi),cardNumber:String(row.carte),vehicle:String(row.vehicule??""),beneficiary:String(row.beneficiaire??""),station:String(row.station??""),product:String(row.produit??""),liters:parseNumeric(row.litres),amount:parseNumeric(row.montant),previousMileage:parseNumeric(row.kilometragePrecedent)||undefined,mileage:parseNumeric(row.kilometrage)||undefined,authorizationCode:String(row.codeAutorisation??"")||undefined}))})});
         if(!response.ok) throw new Error(await response.text());
@@ -3335,6 +3347,22 @@ function totalValue(source: Record<string, unknown>, aliases: string[]) {
   );
   return key ? source[key] : "";
 }
+function totalPaymentNumberKey(source: Record<string, unknown>) {
+  const exactAliases = new Set([
+    "numerodumodedepaiement",
+    "numeromodedepaiement",
+    "numerodemodedepaiement",
+    "nmodedepaiement",
+    "nomodedepaiement",
+    "numpaiement",
+    "paymentmethodnumber",
+  ]);
+  const keys = Object.keys(source);
+  // TotalEnergies utilise selon l'export « Numéro du mode de paiement »,
+  // « N° mode de paiement » ou « N° du mode de paiement ».
+  return keys.find((header) => exactAliases.has(normalizedKey(header))) ??
+    keys.find((header) => normalizedKey(header).endsWith("modedepaiement"));
+}
 function displayDate(value: unknown) {
   if (value instanceof Date) return value.toLocaleString("fr-MA");
   if (typeof value === "number") {
@@ -3356,9 +3384,8 @@ function totalTransaction(
   filename: string,
   index: number,
 ): Row {
-  const rawCard = String(totalValue(source, [
-    "numerodumodedepaiement", "numeromodedepaiement", "numerodecarte", "numerocarte", "ncarte", "cardnumber",
-  ]));
+  const paymentKey = totalPaymentNumberKey(source);
+  const rawCard = String(paymentKey ? source[paymentKey] : "").trim();
   const digits = rawCard.replace(/\D/g, "");
   const quantity = totalValue(source, [
     "quantite",
@@ -3383,7 +3410,7 @@ function totalTransaction(
     id: `total-${filename}-${index}-${crypto.randomUUID()}`,
     date: displayDate(rawDate),
     dateApi: Number.isNaN(parsedDate.getTime()) ? new Date().toISOString() : parsedDate.toISOString(),
-    carte: digits || rawCard || "Carte non reconnue",
+    carte: digits || rawCard,
     station: String(
       totalValue(source, [
         "stationservice",

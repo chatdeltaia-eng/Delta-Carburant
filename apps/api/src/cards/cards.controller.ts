@@ -54,7 +54,7 @@ export class CardsController {
     return this.cards.replace(id,dto.replacementCardId,dto.reason,req.user);
   }
   @Delete(':id')
-  @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE')
+  @Roles('SUPER_ADMIN','DIRECTION_GENERAL')
   remove(@Param('id', ParseUUIDPipe) id: string, @Req() req: { user: { sub: string; email: string; role: string } }) {
     return this.cards.remove(id, req.user);
   }

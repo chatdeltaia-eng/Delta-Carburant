@@ -94,7 +94,14 @@ export class TransactionsService {
       const external=row.authorizationCode?.trim()?`TOTAL:${row.authorizationCode.trim()}`:`${dto.filename}:${index+1}:${cardKey}:${row.date}`;
       const inserted=await client.query(`INSERT INTO fuel_transaction(external_transaction_id,fuel_card_id,beneficiary_id,vehicle_id,transaction_date,station,product,
         quantity_liters,amount_incl_tax,source,import_batch_id,source_row_number,previous_mileage,reported_mileage,authorization_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'TOTAL_EXCEL',$10,$11,$12,$13,$14)
-        ON CONFLICT(external_transaction_id,source) DO NOTHING RETURNING id`,[external,card.rows[0].id,beneficiary.rows[0].id,vehicle.rows[0]?.id??null,row.date,row.station??null,row.product??null,row.liters,row.amount,batch.rows[0].id,index+1,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]);
+        ON CONFLICT(external_transaction_id,source) DO UPDATE SET
+          fuel_card_id=excluded.fuel_card_id,beneficiary_id=excluded.beneficiary_id,vehicle_id=excluded.vehicle_id,
+          transaction_date=excluded.transaction_date,station=excluded.station,product=excluded.product,
+          quantity_liters=excluded.quantity_liters,amount_incl_tax=excluded.amount_incl_tax,
+          import_batch_id=excluded.import_batch_id,source_row_number=excluded.source_row_number,
+          previous_mileage=excluded.previous_mileage,reported_mileage=excluded.reported_mileage,
+          authorization_code=excluded.authorization_code,deleted_at=null,deleted_by=null
+        WHERE fuel_transaction.deleted_at IS NOT NULL RETURNING id`,[external,card.rows[0].id,beneficiary.rows[0].id,vehicle.rows[0]?.id??null,row.date,row.station??null,row.product??null,row.liters,row.amount,batch.rows[0].id,index+1,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]);
       if(inserted.rowCount){
         imported++;
         const monthUsage=await client.query(`SELECT coalesce(sum(amount_incl_tax),0)::float AS consumed FROM fuel_transaction
@@ -213,7 +220,9 @@ export class TransactionsService {
   }); }
   async removeAll(actor: Actor) { return this.db.transaction(async client => {
     const result = await client.query('UPDATE fuel_transaction SET deleted_at=now(),deleted_by=$1 WHERE deleted_at IS NULL', [actor.sub]);
+    const reviews = await client.query(`UPDATE transaction_review SET status='REJECTED',decided_by=$1,decided_at=now(),
+      decision_reason='Suppression des transactions par Zin' WHERE status='PENDING'`, [actor.sub]);
     await client.query(`INSERT INTO audit_log(actor,action,entity_type,new_values) VALUES($1,'BATCH_SOFT_DELETE','fuel_transaction',$2)`, [actor.email,{count:result.rowCount}]);
-    return { success: true, deleted: result.rowCount };
+    return { success: true, deleted: result.rowCount, clearedReviews: reviews.rowCount };
   }); }
 }

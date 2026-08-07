@@ -708,7 +708,7 @@ export default function Home() {
         setSelected(null);
         return;
       } else if (action === "delete") {
-        if (!isDirection(user.role) && user.role !== "ZIN_FINANCE")
+        if (!isDirection(user.role))
           return notify("Suppression non autorisée");
         if (
           ["LOST", "STOLEN", "OPPOSED"].includes(selected.status) &&
@@ -1232,12 +1232,14 @@ export default function Home() {
     setNotifications(nextNotifications);
     notify("Demande annulée — Zin et la Direction ont été informés");
   }
-  function deleteRow(
+  async function deleteRow(
     section: "transactions" | "vehicles" | "beneficiaries",
     id?: string,
   ) {
     if (!user || !canManage(user.role))
       return notify("Najib dispose d’un accès en consultation uniquement");
+    if (section !== "transactions" && !isDirection(user.role))
+      return notify("Zin peut supprimer uniquement les transactions");
     if (section === "vehicles" && id) {
       const vehicle = data.vehicles.find((row) => row.id === id);
       const registration = String(vehicle?.immatriculation ?? "").trim().toLowerCase();
@@ -1246,6 +1248,24 @@ export default function Home() {
     }
     const label = id ? "cet enregistrement" : "toutes les transactions";
     if (!window.confirm(`Confirmer la suppression de ${label} ?`)) return;
+    if (section === "transactions") {
+      if (!token) return notify("Session expirée : reconnectez-vous");
+      try {
+        const response = await fetch(
+          id ? `${API}/transactions/${id}` : `${API}/transactions/batch/all`,
+          { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
+        );
+        if (!response.ok) throw new Error(await response.text());
+      } catch (error) {
+        const raw = error instanceof Error ? error.message : "";
+        try {
+          const parsed = JSON.parse(raw);
+          return notify(String(parsed.message ?? "Suppression non enregistrée"));
+        } catch {
+          return notify(raw || "Suppression non enregistrée dans la base");
+        }
+      }
+    }
     const next = {
       ...data,
       [section]: id ? data[section].filter((row) => row.id !== id) : [],
@@ -2565,7 +2585,7 @@ function DataView({
                       <span>Consultation</span>
                     )
                   ) : view === "vehicles" ? (
-                    canManage(user.role) && !String(r.id).startsWith("vehicle-card-") ? <>
+                    isDirection(user.role) && !String(r.id).startsWith("vehicle-card-") ? <>
                       <button className={styles.smallBtn} onClick={() => editVehicle(r)}>Modifier</button>{" "}
                       <button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={() => deleteRow("vehicles", r.id)}>Supprimer</button>
                     </> : <span>Consultation</span>
@@ -2928,9 +2948,7 @@ function ModalForm({
                     <option value="unblock">Débloquer / réactiver</option>
                   </>
                 )}
-                {(isDirection(user.role) || user.role === "ZIN_FINANCE") && (
-                  <option value="delete">Archiver la carte</option>
-                )}
+                {isDirection(user.role) && <option value="delete">Archiver la carte</option>}
               </select>
             </label>
             {action === "assign" && (

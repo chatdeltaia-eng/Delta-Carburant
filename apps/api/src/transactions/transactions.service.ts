@@ -73,7 +73,10 @@ export class TransactionsService {
         FROM vehicle v LEFT JOIN driver d ON d.id=v.driver_id AND d.deleted_at IS NULL AND d.active
         WHERE regexp_replace(upper(coalesce(v.registration_normalized::text,v.registration_display)),'[^A-Z0-9]','','g')=ANY($1::text[])
         AND v.active AND v.deleted_at IS NULL
-        ORDER BY CASE WHEN regexp_replace(upper(v.registration_display),'[^A-Z0-9]','','g')=$2 THEN 0 ELSE 1 END LIMIT 1`,[vehicleKeys,vehicleKey]) : {rows:[]};
+        ORDER BY CASE WHEN v.company_id=$3::uuid THEN 0 ELSE 1 END,
+          CASE WHEN regexp_replace(upper(coalesce(d.full_name,v.driver_name,'')),'[^A-Z0-9]','','g')=$4 THEN 0 ELSE 1 END,
+          CASE WHEN regexp_replace(upper(v.registration_display),'[^A-Z0-9]','','g')=$2 THEN 0 ELSE 1 END LIMIT 1`,
+        [vehicleKeys,vehicleKey,card.rows[0]?.company_id??null,String(row.beneficiary??card.rows[0]?.holder_name??'').toUpperCase().replace(/[^A-Z0-9]/g,'')]) : {rows:[]};
       const currentAssignment=card.rows[0]?await client.query(`SELECT ca.vehicle_id AS id,v.company_id,v.driver_name,d.full_name AS driver_full_name,
         ca.beneficiary_id,b.display_name AS beneficiary_name FROM card_assignment ca
         LEFT JOIN vehicle v ON v.id=ca.vehicle_id LEFT JOIN driver d ON d.id=v.driver_id AND d.active AND d.deleted_at IS NULL
@@ -147,20 +150,35 @@ export class TransactionsService {
       WHERE active AND role::text=ANY($1::text[])`,[['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'],`${review} transaction(s) nécessitent la vérification d’une carte ou d’un véhicule`,batch.rows[0].id]);
     return {batchId:batch.rows[0].id,imported,duplicates,pendingReview:review};
   }); }
-  async review(id:string,dto:{decision:'ACCEPTED'|'REJECTED';reason?:string;fuelCardId?:string;vehicleId?:string},actor:Actor) { return this.db.transaction(async client => {
+  async review(id:string,dto:{decision:'ACCEPTED'|'REJECTED';reason?:string;fuelCardId?:string;vehicleId?:string;newVehicleRegistration?:string;newVehicleType?:string;newVehicleCompanyId?:string;beneficiaryName?:string},actor:Actor) { return this.db.transaction(async client => {
     const found=await client.query(`SELECT * FROM transaction_review WHERE id=$1 AND status='PENDING' FOR UPDATE`,[id]);
     const row=found.rows[0]; if(!row) throw new NotFoundException('Contrôle introuvable ou déjà traité');
     if(dto.decision==='REJECTED') {
       await client.query(`INSERT INTO anomaly(fuel_card_id,anomaly_type,severity,status,description,assigned_to)
         VALUES($1,$2,'HIGH','OPEN',$3,$4)`,[row.fuel_card_id,row.issue_type,row.issue_type==='UNKNOWN_CARD'?`Carte ${row.card_number} inconnue de DeltaCarburant ayant effectué une transaction de ${row.amount_incl_tax}`:row.issue_type==='MISSING_BENEFICIARY'?`Aucun bénéficiaire identifié pour le véhicule ${row.vehicle_registration}`:`Véhicule ${row.vehicle_registration} externe utilisant la carte ${row.card_number}`,actor.sub]);
     } else {
-      const vehicleKey=(row.vehicle_registration??'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-      const vehicle=dto.vehicleId?await client.query(`SELECT v.id,v.company_id,v.driver_name,d.full_name AS driver_full_name,v.registration_display
+      const requestedRegistration=String(dto.newVehicleRegistration??row.vehicle_registration??'').trim();
+      const vehicleKey=requestedRegistration.toUpperCase().replace(/[^A-Z0-9]/g,'');
+      let vehicle=dto.vehicleId?await client.query(`SELECT v.id,v.company_id,v.driver_name,d.full_name AS driver_full_name,v.registration_display
         FROM vehicle v LEFT JOIN driver d ON d.id=v.driver_id AND d.deleted_at IS NULL AND d.active
         WHERE v.id=$1 AND v.active AND v.deleted_at IS NULL`,[dto.vehicleId]):vehicleKey?await client.query(`SELECT v.id,v.company_id,v.driver_name,d.full_name AS driver_full_name,v.registration_display
         FROM vehicle v LEFT JOIN driver d ON d.id=v.driver_id AND d.deleted_at IS NULL AND d.active
-        WHERE regexp_replace(upper(coalesce(v.registration_normalized::text,v.registration_display)),'[^A-Z0-9]','','g')=$1
-        AND v.active AND v.deleted_at IS NULL LIMIT 1`,[vehicleKey]):{rows:[]};
+        WHERE regexp_replace(upper(coalesce(v.registration_normalized::text,v.registration_display)),'[^A-Z0-9]','','g')=ANY($1::text[])
+        AND v.active AND v.deleted_at IS NULL LIMIT 1`,[this.registrationKeys(vehicleKey)]):{rows:[]};
+      if(!vehicle.rows[0]&&dto.newVehicleRegistration){
+        if(['HORSPARC','C4','CITROENC4'].includes(vehicleKey))
+          throw new BadRequestException('HORS PARC et CITROEN C4 ne sont pas des immatriculations. Saisissez une vraie plaque.');
+        if(!dto.newVehicleCompanyId||!dto.newVehicleType?.trim())
+          throw new BadRequestException('La société et le type du nouveau véhicule sont obligatoires.');
+        const company=await client.query('SELECT id FROM company WHERE id=$1 AND active',[dto.newVehicleCompanyId]);
+        if(!company.rows[0])throw new BadRequestException('Société introuvable ou inactive.');
+        vehicle=await client.query(`INSERT INTO vehicle(company_id,registration_normalized,registration_display,vehicle_type,model,driver_name,active)
+          VALUES($1,$2,$3,$4,$4,$5,true)
+          ON CONFLICT(company_id,registration_normalized) DO UPDATE SET active=true,vehicle_type=excluded.vehicle_type,
+            driver_name=coalesce(nullif(excluded.driver_name,''),vehicle.driver_name),updated_at=now()
+          RETURNING id,company_id,driver_name,null::text AS driver_full_name,registration_display`,
+          [dto.newVehicleCompanyId,vehicleKey,dto.newVehicleRegistration.trim(),dto.newVehicleType.trim(),dto.beneficiaryName?.trim()??null]);
+      }
       if(!vehicle.rows[0]) throw new BadRequestException('Sélectionnez un véhicule existant pour enregistrer cette transaction.');
       const companyId=vehicle.rows[0].company_id;
       const cardKey=String(row.card_number).replace(/\D/g,'');
@@ -178,7 +196,7 @@ export class TransactionsService {
       // suivants : carte, plaque et societe restent synchronisees.
       await client.query(`UPDATE fuel_card SET company_id=$2,official_registration=$3,
         card_category='PERSONALIZED',updated_at=now() WHERE id=$1`,[card.rows[0].id,companyId,vehicle.rows[0].registration_display]);
-      const beneficiaryName=(row.beneficiary_name??card.rows[0].holder_name??vehicle.rows[0].driver_full_name??vehicle.rows[0].driver_name??`Conducteur ${vehicle.rows[0].registration_display}`).trim();
+      const beneficiaryName=(dto.beneficiaryName??row.beneficiary_name??card.rows[0].holder_name??vehicle.rows[0].driver_full_name??vehicle.rows[0].driver_name??`Conducteur ${vehicle.rows[0].registration_display}`).trim();
       const department=await client.query(`INSERT INTO department(company_id,name) VALUES($1,'Transactions importées')
         ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id`,[companyId]);
       const beneficiary=await client.query(`INSERT INTO beneficiary(company_id,department_id,display_name) VALUES($1,$2,$3)

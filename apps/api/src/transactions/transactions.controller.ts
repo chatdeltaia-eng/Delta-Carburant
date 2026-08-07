@@ -42,6 +42,10 @@ class ReviewDecisionDto {
   @IsOptional() @IsString() reason?: string;
   @IsOptional() @IsUUID() fuelCardId?: string;
   @IsOptional() @IsUUID() vehicleId?: string;
+  @IsOptional() @IsString() newVehicleRegistration?: string;
+  @IsOptional() @IsString() newVehicleType?: string;
+  @IsOptional() @IsUUID() newVehicleCompanyId?: string;
+  @IsOptional() @IsString() beneficiaryName?: string;
 }
 class AllocationDecisionDto { @IsIn(['APPROVED','REJECTED']) decision!:'APPROVED'|'REJECTED'; @IsOptional() @IsString() reason?:string; }
 

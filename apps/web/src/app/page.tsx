@@ -486,7 +486,7 @@ export default function Home() {
           ...current,
           requests: (requestPayload.items ?? requestPayload).map(toRequestRow),
           transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),reviewId:String(row.reviewId??""),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),statut:row.reviewStatus==="PENDING"?(row.reviewIssue==="MISSING_BENEFICIARY"?"Bénéficiaire à identifier":"Véhicule inconnu à valider"):"Importée Total",fichier:String(row.file??"—") })),
-          anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.issueType)==="MISSING_BENEFICIARY"?"Bénéficiaire manquant":"Véhicule inconnu",carte:String(row.cardNumber),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),gravite:"Haute",statut:String(row.status)==="PENDING"?"À vérifier":String(row.status)==="ACCEPTED"?"Acceptée":"Refusée" })),
+          anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.issueType)==="MISSING_BENEFICIARY"?"Bénéficiaire manquant":"Véhicule inconnu",carte:String(row.cardNumber),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),gravite:"Haute",statut:String(row.status)==="PENDING"?"À vérifier":String(row.status)==="ACCEPTED"?"Acceptée":"Refusée" })),
           vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),companyId:String(row.companyId??""),numero:Number(row.fleetNumber??0),immatriculation:String(row.registration),type:String(row.vehicleType??row.model??"—"),societe:String(row.company??"—"),mise_en_circulation:row.firstRegistrationDate?new Date(String(row.firstRegistrationDate)).toLocaleDateString("fr-FR"):"À compléter",reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
           mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:String(row.week??"—"),vehicule:String(row.vehicle),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),attendu:Number(row.expectedMileage??0),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—")})),
           drivers:(driversPayload.items??driversPayload).map((row:Record<string,unknown>)=>({id:String(row.id),societe:String(row.company),nom:String(row.fullName),cin:String(row.cin??"—"),telephone:String(row.phone??"—"),permis:String(row.licenseNumber??"—"),vehicules:Array.isArray(row.vehicles)?(row.vehicles as {registration:string}[]).map(item=>item.registration).join(", "):"—",statut:Boolean(row.active)?"Actif":"Inactif"})),
@@ -1425,7 +1425,7 @@ export default function Home() {
     if(!token) return notify("Session expirée");
     const reason=accepted?"":window.prompt("Motif du refus","");
     if(!accepted&&!reason?.trim()) return notify("Le motif du refus est obligatoire");
-    let fuelCardId:string|undefined,vehicleId:string|undefined;
+    let fuelCardId:string|undefined,vehicleId:string|undefined,newVehicleRegistration:string|undefined,newVehicleType:string|undefined,newVehicleCompanyId:string|undefined,beneficiaryName:string|undefined;
     if(accepted){
       const review=data.anomalies.find(row=>row.id===id)??data.transactions.find(row=>String(row.reviewId)===id);
       const requestedCard=window.prompt("Numéro de la carte à affecter",String(review?.carte??""));
@@ -1440,10 +1440,23 @@ export default function Home() {
       if(requestedVehicle===null)return;
       const vehicleKey=normalizedKey(requestedVehicle);
       const selectedVehicle=data.vehicles.find(vehicle=>normalizedKey(String(vehicle.immatriculation))===vehicleKey);
-      if(!selectedVehicle)return notify("Véhicule introuvable : saisissez une immatriculation présente dans la liste des véhicules");
-      fuelCardId=selectedCard.id;vehicleId=selectedVehicle.id;
+      if(selectedVehicle)vehicleId=selectedVehicle.id;
+      else {
+        if(["horsparc","c4","citroenc4"].includes(vehicleKey))return notify("Cette valeur n’est pas une immatriculation. Choisissez un véhicule existant avec sa vraie plaque.");
+        if(!window.confirm(`Le véhicule ${requestedVehicle} est absent de la liste. Voulez-vous le créer et l’affecter ?`))return;
+        const companyCode=window.prompt("Société du nouveau véhicule",selectedCard.company_code);
+        if(companyCode===null)return;
+        const selectedCompany=companies.find(company=>normalizedKey(company.code)===normalizedKey(companyCode));
+        if(!selectedCompany)return notify("Société introuvable : utilisez un code présent dans la liste des sociétés");
+        const type=window.prompt("Type du nouveau véhicule (obligatoire)","");
+        if(!type?.trim())return notify("Le type du véhicule est obligatoire");
+        const holder=window.prompt("Nom du bénéficiaire / conducteur",String(review?.beneficiaire??selectedCard.beneficiary??""));
+        if(!holder?.trim())return notify("Le nom du bénéficiaire est obligatoire");
+        newVehicleRegistration=requestedVehicle.trim();newVehicleType=type.trim();newVehicleCompanyId=selectedCompany.id;beneficiaryName=holder.trim();
+      }
+      fuelCardId=selectedCard.id;
     }
-    try { const response=await fetch(`${API}/transactions/reviews/${id}`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({decision:accepted?"ACCEPTED":"REJECTED",reason:reason||undefined,fuelCardId,vehicleId})}); if(!response.ok) throw new Error(await response.text());
+    try { const response=await fetch(`${API}/transactions/reviews/${id}`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({decision:accepted?"ACCEPTED":"REJECTED",reason:reason||undefined,fuelCardId,vehicleId,newVehicleRegistration,newVehicleType,newVehicleCompanyId,beneficiaryName})}); if(!response.ok) throw new Error(await response.text());
       setData(current=>({...current,transactions:current.transactions.filter(row=>String(row.reviewId)!==id),anomalies:current.anomalies.map(row=>row.id===id?{...row,statut:accepted?"Acceptée":"Refusée"}:row)})); notify(accepted?"Transaction enregistrée : véhicule, bénéficiaire et carte liés automatiquement":"Transaction refusée et classée");
     } catch (error) {
       const raw=error instanceof Error?error.message:"";

@@ -7,7 +7,8 @@ type ImportRow = { date:string; cardNumber:string; vehicle?:string; station?:str
 @Injectable()
 export class TransactionsService {
   constructor(private readonly db: DatabaseService) {}
-  list(actor: { sub: string; role: string }) { return this.db.query(`SELECT ft.id,ft.transaction_date AS date,fc.masked_card_number AS card,
+  async list(actor: { sub: string; role: string }) {
+    const transactions = await this.db.query(`SELECT ft.id,ft.transaction_date AS date,fc.masked_card_number AS card,
     ft.station,ft.product,ft.quantity_liters AS liters,ft.amount_incl_tax AS amount,tib.source_filename AS file,
     b.display_name AS beneficiary,v.registration_display AS vehicle,ft.corrected_at AS "correctedAt",
     fc.card_category AS "cardCategory",fc.monthly_limit AS "monthlyLimit",
@@ -28,7 +29,18 @@ export class TransactionsService {
     LEFT JOIN transaction_allocation ta ON ta.fuel_transaction_id=ft.id
     WHERE ft.deleted_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2)
     GROUP BY ft.id,fc.id,tib.source_filename,b.display_name,v.registration_display
-    ORDER BY ft.transaction_date DESC`, [actor.role==='NAJIB_ASSIGNER',actor.sub]); }
+    ORDER BY ft.transaction_date DESC`, [actor.role==='NAJIB_ASSIGNER',actor.sub]);
+    if (actor.role === 'NAJIB_ASSIGNER') return transactions;
+    const pending = await this.db.query(`SELECT ('review:'||tr.id::text) AS id,tr.transaction_date AS date,
+      tr.card_number AS card,tr.station,tr.product,tr.quantity_liters AS liters,tr.amount_incl_tax AS amount,
+      tib.source_filename AS file,null::text AS beneficiary,tr.vehicle_registration AS vehicle,
+      null::timestamptz AS "correctedAt",null::text AS "cardCategory",null::numeric AS "monthlyLimit",
+      0::numeric AS "allocatedAmount",tr.amount_incl_tax AS "remainingAmount",null::uuid AS "pendingAllocationId",
+      '[]'::jsonb AS allocations,tr.id AS "reviewId",tr.issue_type AS "reviewIssue",tr.status AS "reviewStatus"
+      FROM transaction_review tr JOIN transaction_import_batch tib ON tib.id=tr.import_batch_id
+      WHERE tr.status='PENDING' ORDER BY tr.transaction_date DESC`);
+    return [...pending,...transactions].sort((a:any,b:any)=>new Date(b.date).getTime()-new Date(a.date).getTime());
+  }
   reviews() { return this.db.query(`SELECT id,issue_type AS "issueType",status,card_number AS "cardNumber",
     vehicle_registration AS vehicle,transaction_date AS date,station,product,quantity_liters AS liters,
     amount_incl_tax AS amount,created_at AS "createdAt" FROM transaction_review ORDER BY created_at DESC`); }
@@ -91,8 +103,27 @@ export class TransactionsService {
           VALUES($1,pgp_sym_encrypt($2,$3,'cipher-algo=aes256'),hmac($2,$4,'sha256'),$2,0,'ACTIVE','PERSONALIZED') RETURNING id`,[company.rows[0].id,row.card_number,process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key']); cardId=created.rows[0].id;
       }
       let vehicleId=null;
-      if(row.vehicle_registration) { const key=row.vehicle_registration.toUpperCase().replace(/[^A-Z0-9]/g,''); const vehicle=await client.query(`INSERT INTO vehicle(company_id,registration_normalized,registration_display,requires_review)
-        VALUES($1,$2,$3,false) ON CONFLICT(company_id,registration_normalized) DO UPDATE SET active=true RETURNING id`,[company.rows[0].id,key,row.vehicle_registration]); vehicleId=vehicle.rows[0].id; }
+      if(row.vehicle_registration) {
+        const key=row.vehicle_registration.toUpperCase().replace(/[^A-Z0-9]/g,'');
+        const existing=await client.query(`SELECT id FROM vehicle WHERE company_id=$1 AND registration_normalized=$2 AND deleted_at IS NULL LIMIT 1`,[company.rows[0].id,key]);
+        if(existing.rows[0]) vehicleId=existing.rows[0].id;
+        else {
+          const vehicle=await client.query(`INSERT INTO vehicle(company_id,registration_normalized,registration_display,requires_review)
+            VALUES($1,$2,$3,false) RETURNING id`,[company.rows[0].id,key,row.vehicle_registration]);
+          vehicleId=vehicle.rows[0].id;
+        }
+      }
+      if(!vehicleId) throw new BadRequestException('Le véhicule de la transaction est introuvable. Créez-le avant d’accepter, ou refusez la transaction.');
+      const assignment=await client.query(`SELECT id FROM card_assignment WHERE fuel_card_id=$1 AND ends_at IS NULL AND is_primary LIMIT 1`,[cardId]);
+      if(!assignment.rows[0]) {
+        const department=await client.query(`INSERT INTO department(company_id,name) VALUES($1,'Transactions importées') ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id`,[company.rows[0].id]);
+        const beneficiary=await client.query(`INSERT INTO beneficiary(company_id,department_id,display_name) VALUES($1,$2,$3)
+          ON CONFLICT(company_id,display_name) DO UPDATE SET active=true RETURNING id`,[company.rows[0].id,department.rows[0].id,`Carte importée ${row.card_number}`]);
+        await client.query(`INSERT INTO card_assignment(fuel_card_id,beneficiary_id,vehicle_id,workflow_status,requested_by,reviewed_by,reviewed_at)
+          VALUES($1,$2,$3,'APPROVED_ZIN',$4,$4,now())`,[cardId,beneficiary.rows[0].id,vehicleId,actor.sub]);
+      } else {
+        await client.query(`UPDATE card_assignment SET vehicle_id=$2,workflow_status='APPROVED_ZIN',reviewed_by=$3,reviewed_at=now() WHERE id=$1`,[assignment.rows[0].id,vehicleId,actor.sub]);
+      }
       await client.query(`INSERT INTO fuel_transaction(external_transaction_id,fuel_card_id,vehicle_id,transaction_date,station,product,quantity_liters,amount_incl_tax,source,import_batch_id,source_row_number,previous_mileage,reported_mileage,authorization_code)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,'TOTAL_EXCEL',$9,$10,$11,$12,$13)`,[row.authorization_code?`TOTAL:${row.authorization_code}`:`review:${row.id}`,cardId,vehicleId,row.transaction_date,row.station,row.product,row.quantity_liters,row.amount_incl_tax,row.import_batch_id,row.source_row_number,row.previous_mileage,row.reported_mileage,row.authorization_code]);
     }

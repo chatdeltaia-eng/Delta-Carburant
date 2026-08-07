@@ -26,6 +26,7 @@ const migrations = [
   '023_card_company_view.sql',
   '024_transaction_beneficiary_linking.sql',
   '025_total_card_reference.sql',
+  '026_reconcile_blocked_total_transactions.sql',
 ];
 
 async function main() {

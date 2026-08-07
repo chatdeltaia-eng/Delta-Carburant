@@ -852,6 +852,8 @@ export default function Home() {
       if (modal === "vehicle") {
         const registration = String(row.immatriculation ?? "").trim().toUpperCase();
         if (!registration) return notify("La matricule est obligatoire");
+        if (!String(row.type ?? "").trim()) return notify("Le type de véhicule est obligatoire");
+        if (!String(row.societe ?? "").trim()) return notify("La société est obligatoire");
         if (data.vehicles.some((vehicle) => String(vehicle.immatriculation).trim().toUpperCase() === registration))
           return notify("Cette matricule existe déjà");
         row.immatriculation = registration;
@@ -1641,7 +1643,7 @@ export default function Home() {
           }}
           submit={
             modal === "editRow"
-              ? (e) => {
+              ? async (e) => {
                   e.preventDefault();
                   if (!editingRow) return;
                   const values = Object.fromEntries(
@@ -1651,9 +1653,20 @@ export default function Home() {
                   if (editingRow.view === "vehicles") {
                     const registration = String(values.immatriculation ?? "").trim().toUpperCase();
                     if (!registration) return notify("La matricule est obligatoire");
+                    if (!String(values.type ?? "").trim()) return notify("Le type de véhicule est obligatoire");
+                    if (!String(values.societe ?? "").trim()) return notify("La société est obligatoire");
                     if (data.vehicles.some((row) => row.id !== values.id && String(row.immatriculation).trim().toUpperCase() === registration))
                       return notify("Cette matricule existe déjà");
                     values.immatriculation = registration;
+                    const company=companies.find(item=>item.code.toLowerCase()===String(values.societe).trim().toLowerCase());
+                    if(!company)return notify("Société inconnue : choisissez une société existante");
+                    if(!token)return notify("Session distante expirée");
+                    try {
+                      const response=await fetch(`${API}/vehicles/${values.id}`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({companyId:company.id,registration,brand:String(values.reference??"")||undefined,model:String(values.type),active:String(values.statut??"Actif")!=="Inactif"})});
+                      if(!response.ok)throw new Error(await response.text());
+                    } catch(error) {
+                      return notify(error instanceof Error?error.message:"La modification du véhicule n’a pas été enregistrée");
+                    }
                   }
                   const next = {
                     ...data,
@@ -2285,14 +2298,13 @@ function DataView({
         "date",
         "carte",
         "beneficiaire",
+        "vehicule",
         "station",
         "produit",
         "litres",
         "montant",
         "typeCarte",
-        "plafond",
         "reparti",
-        "reste",
         "detailRepartition",
         "statut",
         "fichier",
@@ -2405,9 +2417,8 @@ function DataView({
   ];
   const transactionRows: Row[] = data.transactions.map((row) => {
     const card = cards.find((item) => item.masked_card_number === String(row.carte));
-    const amount = parseNumeric(row.montant);
     const allocated = parseNumeric(row.montantReparti);
-    return { ...row, typeCarte: card?.card_category === "OFF_PARK" ? "Hors parc" : "Personnalisée", plafond: card ? `${card.monthly_limit.toLocaleString("fr-FR")} DT` : "Carte inconnue", reparti: `${allocated.toFixed(3)} DT`, reste: `${Math.max(0, amount - allocated).toFixed(3)} DT`, detailRepartition: row.repartition || "Non répartie" };
+    return { ...row, typeCarte: card?.card_category === "OFF_PARK" ? "Hors parc" : "Personnalisée", reparti: `${allocated.toFixed(3)} DT`, detailRepartition: row.repartition || "Non répartie" };
   });
   const sourceRows = view === "beneficiaries" ? beneficiaryRows : view === "vehicles" ? vehicleRows : view === "transactions" ? transactionRows : (data[view] ?? []);
   const companyChoices=[...new Set((view==="vehicles"?vehicleRows:cards.map(card=>({societe:card.company_code}))).map(row=>String(row.societe??"")).filter(Boolean))];
@@ -2651,15 +2662,14 @@ function CardTable({
               const cardTransactions = transactions.filter(
                 (row) => String(row.carte) === c.masked_card_number,
               );
-              const consumed = cardTransactions
-                .reduce((sum, row) => sum + parseNumeric(row.montant), 0);
+              // Le plafond est mensuel : le cumul affiché doit donc provenir du
+              // calcul mensuel de l'API, et non de toutes les lignes chargées.
+              const consumed = Number(c.consumed_amount ?? 0);
               const allocations = allocationDetails(cardTransactions);
               const allocated = allocations.reduce((sum, item) => sum + item.amount, 0);
               const rate = c.monthly_limit > 0 ? Math.min(100, Math.round(consumed / c.monthly_limit * 100)) : 0;
               const previous = c.old_card_id ? cards.find((item) => item.id === c.old_card_id) : undefined;
-              const previousConsumed = previous ? transactions
-                .filter((row) => String(row.carte) === previous.masked_card_number)
-                .reduce((sum, row) => sum + parseNumeric(row.montant), 0) : 0;
+              const previousConsumed = Number(previous?.consumed_amount ?? 0);
               const previousRate = previous?.monthly_limit ? Math.min(100, Math.round(previousConsumed / previous.monthly_limit * 100)) : 100;
               const locked = Boolean(c.activation_locked && previousRate < 100);
               return (
@@ -2688,7 +2698,10 @@ function CardTable({
                 </td>
                 <td>
                   {c.monthly_limit.toLocaleString("fr-FR")} TND
-                  <small>{consumed.toLocaleString("fr-FR")} TND · {rate}% consommé</small>
+                  <small>
+                    Consommé : {consumed.toLocaleString("fr-FR")} TND · {rate}%
+                    {" · "}Solde : {Math.max(0, c.monthly_limit-consumed).toLocaleString("fr-FR")} TND
+                  </small>
                 </td>
                 <td>
                   <span
@@ -3045,11 +3058,9 @@ function ModalForm({
                     }
                     accept={type === "import" ? ".xlsx,.xls,.csv,text/csv" : undefined}
                     required={
-                      !(
-                      ["beneficiary", "department", "registration", "vehicleModel"].includes(
-                          f[0],
-                        ) && type === "card"
-                      )
+                      type === "vehicle" || (type === "editRow" && editingRow?.view === "vehicles")
+                        ? ["immatriculation", "type", "societe"].includes(f[0])
+                        : !(["beneficiary", "department", "registration", "vehicleModel"].includes(f[0]) && type === "card")
                     }
                   />
                 )}

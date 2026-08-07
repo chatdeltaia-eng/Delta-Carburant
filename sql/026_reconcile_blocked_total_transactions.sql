@@ -21,7 +21,7 @@ FROM matched m WHERE fc.id=m.card_id AND fc.company_id<>m.company_id;
 WITH candidates AS (
   SELECT DISTINCT ON (tr.id) tr.*,fc.id AS card_id,v.id AS vehicle_id,v.company_id,
     coalesce(nullif(trim(tr.beneficiary_name),''),nullif(trim(fc.holder_name),''),
-      nullif(trim(v.driver_name),''),'Titulaire '||v.registration_display) AS beneficiary_name
+      nullif(trim(v.driver_name),''),'Titulaire '||v.registration_display) AS resolved_beneficiary_name
   FROM transaction_review tr
   JOIN fuel_card fc ON fc.deleted_at IS NULL AND (
     regexp_replace(fc.masked_card_number,'[^0-9]','','g')=regexp_replace(tr.card_number,'[^0-9]','','g') OR
@@ -38,18 +38,18 @@ WITH candidates AS (
   ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id,company_id
 ), beneficiaries AS (
   INSERT INTO beneficiary(company_id,department_id,display_name)
-  SELECT DISTINCT c.company_id,d.id,c.beneficiary_name FROM candidates c JOIN departments d USING(company_id)
+  SELECT DISTINCT c.company_id,d.id,c.resolved_beneficiary_name FROM candidates c JOIN departments d USING(company_id)
   ON CONFLICT(company_id,display_name) DO UPDATE SET active=true RETURNING id,company_id,display_name
 ), assignments_updated AS (
   UPDATE card_assignment ca SET beneficiary_id=b.id,vehicle_id=c.vehicle_id,
     workflow_status='APPROVED_ZIN',reviewed_at=now()
-  FROM candidates c JOIN beneficiaries b ON b.company_id=c.company_id AND b.display_name=c.beneficiary_name
+  FROM candidates c JOIN beneficiaries b ON b.company_id=c.company_id AND b.display_name=c.resolved_beneficiary_name
   WHERE ca.fuel_card_id=c.card_id AND ca.ends_at IS NULL AND ca.is_primary
   RETURNING ca.fuel_card_id
 ), assignments_inserted AS (
   INSERT INTO card_assignment(fuel_card_id,beneficiary_id,vehicle_id,workflow_status)
   SELECT DISTINCT c.card_id,b.id,c.vehicle_id,'APPROVED_ZIN'
-  FROM candidates c JOIN beneficiaries b ON b.company_id=c.company_id AND b.display_name=c.beneficiary_name
+  FROM candidates c JOIN beneficiaries b ON b.company_id=c.company_id AND b.display_name=c.resolved_beneficiary_name
   WHERE NOT EXISTS(SELECT 1 FROM card_assignment ca
     WHERE ca.fuel_card_id=c.card_id AND ca.ends_at IS NULL AND ca.is_primary)
   RETURNING fuel_card_id
@@ -61,7 +61,7 @@ WITH candidates AS (
     ELSE 'review:'||c.id END,c.card_id,b.id,c.vehicle_id,c.transaction_date,c.station,c.product,
     c.quantity_liters,c.amount_incl_tax,'TOTAL_EXCEL',c.import_batch_id,c.source_row_number,
     c.previous_mileage,c.reported_mileage,c.authorization_code
-  FROM candidates c JOIN beneficiaries b ON b.company_id=c.company_id AND b.display_name=c.beneficiary_name
+  FROM candidates c JOIN beneficiaries b ON b.company_id=c.company_id AND b.display_name=c.resolved_beneficiary_name
   ON CONFLICT(external_transaction_id,source) DO NOTHING RETURNING import_batch_id,source_row_number
 )
 UPDATE transaction_review tr SET status='ACCEPTED',decided_at=now(),

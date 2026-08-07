@@ -24,6 +24,7 @@ const migrations = [
   '021_vehicle_registration_dates.sql',
   '022_company_driver_fuel_receipts.sql',
   '023_card_company_view.sql',
+  '024_transaction_beneficiary_linking.sql',
 ];
 
 async function main() {

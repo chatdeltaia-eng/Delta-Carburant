@@ -24,6 +24,7 @@ class ImportRowDto {
   @IsString() date!: string;
   @IsString() cardNumber!: string;
   @IsOptional() @IsString() vehicle?: string;
+  @IsOptional() @IsString() beneficiary?: string;
   @IsOptional() @IsString() station?: string;
   @IsOptional() @IsString() product?: string;
   @IsNumber() @Min(0.001) liters!: number;

@@ -30,6 +30,7 @@ const migrations = [
   '027_complete_total_card_reference.sql',
   '028_deduplicate_total_cards.sql',
   '029_strict_total_card_reconciliation.sql',
+  '030_replace_card_reference_41.sql',
 ];
 
 async function main() {
@@ -51,7 +52,7 @@ async function main() {
       if (applied.rowCount) continue;
       const sqlPath = path.resolve(__dirname, '../../../sql', filename);
       const sql = fs.readFileSync(sqlPath, 'utf8');
-      if (['025_total_card_reference.sql', '027_complete_total_card_reference.sql'].includes(filename)) {
+      if (['025_total_card_reference.sql', '027_complete_total_card_reference.sql', '030_replace_card_reference_41.sql'].includes(filename)) {
         // node-postgres cannot use the extended (parameterized) protocol for a
         // migration containing several SQL commands. Escape the two server-side
         // secrets, then execute the migration through PostgreSQL's simple query

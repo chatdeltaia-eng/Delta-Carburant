@@ -31,6 +31,7 @@ const migrations = [
   '028_deduplicate_total_cards.sql',
   '029_strict_total_card_reconciliation.sql',
   '030_replace_card_reference_41.sql',
+  '031_correct_41_card_limits.sql',
 ];
 
 async function main() {

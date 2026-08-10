@@ -32,10 +32,23 @@ export class TransactionsService {
     LEFT JOIN beneficiary b ON b.id=ft.beneficiary_id LEFT JOIN vehicle v ON v.id=ft.vehicle_id
     LEFT JOIN transaction_import_batch tib ON tib.id=ft.import_batch_id
     LEFT JOIN transaction_allocation ta ON ta.fuel_transaction_id=ft.id
-    WHERE ft.deleted_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2)
+    WHERE ft.deleted_at IS NULL AND ($1::boolean=false OR fc.card_category='OFF_PARK' OR fc.responsible_user_id=$2)
     GROUP BY ft.id,fc.id,tib.source_filename,b.display_name,v.registration_display
     ORDER BY ft.transaction_date DESC`, [actor.role==='NAJIB_ASSIGNER',actor.sub]);
-    if (actor.role === 'NAJIB_ASSIGNER') return transactions;
+    if (actor.role === 'NAJIB_ASSIGNER') {
+      const pending = await this.db.query(`SELECT ('review:'||tr.id::text) AS id,tr.transaction_date AS date,
+        tr.card_number AS card,tr.station,tr.product,tr.quantity_liters AS liters,tr.amount_incl_tax AS amount,
+        tib.source_filename AS file,tr.beneficiary_name AS beneficiary,tr.vehicle_registration AS vehicle,
+        null::timestamptz AS "correctedAt",fc.card_category AS "cardCategory",fc.monthly_limit AS "monthlyLimit",
+        0::numeric AS "allocatedAmount",tr.amount_incl_tax AS "remainingAmount",null::uuid AS "pendingAllocationId",
+        '[]'::jsonb AS allocations,tr.id AS "reviewId",tr.issue_type AS "reviewIssue",tr.status AS "reviewStatus"
+        FROM transaction_review tr
+        JOIN transaction_import_batch tib ON tib.id=tr.import_batch_id
+        JOIN fuel_card fc ON fc.id=tr.fuel_card_id
+        WHERE tr.status='PENDING' AND (fc.card_category='OFF_PARK' OR fc.responsible_user_id=$1)
+        ORDER BY tr.transaction_date DESC`, [actor.sub]);
+      return [...pending,...transactions].sort((a:any,b:any)=>new Date(b.date).getTime()-new Date(a.date).getTime());
+    }
     const pending = await this.db.query(`SELECT ('review:'||tr.id::text) AS id,tr.transaction_date AS date,
       tr.card_number AS card,tr.station,tr.product,tr.quantity_liters AS liters,tr.amount_incl_tax AS amount,
       tib.source_filename AS file,tr.beneficiary_name AS beneficiary,tr.vehicle_registration AS vehicle,
@@ -216,11 +229,12 @@ export class TransactionsService {
   }); }
   async allocate(id: string, dto: Allocation, actor: Actor) { return this.db.transaction(async client => {
     const transaction = await client.query(`SELECT ft.amount_incl_tax,ft.quantity_liters,fc.responsible_user_id,
-      fc.company_id FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
+      fc.company_id,fc.card_category FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
       WHERE ft.id=$1 AND ft.deleted_at IS NULL FOR UPDATE OF ft,fc`, [id]);
     const source = transaction.rows[0];
     if (!source) throw new NotFoundException('Transaction introuvable');
-    if (source.responsible_user_id !== actor.sub) throw new NotFoundException('Cette carte ne relève pas de ce responsable');
+    if (source.card_category !== 'OFF_PARK' && source.responsible_user_id !== actor.sub)
+      throw new NotFoundException('Cette transaction ne relève pas du workflow hors parc');
     if (!Number.isFinite(dto.amount) || dto.amount <= 0) throw new BadRequestException('Le montant à répartir doit être positif');
     const allocationTotal = await client.query(`SELECT coalesce(sum(allocated_amount),0) AS allocated
       FROM transaction_allocation WHERE fuel_transaction_id=$1 AND workflow_status IN('PENDING','APPROVED')`, [id]);

@@ -1,14 +1,14 @@
 .app {
   min-height: 100vh;
-  background: #f5f7f6;
-  color: #17221d;
+  background: #f6f7fb;
+  color: #171922;
 }
 .sidebar {
   position: fixed;
   inset: 0 auto 0 0;
   width: 244px;
-  background: #102e23;
-  color: #c8d7d0;
+  background: linear-gradient(180deg, #08090d 0%, #11131a 70%, #090a0e 100%);
+  color: #d7d8df;
   padding: 30px 18px;
   display: flex;
   flex-direction: column;
@@ -21,26 +21,10 @@
   gap: 11px;
   font-size: 18px;
   color: white;
-  padding: 0 10px 34px;
+  padding: 0 8px 28px;
 }
-.brand > span,
-.loginBrand > span {
-  display: grid;
-  place-items: center;
-  width: 39px;
-  height: 39px;
-  border-radius: 12px;
-  background: #d5f55f;
-  color: #123426;
-  font-size: 25px;
-  font-weight: 800;
-}
-.brand strong,
-.loginBrand strong {
-  display: block;
-  color: #d5f55f;
-  font-weight: 700;
-}
+.brand img{width:132px;height:auto;object-fit:contain;filter:drop-shadow(0 6px 18px #0008)}
+.loginBrand img{width:168px;height:auto;object-fit:contain;filter:drop-shadow(0 8px 22px #08090d25)}
 .sidebar nav {
   display: grid;
   gap: 7px;
@@ -61,8 +45,9 @@
 .sidebar a:hover,
 .sidebar nav button:hover,
 .sidebar .active {
-  background: #1d4435;
+  background: linear-gradient(90deg,#162739,#21182d);
   color: white;
+  box-shadow:inset 3px 0 #13a8dd;
 }
 .sideBottom {
   margin-top: auto;
@@ -543,6 +528,21 @@
   font-weight: 900;
   transform: rotate(-6deg);
 }
+
+/* Identité Delta Carburant : noir premium et accents du ruban multicolore. */
+.smallBtn{border-color:#b8ddef;background:#eef8fc;color:#087da9;font-weight:700}
+.importNotice{border-color:#cddfea;background:linear-gradient(100deg,#f0fafb,#f5f3fb);color:#354c61}.importNotice b{color:#172d43}
+.transactionTracker{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 20px 0}
+.transactionTracker article{display:flex;align-items:center;gap:11px;padding:14px;border:1px solid #e3e5ed;border-radius:12px;background:linear-gradient(135deg,#fff,#f7f8fc);box-shadow:0 7px 18px #1519250a}
+.transactionTracker article>span{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#05b9c9,#405de6 55%,#7623a8);color:#fff;font-size:10px;font-weight:900}
+.transactionTracker small,.transactionTracker strong{display:block}.transactionTracker small{color:#747888;font-size:9px;margin-bottom:3px}.transactionTracker strong{font-size:21px;color:#171922}.transactionTracker article:last-child>span{background:linear-gradient(135deg,#ef8b24,#efb622)}
+.waitingStatus{display:inline-block;padding:6px 9px;border-radius:7px;background:#fff3df;color:#a86710;font-size:10px;font-weight:800}
+.login{background:#f7f8fb}.loginBrand{width:194px;padding:8px 13px;margin-bottom:42px;border-radius:16px;background:#090a0e;color:white;box-shadow:0 12px 32px #0c10201f}.loginBrand strong{color:#405de6}
+.login form>button{background:linear-gradient(100deg,#05a9c7,#405de6 58%,#7623a8)}.login form>button:hover{background:linear-gradient(100deg,#0694ad,#354fd0 58%,#641c91)}
+.login>aside{background:radial-gradient(circle at 80% 20%,#172c47 0,#0d1018 42%,#07080c 100%)}
+.loginLogoMark{width:230px;height:150px;display:grid;place-items:center;margin-bottom:18px}.loginLogoMark img{width:210px;height:210px;object-fit:contain;filter:drop-shadow(0 14px 34px #000)}
+.orb{display:none}
+@media(max-width:900px){.transactionTracker{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width: 1000px) {
   .workflowSteps {
     grid-template-columns: 1fr 1fr;

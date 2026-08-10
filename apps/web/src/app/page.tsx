@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, Fragment, useEffect, useState } from "react";
+import Image from "next/image";
 import * as XLSX from "xlsx";
 import styles from "./page.module.css";
 
@@ -248,7 +249,7 @@ const viewMeta: Record<View, [string, string]> = {
   fuelPrices: ["Prix carburants", "Historique des prix et ajustement automatique des plafonds."],
   transactions: [
     "Transactions Total",
-    "Données importées de TotalEnergies ; correction Zin/DG avec historique.",
+    "Suivi des transactions Total, corrections et répartitions hors parc.",
   ],
   requests: ["Demandes", "Suivez les workflows et validations."],
   mileage: ["Kilométrage hebdomadaire", "Suivez les relevés, distances détectées et validations."],
@@ -1514,10 +1515,7 @@ export default function Home() {
     <div className={styles.app}>
       <aside className={styles.sidebar}>
         <div className={styles.brand}>
-          <span>Δ</span>
-          <div>
-            Delta<strong>Carburant</strong>
-          </div>
+          <Image src="/brand/delta-logo.png" alt="Delta Carburant" width={148} height={148} priority />
         </div>
         <nav>
           {nav.map((n) => (
@@ -2565,6 +2563,18 @@ function DataView({
           </span>
         </div>
       )}
+      {view === "transactions" && user.role === "NAJIB_ASSIGNER" && (() => {
+        const ready = transactionRows.filter(row => !row.reviewId && !row.repartitionEnAttente && parseNumeric(row.montant) > parseNumeric(row.montantReparti)).length;
+        const pending = transactionRows.filter(row => Boolean(row.repartitionEnAttente)).length;
+        const completed = transactionRows.filter(row => !row.reviewId && parseNumeric(row.montant) > 0 && parseNumeric(row.montantReparti) >= parseNumeric(row.montant)).length;
+        const corrections = transactionRows.filter(row => Boolean(row.reviewId)).length;
+        return <div className={styles.transactionTracker}>
+          <article><span>01</span><div><small>À répartir</small><strong>{ready}</strong></div></article>
+          <article><span>02</span><div><small>En validation Zin / DG</small><strong>{pending}</strong></div></article>
+          <article><span>03</span><div><small>Réparties</small><strong>{completed}</strong></div></article>
+          <article><span>!</span><div><small>À corriger par Zin</small><strong>{corrections}</strong></div></article>
+        </div>;
+      })()}
       {(view === "beneficiaries" || view === "vehicles" || view === "drivers") && (
         <div className={styles.importNotice}>
           <b>{view === "vehicles" ? "Référentiel du parc automobile" : view==="drivers"?"Chauffeurs par société":"Module alimenté automatiquement"}</b>
@@ -2643,7 +2653,7 @@ function DataView({
                   ) : view === "mileage" && canManage(user.role) && r.statut === "EN_ATTENTE_ZIN" ? (
                     <><button className={styles.smallBtn} onClick={()=>decideMileage(r.id,true)}>Valider</button>{" "}<button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>decideMileage(r.id,false)}>Refuser</button></>
                   ) : view === "transactions" && r.reviewId ? (
-                    canManage(user.role) ? <><button className={styles.smallBtn} onClick={()=>decideReview(String(r.reviewId),true)}>Accepter et créer/lier</button>{" "}<button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>decideReview(String(r.reviewId),false)}>Déclarer inexistante</button></> : <span>En attente de Zin / DG</span>
+                    canManage(user.role) ? <><button className={styles.smallBtn} onClick={()=>decideReview(String(r.reviewId),true)}>Accepter et créer/lier</button>{" "}<button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>decideReview(String(r.reviewId),false)}>Déclarer inexistante</button></> : <span className={styles.waitingStatus}>À corriger par Zin / DG</span>
                   ) : view === "transactions" ? (
                     user.role === "NAJIB_ASSIGNER" ? (
                       <button className={styles.smallBtn} onClick={() => allocateConsumption(r)}>Répartir</button>
@@ -3226,10 +3236,7 @@ function Login({
     <main className={styles.login}>
       <section>
         <div className={styles.loginBrand}>
-          <span>Δ</span>
-          <div>
-            Delta<strong>Carburant</strong>
-          </div>
+          <Image src="/brand/delta-logo.png" alt="Delta Carburant" width={184} height={184} priority />
         </div>
         <h1>Bienvenue</h1>
         <p>Connectez-vous avec vos identifiants professionnels.</p>
@@ -3260,7 +3267,7 @@ function Login({
         </form>
       </section>
       <aside>
-        <div className={styles.orb}>Δ</div>
+        <div className={styles.loginLogoMark}><Image src="/brand/delta-logo.png" alt="Delta Carburant" width={230} height={230} priority /></div>
         <h2>
           Un workflow clair.
           <br />

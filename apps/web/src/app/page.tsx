@@ -26,6 +26,7 @@ type CardStatus =
   | "ASSIGNED"
   | "DISTRIBUTED"
   | "ACTIVE"
+  | "SAFE"
   | "SUSPENDED"
   | "LOST"
   | "STOLEN"
@@ -3381,6 +3382,7 @@ function status(s: CardStatus) {
     ASSIGNED: "Affectée",
     DISTRIBUTED: "Distribuée",
     ACTIVE: "Active",
+    SAFE: "En coffre — non distribuée",
     SUSPENDED: "Suspendue",
     LOST: "Perdue",
     STOLEN: "Volée",

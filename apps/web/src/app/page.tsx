@@ -1842,39 +1842,41 @@ function Dashboard({
     card.company_code,
     status(card.status),
   ].some((value) => normalizedKey(String(value ?? "")).includes(query)));
-  const totalLimit = cards.reduce((sum, card) => sum + Number(card.monthly_limit ?? 0), 0);
-  const monthlyConsumed = cards.reduce((sum, card) => sum + Number(card.consumed_amount ?? 0), 0);
-  const totalConsumed = cards.reduce((sum, card) => sum + Number(card.total_consumed_amount ?? 0), 0);
+  const activeCards = cards.filter((card) => card.status === "ACTIVE");
+  const safeCards = cards.filter((card) => card.status === "SAFE");
+  const activeMonthlyLimit = activeCards.reduce((sum, card) => sum + Number(card.monthly_limit ?? 0), 0);
+  const safeCardsLimit = safeCards.reduce((sum, card) => sum + Number(card.monthly_limit ?? 0), 0);
+  const activeMonthlyConsumed = activeCards.reduce((sum, card) => sum + Number(card.consumed_amount ?? 0), 0);
   return (
     <>
       <section className={styles.metrics}>
         <Metric
           icon="▣"
+          color="orange"
+          label="Cartes en coffre"
+          value={safeCards.length}
+          note={`${safeCardsLimit.toLocaleString("fr-FR")} TND de plafonds non distribués`}
+        />
+        <Metric
+          icon="▣"
           color="green"
           label="Cartes actives"
-          value={summary.activeCards}
-          note={`${summary.totalCards} cartes au total`}
+          value={activeCards.length}
+          note={`${cards.length} cartes au total`}
         />
         <Metric
           icon="▤"
           color="blue"
-          label="Plafonds mensuels"
-          value={`${totalLimit.toLocaleString("fr-FR")} TND`}
-          note={`${cards.length} carte(s) contrôlée(s)`}
+          label="Plafond mensuel actif"
+          value={`${activeMonthlyLimit.toLocaleString("fr-FR")} TND`}
+          note={`${activeCards.length} carte(s) active(s) uniquement`}
         />
         <Metric
           icon="⛽"
           color="violet"
-          label="Consommation du mois"
-          value={`${monthlyConsumed.toLocaleString("fr-FR")} TND`}
-          note={`${summary.liters.toLocaleString("fr-FR")} litres importés`}
-        />
-        <Metric
-          icon="Σ"
-          color="orange"
-          label="Consommation totale"
-          value={`${totalConsumed.toLocaleString("fr-FR")} TND`}
-          note={`${summary.pending} validation(s) · ${summary.opposed} opposition(s)`}
+          label="Consommation mensuelle active"
+          value={`${activeMonthlyConsumed.toLocaleString("fr-FR")} TND`}
+          note={`Sur un plafond de ${activeMonthlyLimit.toLocaleString("fr-FR")} TND`}
         />
       </section>
       <section className={styles.overviewPanel}>

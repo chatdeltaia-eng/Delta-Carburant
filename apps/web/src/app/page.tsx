@@ -1846,30 +1846,31 @@ function Dashboard({
   const safeCards = cards.filter((card) => card.status === "SAFE");
   const activeMonthlyLimit = activeCards.reduce((sum, card) => sum + Number(card.monthly_limit ?? 0), 0);
   const safeCardsLimit = safeCards.reduce((sum, card) => sum + Number(card.monthly_limit ?? 0), 0);
+  const totalMonthlyLimit = activeMonthlyLimit + safeCardsLimit;
   const activeMonthlyConsumed = activeCards.reduce((sum, card) => sum + Number(card.consumed_amount ?? 0), 0);
   return (
     <>
       <section className={styles.metrics}>
         <Metric
+          icon="Σ"
+          color="blue"
+          label="Plafond mensuel total"
+          value={`${totalMonthlyLimit.toLocaleString("fr-FR")} TND`}
+          note={`${cards.length} cartes au total`}
+        />
+        <Metric
           icon="▣"
           color="orange"
-          label="Cartes en coffre"
-          value={safeCards.length}
-          note={`${safeCardsLimit.toLocaleString("fr-FR")} TND de plafonds non distribués`}
+          label="Plafond en coffre — Oui"
+          value={`${safeCardsLimit.toLocaleString("fr-FR")} TND`}
+          note={`${safeCards.length} carte(s) non distribuée(s)`}
         />
         <Metric
           icon="▣"
           color="green"
-          label="Cartes actives"
-          value={activeCards.length}
-          note={`${cards.length} cartes au total`}
-        />
-        <Metric
-          icon="▤"
-          color="blue"
-          label="Plafond mensuel actif"
+          label="Plafond distribué — Coffre Non"
           value={`${activeMonthlyLimit.toLocaleString("fr-FR")} TND`}
-          note={`${activeCards.length} carte(s) active(s) uniquement`}
+          note={`${activeCards.length} carte(s) distribuée(s)`}
         />
         <Metric
           icon="⛽"

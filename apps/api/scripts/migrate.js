@@ -37,6 +37,7 @@ const migrations = [
   '034_total_driver_reference.sql',
   '035_card_custody_double_approval.sql',
   '036_najib_exact_scope_and_allocation_tracking.sql',
+  '037_najib_nine_card_scope.sql',
 ];
 
 async function main() {

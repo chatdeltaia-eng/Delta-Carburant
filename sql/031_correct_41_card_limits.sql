@@ -76,8 +76,8 @@ WHERE ca.fuel_card_id=fc.id AND ca.ends_at IS NULL AND r.registration IS NULL;
 
 -- Cree les vehicules manquants correspondant aux plaques fixes.
 WITH delta AS (SELECT id FROM company WHERE code='DELTA' LIMIT 1)
-INSERT INTO vehicle(company_id,registration_display,brand,model)
-SELECT delta.id,r.registration,r.holder,'Carte Total'
+INSERT INTO vehicle(company_id,registration_normalized,registration_display,brand,model)
+SELECT delta.id,regexp_replace(upper(r.registration),'[^A-Z0-9]','','g'),r.registration,r.holder,'Carte Total'
 FROM corrected_card_reference r CROSS JOIN delta
 WHERE r.registration IS NOT NULL
 ON CONFLICT(company_id,registration_normalized) DO UPDATE SET

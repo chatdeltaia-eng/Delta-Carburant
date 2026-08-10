@@ -70,6 +70,13 @@ LEFT JOIN LATERAL (
   LIMIT 1
 ) existing ON true;
 
+-- Les numeros officiels de l'ancien referentiel ne designent pas toujours la
+-- meme carte Total dans le nouveau fichier (par exemple 0001). La resolution
+-- ci-dessus est faite a partir du numero Total; on libere ensuite les anciens
+-- numeros officiels pour permettre leur reattribution sans collision unique.
+UPDATE fuel_card SET official_card_number=null,updated_at=now()
+WHERE official_card_number IS NOT NULL;
+
 UPDATE fuel_card fc SET
   official_card_number=m.card_no,total_payment_number=m.payment_no,
   holder_name=m.holder,official_registration=coalesce(m.registration,'HORS PARC'),

@@ -2,7 +2,7 @@ import { Body,Controller,Delete,Get,Param,ParseUUIDPipe,Patch,Post,Query,Req,Use
 import { AuthGuard } from '@nestjs/passport';
 import { IsBoolean,IsOptional,IsString,IsUUID,MinLength } from 'class-validator';
 import { Roles } from '../common/roles'; import { RolesGuard } from '../common/roles.guard'; import { DriversService } from './drivers.service';
-class DriverDto{@IsUUID() companyId!:string;@IsString()@MinLength(2) fullName!:string;@IsOptional()@IsString() cin?:string;@IsOptional()@IsString() phone?:string;@IsOptional()@IsString() licenseNumber?:string;@IsOptional()@IsBoolean() active?:boolean;}
+class DriverDto{@IsUUID() companyId!:string;@IsString()@MinLength(1) customerNumber!:string;@IsString()@MinLength(2) customerName!:string;@IsString()@MinLength(1) driverNumber!:string;@IsString()@MinLength(2) firstName!:string;@IsString()@MinLength(2) lastName!:string;@IsString()@MinLength(1) driverCode!:string;@IsOptional()@IsBoolean() active?:boolean;}
 @UseGuards(AuthGuard('jwt'),RolesGuard) @Controller('drivers') export class DriversController{
  constructor(private readonly service:DriversService){}
  @Get() @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE','NAJIB_ASSIGNER') list(@Query('companyId') companyId='',@Req() req:{user:{sub:string;role:string}}){return this.service.list(companyId,req.user);}

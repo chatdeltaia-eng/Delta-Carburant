@@ -474,8 +474,13 @@ export default function Home() {
         if(responsiblesResponse?.ok)setResponsibles(await responsiblesResponse.json());
         if(companiesResponse?.ok)setCompanies(await companiesResponse.json());
         if(safeResponse?.ok)setSafeCards(await safeResponse.json());
-        if (!cardResponse.ok || !requestResponse.ok || !notificationResponse.ok || !transactionResponse.ok || !summaryResponse.ok || !vehiclesResponse.ok || !mileageResponse.ok || !driversResponse.ok || !fuelPricesResponse.ok)
-          throw new Error("Impossible de charger les données distantes");
+        const requiredResponses=[
+          ["cartes",cardResponse],["demandes",requestResponse],["notifications",notificationResponse],
+          ["transactions",transactionResponse],["tableau de bord",summaryResponse],["véhicules",vehiclesResponse],
+          ["kilométrages",mileageResponse],["chauffeurs",driversResponse],["prix carburant",fuelPricesResponse],
+        ] as const;
+        const failed=requiredResponses.find(([,response])=>!response.ok);
+        if(failed) throw new Error(`${failed[0]} (${failed[1].status})`);
         const cardPayload = await cardResponse.json();
         const requestPayload = await requestResponse.json();
         const notificationPayload = await notificationResponse.json();
@@ -492,16 +497,16 @@ export default function Home() {
         setData((current) => ({
           ...current,
           requests: (requestPayload.items ?? requestPayload).map(toRequestRow),
-          transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),reviewId:String(row.reviewId??""),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),statut:row.reviewStatus==="PENDING"?(row.reviewIssue==="MISSING_BENEFICIARY"?"Bénéficiaire à identifier":"Véhicule inconnu à valider"):"Importée Total",fichier:String(row.file??"—") })),
+          transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => {const allocations=Array.isArray(row.allocations)?row.allocations as Record<string,unknown>[]:[];return { id:String(row.id),reviewId:String(row.reviewId??""),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),repartition:allocations.map(item=>`${String(item.beneficiary)} — ${String(item.vehicle)} — ${Number(item.amount).toFixed(3)} DT${item.mileage?` — ${Number(item.mileage)} km`:""}`).join(" | "),statut:row.reviewStatus==="PENDING"?(row.reviewIssue==="MISSING_BENEFICIARY"?"Bénéficiaire à identifier":"Véhicule inconnu à valider"):"Importée Total",fichier:String(row.file??"—") }}),
           anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.issueType)==="MISSING_BENEFICIARY"?"Bénéficiaire manquant":"Véhicule inconnu",carte:String(row.cardNumber),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),gravite:"Haute",statut:String(row.status)==="PENDING"?"À vérifier":String(row.status)==="ACCEPTED"?"Acceptée":"Refusée" })),
           vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),companyId:String(row.companyId??""),numero:Number(row.fleetNumber??0),immatriculation:String(row.registration),type:String(row.vehicleType??row.model??"—"),societe:String(row.company??"—"),mise_en_circulation:row.firstRegistrationDate?new Date(String(row.firstRegistrationDate)).toLocaleDateString("fr-FR"):"À compléter",reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
           mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:String(row.week??"—"),vehicule:String(row.vehicle),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),attendu:Number(row.expectedMileage??0),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—")})),
-          drivers:(driversPayload.items??driversPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numeroClient:String(row.customerNumber??"—"),nomClient:String(row.customerName??"—"),numeroChauffeur:String(row.driverNumber??"—"),prenom:String(row.firstName??"—"),nom:String(row.lastName??row.fullName??"—"),codeChauffeur:String(row.driverCode??"—"),vehicules:Array.isArray(row.vehicles)?(row.vehicles as {registration:string}[]).map(item=>item.registration).join(", "):"—",statut:Boolean(row.active)?"Actif":"Inactif"})),
+          drivers:(driversPayload.items??driversPayload).map((row:Record<string,unknown>)=>({id:String(row.id),companyId:String(row.companyId??""),nomComplet:String(row.fullName??"—"),numeroClient:String(row.customerNumber??"—"),nomClient:String(row.customerName??"—"),numeroChauffeur:String(row.driverNumber??"—"),prenom:String(row.firstName??"—"),nom:String(row.lastName??row.fullName??"—"),codeChauffeur:String(row.driverCode??"—"),vehicules:Array.isArray(row.vehicles)?(row.vehicles as {registration:string}[]).map(item=>item.registration).join(", "):"—",statut:Boolean(row.active)?"Actif":"Inactif"})),
           fuelPrices:(fuelPricesPayload.items??fuelPricesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),societe:String(row.company),produit:String(row.product),ancienPrix:Number(row.oldPrice),nouveauPrix:Number(row.newPrice),variation:`${Number(row.variationPercent).toFixed(2)} %`,date:new Date(String(row.effectiveDate)).toLocaleDateString("fr-FR"),auteur:String(row.createdBy??"—")})),
         }));
         setDatabaseSummary(summaryPayload);
       })
-      .catch(() => setError("API distante indisponible — aucune donnée locale ne sera enregistrée"));
+      .catch((reason) => setError(`Synchronisation API impossible${reason instanceof Error ? ` : ${reason.message}` : ""}. Vérifiez le déploiement API; aucune donnée locale ne sera enregistrée.`));
     refreshRemote();
     const timer = window.setInterval(refreshRemote, 10000);
     return () => window.clearInterval(timer);
@@ -1356,7 +1361,8 @@ export default function Home() {
   }
   function allocateConsumption(row: Row) {
     if (!user || user.role !== "NAJIB_ASSIGNER") return notify("Répartition réservée au responsable hors parc");
-    const card = cards.find((item) => item.masked_card_number === String(row.carte));
+    const cardKey=String(row.carte).replace(/\D/g,"").replace(/^0+/,"");
+    const card = cards.find((item) => item.masked_card_number.replace(/\D/g,"").replace(/^0+/,"") === cardKey);
     if (!card) return notify("Carte introuvable dans votre périmètre");
     const originalAmount = parseNumeric(row.montant);
     const alreadyAllocated = parseNumeric(row.montantReparti);
@@ -1368,21 +1374,29 @@ export default function Home() {
     e.preventDefault();
     if (!allocationRow || !user || user.role !== "NAJIB_ASSIGNER") return;
     const f = new FormData(e.currentTarget);
-    const beneficiary = String(f.get("beneficiary") ?? "").trim();
-    const vehicle = String(f.get("vehicle") ?? "").trim();
+    const driverId = String(f.get("driverId") ?? "").trim();
+    const vehicleId = String(f.get("vehicleId") ?? "").trim();
     const amount = parseNumeric(f.get("amount"));
     const originalAmount = parseNumeric(allocationRow.montant);
     const alreadyAllocated = parseNumeric(allocationRow.montantReparti);
     const remaining = Math.max(0, originalAmount - alreadyAllocated);
-    if (!beneficiary) return notify("Le poseur est obligatoire");
-    if (!vehicle) return notify("La matricule du véhicule est obligatoire");
+    if (!driverId) return notify("Le chauffeur Total enregistré est obligatoire");
+    if (!vehicleId) return notify("Le véhicule est obligatoire");
     if (amount <= 0 || amount > remaining) return notify("Le montant réparti doit être positif et ne peut pas dépasser le reste");
     if(!token)return notify("Session distante expirée");
-    let pendingAllocationId="";try{const response=await fetch(`${API}/transactions/${allocationRow.id}/allocations`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({beneficiary,vehicle,amount,note:"Répartition hebdomadaire du responsable hors parc"})});if(!response.ok)throw new Error(await response.text());const created=await response.json();pendingAllocationId=String(created.id);}catch{return notify("La répartition n’a pas été enregistrée dans la base");}
-    const allocation = `${beneficiary} — ${vehicle} — ${amount.toFixed(3)} DT`;
+    const selectedDriver=data.drivers.find(row=>String(row.id)===driverId);
+    const selectedVehicle=data.vehicles.find(row=>String(row.id)===vehicleId);
+    const mileageValue=window.prompt(`Kilométrage réel obligatoire du véhicule ${String(selectedVehicle?.immatriculation??"")} après cette transaction`,String(selectedVehicle?.kilometrage??""));
+    if(mileageValue===null)return;
+    const mileage=parseNumeric(mileageValue);
+    if(!Number.isFinite(mileage)||mileage<Number(selectedVehicle?.kilometrage??0))return notify(`Le kilométrage doit être supérieur ou égal à ${Number(selectedVehicle?.kilometrage??0)} km`);
+    let pendingAllocationId="";try{const response=await fetch(`${API}/transactions/${allocationRow.id}/allocations`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({driverId,vehicleId,amount,mileage,note:"Répartition de consommation par Najib"})});if(!response.ok)throw new Error(await response.text());const created=await response.json();pendingAllocationId=String(created.id);}catch(error){return notify(error instanceof Error?error.message:"La répartition n’a pas été enregistrée dans la base");}
+    const driverName=String(selectedDriver?.nomComplet??`${selectedDriver?.prenom??""} ${selectedDriver?.nom??""}`).trim();
+    const vehicle=String(selectedVehicle?.immatriculation??"");
+    const allocation = `${driverName} — ${vehicle} — ${amount.toFixed(3)} DT — ${mileage} km`;
     const next = { ...data, transactions: data.transactions.map((item) => item.id === allocationRow.id ? {
       ...item,
-      montantReparti: alreadyAllocated,
+      montantReparti: alreadyAllocated + amount,
       repartitionEnAttente:pendingAllocationId,
       repartition: item.repartition ? `${item.repartition} | ${allocation}` : allocation,
       derniereRepartition: new Date().toLocaleString("fr-MA"),
@@ -1652,10 +1666,7 @@ export default function Home() {
         const original = parseNumeric(allocationRow.montant);
         const allocated = parseNumeric(allocationRow.montantReparti);
         const remaining = Math.max(0, original - allocated);
-        const poseurs = Array.from(new Set([
-          ...cardsForUser.map((card) => card.beneficiary),
-          ...data.beneficiaries.map((row) => String(row.nom ?? "")),
-        ].filter(Boolean) as string[]));
+        const activeDrivers=data.drivers.filter(row=>String(row.statut)==="Actif");
         const availableVehicles = data.vehicles.filter(
           (row) => String(row.immatriculation ?? "").trim() && String(row.immatriculation) !== "À COMPLÉTER",
         );
@@ -1676,16 +1687,19 @@ export default function Home() {
               </div>
               <div className={styles.formGrid}>
                 <label>
-                  Poseur bénéficiaire
-                  <input name="beneficiary" list="poseurs-list" placeholder="Choisir ou saisir le poseur" required />
-                  <datalist id="poseurs-list">{poseurs.map((name) => <option value={name} key={name} />)}</datalist>
+                  Chauffeur / poseur Total
+                  <select name="driverId" required defaultValue="">
+                    <option value="" disabled>Choisir un chauffeur enregistré</option>
+                    {activeDrivers.map(driver=><option value={String(driver.id)} key={String(driver.id)}>{String(driver.nomComplet)} · code {String(driver.codeChauffeur)}</option>)}
+                  </select>
+                  {!activeDrivers.length&&<small>Aucun chauffeur disponible : créez-le d’abord dans « Chauffeurs ».</small>}
                 </label>
                 <label>
                   Matricule du véhicule
-                  <select name="vehicle" required defaultValue="">
+                  <select name="vehicleId" required defaultValue="">
                     <option value="" disabled>Choisir dans le parc automobile</option>
                     {availableVehicles.map((vehicle) => (
-                      <option value={String(vehicle.immatriculation)} key={String(vehicle.id)}>
+                      <option value={String(vehicle.id)} key={String(vehicle.id)}>
                         {String(vehicle.immatriculation)} · {String(vehicle.type)} · {String(vehicle.reference)}
                       </option>
                     ))}
@@ -1697,10 +1711,11 @@ export default function Home() {
                 </label>
                 <div className={styles.workflowInfo}>
                   <b>Traçabilité TotalEnergies conservée</b>
-                  <span>La transaction originale reste inchangée. Le responsable enregistre sa répartition par poseur et véhicule avec une traçabilité complète.</span>
+                  <span>Le chauffeur doit exister dans la référence Total. Après validation de cette étape, la plateforme demande obligatoirement le kilométrage réel du véhicule.</span>
                 </div>
               </div>
               <div className={styles.modalActions}>
+                <button type="button" onClick={() => {setAllocationRow(null);setModal("driver");}}>Créer un chauffeur</button>
                 <button type="button" onClick={() => setAllocationRow(null)}>Annuler</button>
                 <button type="submit">Enregistrer la répartition</button>
               </div>

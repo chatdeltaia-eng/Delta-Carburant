@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { DatabaseService } from '../database/database.service';
 type Actor = { sub: string; email: string };
 type Correction = { station?: string; liters?: number; amount?: number; reason: string };
-type Allocation = { beneficiaryId?: string; vehicleId?: string; beneficiary?:string;vehicle?:string; amount: number; liters?: number; note?: string };
+type Allocation = { driverId: string; vehicleId: string; amount: number; mileage: number; liters?: number; note?: string };
 type ImportRow = { date:string; cardNumber:string; vehicle?:string; beneficiary?:string; station?:string; product?:string; liters:number; amount:number; previousMileage?:number; mileage?:number; authorizationCode?:string };
 @Injectable()
 export class TransactionsService {
@@ -17,15 +17,17 @@ export class TransactionsService {
     ft.station,ft.product,ft.quantity_liters AS liters,ft.amount_incl_tax AS amount,tib.source_filename AS file,
     b.display_name AS beneficiary,v.registration_display AS vehicle,ft.corrected_at AS "correctedAt",
     fc.card_category AS "cardCategory",fc.monthly_limit AS "monthlyLimit",
-    coalesce(sum(ta.allocated_amount) FILTER(WHERE ta.workflow_status='APPROVED'),0) AS "allocatedAmount",
-    ft.amount_incl_tax-coalesce(sum(ta.allocated_amount) FILTER(WHERE ta.workflow_status='APPROVED'),0) AS "remainingAmount",
+    coalesce(sum(ta.allocated_amount) FILTER(WHERE ta.workflow_status IN ('PENDING','APPROVED')),0) AS "allocatedAmount",
+    ft.amount_incl_tax-coalesce(sum(ta.allocated_amount) FILTER(WHERE ta.workflow_status IN ('PENDING','APPROVED')),0) AS "remainingAmount",
     (array_agg(ta.id) FILTER(WHERE ta.workflow_status='PENDING'))[1] AS "pendingAllocationId",
     coalesce((SELECT jsonb_agg(jsonb_build_object(
-      'id',detail.id,'beneficiary',db.display_name,'vehicle',dv.registration_display,
+      'id',detail.id,'beneficiary',coalesce(dr.full_name,db.display_name),'driverId',detail.driver_id,
+      'vehicle',dv.registration_display,'mileage',detail.reported_mileage,
       'amount',detail.allocated_amount,'liters',detail.allocated_liters,'note',detail.note,'status',detail.workflow_status,
       'allocatedAt',detail.allocated_at) ORDER BY detail.allocated_at)
       FROM transaction_allocation detail
       JOIN beneficiary db ON db.id=detail.beneficiary_id
+      LEFT JOIN driver dr ON dr.id=detail.driver_id
       JOIN vehicle dv ON dv.id=detail.vehicle_id
       WHERE detail.fuel_transaction_id=ft.id),'[]'::jsonb) AS allocations
     FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
@@ -247,17 +249,26 @@ export class TransactionsService {
     const allocationTotal = await client.query(`SELECT coalesce(sum(allocated_amount),0) AS allocated
       FROM transaction_allocation WHERE fuel_transaction_id=$1 AND workflow_status IN('PENDING','APPROVED')`, [id]);
     if (Number(allocationTotal.rows[0].allocated)+dto.amount > Number(source.amount_incl_tax)) throw new BadRequestException('La répartition dépasse le montant de la transaction Total');
-    let beneficiaryId=dto.beneficiaryId,vehicleId=dto.vehicleId;
-    if(!beneficiaryId&&dto.beneficiary){const department=await client.query(`INSERT INTO department(company_id,name) VALUES($1,'Hors parc') ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id`,[source.company_id]);const beneficiary=await client.query(`INSERT INTO beneficiary(company_id,department_id,display_name) VALUES($1,$2,$3) ON CONFLICT(company_id,display_name) DO UPDATE SET active=true RETURNING id`,[source.company_id,department.rows[0].id,dto.beneficiary.trim()]);beneficiaryId=beneficiary.rows[0].id;}
-    if(!vehicleId&&dto.vehicle){const key=dto.vehicle.toUpperCase().replace(/[^A-Z0-9]/g,'');const vehicle=await client.query(`SELECT id FROM vehicle WHERE company_id=$1 AND regexp_replace(upper(coalesce(registration_normalized::text,registration_display)),'[^A-Z0-9]','','g')=$2 AND active AND deleted_at IS NULL`,[source.company_id,key]);vehicleId=vehicle.rows[0]?.id;}
-    if(!beneficiaryId||!vehicleId)throw new BadRequestException('Bénéficiaire ou véhicule introuvable dans la société de la carte');
-    const targets = await client.query(`SELECT b.company_id AS beneficiary_company,v.company_id AS vehicle_company
-      FROM beneficiary b,vehicle v WHERE b.id=$1 AND v.id=$2`, [beneficiaryId,vehicleId]);
-    if (!targets.rows[0] || targets.rows[0].beneficiary_company !== source.company_id || targets.rows[0].vehicle_company !== source.company_id)
-      throw new BadRequestException('Le bénéficiaire et le véhicule doivent appartenir à la société de la carte');
-    const result = await client.query(`INSERT INTO transaction_allocation(fuel_transaction_id,beneficiary_id,vehicle_id,
-      allocated_amount,allocated_liters,note,allocated_by,workflow_status) VALUES($1,$2,$3,$4,$5,$6,$7,'PENDING') RETURNING *`,
-      [id,beneficiaryId,vehicleId,dto.amount,dto.liters??null,dto.note??null,actor.sub]);
+    const target = await client.query(`SELECT d.id AS driver_id,d.full_name,d.company_id AS driver_company,
+      v.id AS vehicle_id,v.company_id AS vehicle_company,v.registration_display
+      FROM driver d CROSS JOIN vehicle v WHERE d.id=$1 AND d.active AND d.deleted_at IS NULL
+      AND v.id=$2 AND v.active AND v.deleted_at IS NULL
+      AND (v.managed_by=$3 OR EXISTS(SELECT 1 FROM transaction_allocation own WHERE own.vehicle_id=v.id AND own.allocated_by=$3))`,[dto.driverId,dto.vehicleId,actor.sub]);
+    if(!target.rows[0])throw new BadRequestException('Sélectionnez un chauffeur Total enregistré et un véhicule du parc de Najib');
+    if(target.rows[0].driver_company!==source.company_id||target.rows[0].vehicle_company!==source.company_id)
+      throw new BadRequestException('Le chauffeur et le véhicule doivent appartenir à DC');
+    const lastMileage=await client.query(`SELECT coalesce(max(mileage),0)::float AS mileage FROM mileage_reading
+      WHERE vehicle_id=$1 AND status IN ('PENDING','VALIDATED')`,[dto.vehicleId]);
+    if(!Number.isFinite(dto.mileage)||dto.mileage<Number(lastMileage.rows[0].mileage))
+      throw new BadRequestException(`Le kilométrage réel doit être supérieur ou égal au dernier relevé (${Number(lastMileage.rows[0].mileage)} km)`);
+    const department=await client.query(`INSERT INTO department(company_id,name) VALUES($1,'Sous-traitants poseurs') ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id`,[source.company_id]);
+    const beneficiary=await client.query(`INSERT INTO beneficiary(company_id,department_id,display_name) VALUES($1,$2,$3) ON CONFLICT(company_id,display_name) DO UPDATE SET active=true RETURNING id`,[source.company_id,department.rows[0].id,target.rows[0].full_name]);
+    const result = await client.query(`INSERT INTO transaction_allocation(fuel_transaction_id,beneficiary_id,vehicle_id,driver_id,
+      allocated_amount,allocated_liters,reported_mileage,note,allocated_by,workflow_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'PENDING') RETURNING *`,
+      [id,beneficiary.rows[0].id,dto.vehicleId,dto.driverId,dto.amount,dto.liters??null,dto.mileage,dto.note??null,actor.sub]);
+    await client.query(`INSERT INTO mileage_reading(vehicle_id,beneficiary_id,reading_date,mileage,status,source,created_by,
+      week_start,previous_mileage,expected_mileage,detected_distance,anomaly) VALUES($1,$2,now(),$3,'PENDING','TRANSACTION_ALLOCATION',$4,date_trunc('week',current_date)::date,$5,$3,0,false)`,
+      [dto.vehicleId,beneficiary.rows[0].id,dto.mileage,actor.sub,Number(lastMileage.rows[0].mileage)]);
     await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id) SELECT id,'Répartition à valider',$2,'transactions','transaction_allocation',$3 FROM app_user WHERE active AND role::text=ANY($1::text[])`,[['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'],`Répartition de ${dto.amount} sur une transaction hors parc`,result.rows[0].id]);
     await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
       VALUES($1,'ALLOCATE','fuel_transaction',$2,$3)`, [actor.email,id,result.rows[0]]);

@@ -13,8 +13,7 @@ export class MileageService {
    WHERE ($1::boolean=false OR mr.created_by=$2) ORDER BY mr.week_start DESC,mr.created_at DESC`,[own,actor.sub]);}
  async create(dto:{vehicleId:string;mileage:number;note?:string},actor:Actor){return this.db.transaction(async client=>{
    const allowed=await client.query(`SELECT v.id,v.registration_display FROM vehicle v WHERE v.id=$1 AND v.deleted_at IS NULL AND v.active
-     AND EXISTS(SELECT 1 FROM card_assignment ca JOIN fuel_card fc ON fc.id=ca.fuel_card_id WHERE ca.vehicle_id=v.id AND ca.ends_at IS NULL
-       AND fc.card_category='OFF_PARK' AND fc.responsible_user_id=$2 AND fc.deleted_at IS NULL)`,[dto.vehicleId,actor.sub]);
+     AND (v.managed_by=$2 OR EXISTS(SELECT 1 FROM transaction_allocation ta WHERE ta.vehicle_id=v.id AND ta.allocated_by=$2))`,[dto.vehicleId,actor.sub]);
    if(!allowed.rows[0]) throw new NotFoundException('Ce véhicule ne fait pas partie de votre périmètre hors parc');
    const last=await client.query(`SELECT mileage,created_at FROM mileage_reading WHERE vehicle_id=$1 AND status='VALIDATED' ORDER BY reading_date DESC LIMIT 1`,[dto.vehicleId]);
    const previous=Number(last.rows[0]?.mileage??0),since=last.rows[0]?.created_at??'1970-01-01';

@@ -43,10 +43,29 @@ BEGIN
 
   -- Parc initial visible dans la capture. Les futurs véhicules créés par Najib
   -- recevront managed_by automatiquement via l'API.
-  UPDATE vehicle SET managed_by=najib_id,company_id=dc_id,updated_at=now()
+  -- Certaines immatriculations historiques existent dans plusieurs sociétés.
+  -- Privilégier la ligne DC déjà présente afin de ne pas violer l'unicité
+  -- (company_id, registration_normalized) lors du rattachement à Najib.
+  UPDATE vehicle
+  SET managed_by=najib_id,updated_at=now()
   WHERE deleted_at IS NULL
+    AND company_id=dc_id
     AND regexp_replace(upper(registration_display),'[^A-Z0-9]','','g')
         IN ('9458TU240','596TU257','595TU257','9459TU240','7612TU243');
+
+  UPDATE vehicle v
+  SET managed_by=najib_id,company_id=dc_id,updated_at=now()
+  WHERE v.deleted_at IS NULL
+    AND v.company_id<>dc_id
+    AND regexp_replace(upper(v.registration_display),'[^A-Z0-9]','','g')
+        IN ('9458TU240','596TU257','595TU257','9459TU240','7612TU243')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM vehicle dc_vehicle
+      WHERE dc_vehicle.deleted_at IS NULL
+        AND dc_vehicle.company_id=dc_id
+        AND dc_vehicle.registration_normalized=v.registration_normalized
+    );
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_vehicle_managed_by ON vehicle(managed_by) WHERE deleted_at IS NULL;

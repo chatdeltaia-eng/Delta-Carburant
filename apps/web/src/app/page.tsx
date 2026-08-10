@@ -130,6 +130,7 @@ const requestTracking = (row: Record<string, unknown>) => {
     return `${label} par ${author}${date ? ` · ${date}` : ""}`;
   }
   const status = String(row.status ?? "");
+  if(status==="UNDER_REVIEW") return `Double autorisation · Zin ${row.zinApproved?"✓":"en attente"} · DG ${row.dgApproved?"✓":"en attente"}`;
   const authorRole = status === "CANCELLED" ? row.requestedByRole : row.decisionByRole ?? row.requestedByRole;
   const label = status === "APPROVED" ? "Demande validée" : status === "REJECTED" ? "Demande refusée" : status === "CANCELLED" ? "Demande annulée" : "Demande créée";
   const dateValue = status === "SUBMITTED" ? row.createdAt : row.decisionDate ?? row.createdAt;
@@ -138,7 +139,7 @@ const requestTracking = (row: Record<string, unknown>) => {
 const toRequestRow = (row: Record<string, unknown>): Row => ({
   id: String(row.id),
   numero: String(row.requestNumber ?? "—"),
-  type: String(row.requestType) === "LIMIT_CHANGE" ? "Augmentation de plafond" : String(row.requestType)==="CARD_FUNDING"?"Alimentation de carte":"Nouvelle carte",
+  type: String(row.requestType) === "LIMIT_CHANGE" ? "Augmentation de plafond" : String(row.requestType)==="CARD_FUNDING"?"Alimentation de carte":String(row.requestType)==="ASSIGNMENT_CHANGE"?(String(row.requestedCardStatus)==="SAFE"?"Mise en coffre":"Distribution de carte"):"Nouvelle carte",
   beneficiaire: String(row.beneficiary ?? "—"),
   departement: String(row.department ?? "—"),
   voiture: String(row.vehicle ?? "—"),
@@ -403,6 +404,7 @@ export default function Home() {
     [user, setUser] = useState<User | null>(null),
     [view, setView] = useState<View>("dashboard"),
     [cards, setCards] = useState<Card[]>(initialCards),
+    [safeCards,setSafeCards]=useState<Card[]>([]),
     [data, setData] = useState(seeds),
     [databaseSummary, setDatabaseSummary] = useState<Record<string, number> | null>(null),
     [responsibles,setResponsibles]=useState<{id:string;name:string;email:string}[]>([]),
@@ -464,12 +466,14 @@ export default function Home() {
       fetch(`${API}/fuel-prices`, { headers, cache: "no-store" }),
       canManage(user.role)?fetch(`${API}/cards/responsibles`,{headers,cache:"no-store"}):Promise.resolve(null),
       fetch(`${API}/cards/companies`,{headers,cache:"no-store"}),
+      user.role==="NAJIB_ASSIGNER"?fetch(`${API}/cards/safe-inventory`,{headers,cache:"no-store"}):Promise.resolve(null),
     ])
-      .then(async ([cardResponse, requestResponse, notificationResponse,transactionResponse,summaryResponse,reviewsResponse,vehiclesResponse,mileageResponse,driversResponse,fuelPricesResponse,responsiblesResponse,companiesResponse]) => {
+      .then(async ([cardResponse, requestResponse, notificationResponse,transactionResponse,summaryResponse,reviewsResponse,vehiclesResponse,mileageResponse,driversResponse,fuelPricesResponse,responsiblesResponse,companiesResponse,safeResponse]) => {
         // Management reference data must remain usable even if an unrelated
         // dashboard endpoint is temporarily unavailable.
         if(responsiblesResponse?.ok)setResponsibles(await responsiblesResponse.json());
         if(companiesResponse?.ok)setCompanies(await companiesResponse.json());
+        if(safeResponse?.ok)setSafeCards(await safeResponse.json());
         if (!cardResponse.ok || !requestResponse.ok || !notificationResponse.ok || !transactionResponse.ok || !summaryResponse.ok || !vehiclesResponse.ok || !mileageResponse.ok || !driversResponse.ok || !fuelPricesResponse.ok)
           throw new Error("Impossible de charger les données distantes");
         const cardPayload = await cardResponse.json();
@@ -872,7 +876,7 @@ export default function Home() {
       }
       if (modal === "request") {
         row.numero = `D-${new Date().getFullYear()}-${String(data.requests.length + 1).padStart(3, "0")}`;
-        row.type = String(row.typeDemande) === "LIMIT_CHANGE" ? "Augmentation de plafond" : String(row.typeDemande)==="CARD_FUNDING"?"Alimentation de carte":"Nouvelle carte";
+        row.type = String(row.typeDemande) === "LIMIT_CHANGE" ? "Augmentation de plafond" : String(row.typeDemande)==="CARD_FUNDING"?"Alimentation de carte":String(row.typeDemande)==="CUSTODY_CHANGE"?(String(row.etatCarte)==="SAFE"?"Mise en coffre":"Distribution de carte"):"Nouvelle carte";
         if (row.carteId) row.carte = cards.find((item) => item.id === String(row.carteId))?.masked_card_number ?? "—";
         row.demandeur = user.name;
         row.date = today;
@@ -887,6 +891,7 @@ export default function Home() {
             },
             body: JSON.stringify({
               requestType: String(row.typeDemande || "NEW_CARD"),
+              requestedCardStatus: row.typeDemande === "CUSTODY_CHANGE" ? String(row.etatCarte) : undefined,
               fuelCardId: row.carteId ? String(row.carteId) : undefined,
               sourceCardId: row.carteSourceId ? String(row.carteSourceId) : undefined,
               beneficiary: String(row.beneficiaire),
@@ -913,7 +918,7 @@ export default function Home() {
         ).map((target) => ({
           id: crypto.randomUUID(),
           target,
-          title: String(row.typeDemande) === "LIMIT_CHANGE" ? "Demande d’augmentation de plafond" : String(row.typeDemande)==="CARD_FUNDING"?"Demande d’alimentation de carte":"Nouvelle demande de carte",
+          title: String(row.typeDemande) === "LIMIT_CHANGE" ? "Demande d’augmentation de plafond" : String(row.typeDemande)==="CARD_FUNDING"?"Demande d’alimentation de carte":String(row.typeDemande)==="CUSTODY_CHANGE"?"Demande coffre / distribution":"Nouvelle demande de carte",
           message: `${row.numero} — ${row.beneficiaire}`,
           view: "requests",
           read: false,
@@ -1007,7 +1012,8 @@ export default function Home() {
 
     const isLimitChange = request.type === "Augmentation de plafond";
     const isFunding=request.type==="Alimentation de carte";
-    if (isLimitChange||isFunding) {
+    const isCustody=request.type==="Mise en coffre"||request.type==="Distribution de carte";
+    if (isLimitChange||isFunding||isCustody) {
       if (!token) return notify("Session distante expirée : reconnectez-vous");
       try {
         const apiResponse = await fetch(`${API}/requests/${id}/decision`, {
@@ -1016,9 +1022,9 @@ export default function Home() {
           body: JSON.stringify({ decision: accepted ? "APPROVED" : "REJECTED", reason: reason || undefined }),
         });
         if (!apiResponse.ok) throw new Error(await apiResponse.text());
-        if (accepted) setCards((current) => current.map((item) => item.id === String(request.carteId ?? "") || item.masked_card_number === String(request.carte) ? { ...item, monthly_limit: Number(request.plafond) } : item));
-        setData((current) => ({ ...current, requests: current.requests.map((item) => item.id === id ? { ...item, statut: accepted ? "VALIDEE_ZIN" : "REFUSEE_ZIN", motif: reason || (accepted ? "Validée" : "Refusée") } : item) }));
-        notify(accepted ? `${isFunding?"Alimentation":"Plafond"} de la carte ${request.carte} validée à ${Number(request.plafond).toLocaleString("fr-FR")}` : `Demande ${isFunding?"d’alimentation":"d’augmentation"} refusée`);
+        const decision=await apiResponse.json();
+        setRefreshTick(value=>value+1);
+        notify(!accepted?"Demande refusée":decision.pendingSecondApproval?"Votre accord est enregistré. La deuxième autorisation Zin/DG reste obligatoire.":isCustody?"Changement coffre / distribution validé par Zin et la DG":`${isFunding?"Alimentation":"Plafond"} de la carte ${request.carte} validé`);
       } catch {
         notify("Échec de la décision distante : aucune modification enregistrée");
       }
@@ -1707,7 +1713,7 @@ export default function Home() {
         <ModalForm
           type={modal}
           card={selected}
-          cards={cards}
+          cards={[...cards,...safeCards.filter(safe=>!cards.some(card=>card.id===safe.id))]}
           vehicles={data.vehicles}
           responsibles={responsibles}
           companies={companies}
@@ -2930,9 +2936,10 @@ function ModalForm({
     (row) => String(row.immatriculation ?? "").trim() && String(row.immatriculation) !== "À COMPLÉTER",
   );
   const [selectedRegistration, setSelectedRegistration] = useState("");
-  const [requestType, setRequestType] = useState<"NEW_CARD" | "LIMIT_CHANGE" | "CARD_FUNDING">("NEW_CARD");
+  const [requestType, setRequestType] = useState<"NEW_CARD" | "LIMIT_CHANGE" | "CARD_FUNDING" | "CUSTODY_CHANGE">("NEW_CARD");
+  const [custodyTarget,setCustodyTarget]=useState<"SAFE"|"DISTRIBUTED">("DISTRIBUTED");
   const [requestCardId, setRequestCardId] = useState("");
-  const requestCards = cards.filter((item) => ["ACTIVE","TO_ASSIGN"].includes(item.status));
+  const requestCards = cards.filter((item) => requestType==="CUSTODY_CHANGE" ? (custodyTarget==="SAFE" ? item.status!=="SAFE" : item.status==="SAFE") : ["ACTIVE","TO_ASSIGN"].includes(item.status));
   const requestCard = requestCards.find((item) => item.id === requestCardId);
   const eligibleFundingSources=requestCards.filter(item=>item.status==="ACTIVE"&&item.id!==requestCardId&&Number(item.monthly_limit)>0&&Number(item.consumption_rate??0)>=60);
   const selectedVehicle = selectableVehicles.find(
@@ -3125,16 +3132,18 @@ function ModalForm({
               <>
                 <label className={styles.fullField}>
                   Type de demande
-                  <select name="typeDemande" value={requestType} onChange={(event) => { setRequestType(event.target.value as "NEW_CARD" | "LIMIT_CHANGE" | "CARD_FUNDING"); setRequestCardId(""); }}>
+                  <select name="typeDemande" value={requestType} onChange={(event) => { setRequestType(event.target.value as "NEW_CARD" | "LIMIT_CHANGE" | "CARD_FUNDING" | "CUSTODY_CHANGE"); setRequestCardId(""); }}>
                     <option value="NEW_CARD">Demande de nouvelle carte</option>
                     <option value="CARD_FUNDING">Alimentation d’une carte disponible</option>
                     <option value="LIMIT_CHANGE">Demande d’augmentation de plafond</option>
+                    <option value="CUSTODY_CHANGE">Changement coffre / distribution</option>
                   </select>
                 </label>
-                {requestType === "LIMIT_CHANGE" || requestType === "CARD_FUNDING" ? (
+                {requestType === "CUSTODY_CHANGE" && <label className={styles.fullField}>État demandé<select name="etatCarte" value={custodyTarget} onChange={event=>{setCustodyTarget(event.target.value as "SAFE"|"DISTRIBUTED");setRequestCardId("");}}><option value="DISTRIBUTED">Sortir du coffre et distribuer sous ma responsabilité</option><option value="SAFE">Remettre en coffre et retirer de ma responsabilité</option></select></label>}
+                {requestType === "LIMIT_CHANGE" || requestType === "CARD_FUNDING" || requestType === "CUSTODY_CHANGE" ? (
                   <>
                     <label className={styles.fullField}>
-                      {requestType === "CARD_FUNDING" ? "Carte à alimenter disponible dans votre espace" : "Carte disponible dans la base"}
+                      {requestType === "CARD_FUNDING" ? "Carte à alimenter disponible dans votre espace" : requestType==="CUSTODY_CHANGE"?(custodyTarget==="SAFE"?"Carte sous votre responsabilité":"Carte disponible en coffre"):"Carte disponible dans la base"}
                       <select name="carteId" required value={requestCardId} onChange={(event) => setRequestCardId(event.target.value)}>
                         <option value="" disabled>Sélectionner une carte active</option>
                         {requestCards.map((item) => <option value={item.id} key={item.id}>{item.masked_card_number} · plafond actuel {item.monthly_limit.toLocaleString("fr-FR")}</option>)}
@@ -3153,7 +3162,7 @@ function ModalForm({
                     <label>Voiture / immatriculation<select name="voiture" required defaultValue=""><option value="" disabled>Sélectionner une matricule</option>{selectableVehicles.map((vehicle) => <option value={String(vehicle.immatriculation)} key={String(vehicle.id)}>{String(vehicle.immatriculation)} · {String(vehicle.type)} · {String(vehicle.reference)}</option>)}</select></label>
                   </>
                 )}
-                <label>Plafond demandé<input name="plafond" type="number" min={requestType === "LIMIT_CHANGE" ? (requestCard?.monthly_limit ?? 0) + 0.001 : 0} step="0.001" required /></label>
+                {requestType!=="CUSTODY_CHANGE"?<label>Plafond demandé<input name="plafond" type="number" min={requestType === "LIMIT_CHANGE" ? (requestCard?.monthly_limit ?? 0) + 0.001 : 0} step="0.001" required /></label>:<input type="hidden" name="plafond" value="0"/>}
                 <label className={styles.fullField}>Motif de la demande<input name="motif" required minLength={3} /></label>
               </>
             )}

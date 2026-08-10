@@ -3,7 +3,7 @@ import { DatabaseService } from '../database/database.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
 type Actor = { sub: string; email?: string; role?: string; companyId?: string };
-type CreateRequest = { requestType: 'NEW_CARD'|'LIMIT_CHANGE'|'CARD_FUNDING'; fuelCardId?: string; sourceCardId?:string; beneficiary: string; department: string; vehicle: string; requestedLimit: number; reason: string };
+type CreateRequest = { requestType: 'NEW_CARD'|'LIMIT_CHANGE'|'CARD_FUNDING'|'CUSTODY_CHANGE'; requestedCardStatus?:'SAFE'|'DISTRIBUTED'; fuelCardId?: string; sourceCardId?:string; beneficiary: string; department: string; vehicle: string; requestedLimit: number; reason: string };
 @Injectable()
 export class RequestsService {
   constructor(private readonly db: DatabaseService, private readonly notifications: NotificationsService) {}
@@ -13,7 +13,8 @@ export class RequestsService {
       cr.reason,cr.decision_reason AS "decisionReason",cr.created_at AS "createdAt",cr.decision_date AS "decisionDate",cr.receipt_number AS "receiptNumber",cr.receipt_issued_at AS "receiptIssuedAt",
       b.display_name AS beneficiary,d.name AS department,v.registration_display AS vehicle,
       fc.masked_card_number AS "cardNumber",source.masked_card_number AS "sourceCardNumber",fc.monthly_limit AS "currentLimit", requester.role::text AS "requestedByRole",requester.display_name AS "requestedByName",
-      approver.role::text AS "decisionByRole", latest.action AS "cardAction",
+      approver.role::text AS "decisionByRole",cr.requested_card_status AS "requestedCardStatus",
+      (cr.zin_approved_at IS NOT NULL) AS "zinApproved",(cr.dg_approved_at IS NOT NULL) AS "dgApproved", latest.action AS "cardAction",
       latest.new_values->>'status' AS "cardStatusAction",latest.created_at AS "cardActionAt",
       action_user.role::text AS "cardActionByRole"
       FROM card_request cr JOIN beneficiary b ON b.id=cr.beneficiary_id
@@ -31,6 +32,7 @@ export class RequestsService {
   async create(dto: CreateRequest, actor: Actor) {
     if (dto.requestType === 'LIMIT_CHANGE' && !dto.fuelCardId) throw new BadRequestException('La carte concernée est obligatoire');
     if (dto.requestType === 'CARD_FUNDING' && (!dto.fuelCardId || !dto.sourceCardId)) throw new BadRequestException('La carte à alimenter et la carte source sont obligatoires');
+    if (dto.requestType === 'CUSTODY_CHANGE' && (!dto.fuelCardId || !dto.requestedCardStatus)) throw new BadRequestException('La carte et son nouvel état sont obligatoires');
     const number = `D-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
     const row = await this.db.transaction(async client => {
       let companyId = actor.companyId;
@@ -66,14 +68,20 @@ export class RequestsService {
         const rate=100*Number(usage.rows[0].amount)/Number(source.monthly_limit);
         if(rate<60)throw new BadRequestException(`Votre carte ${source.masked_card_number} n’a consommé que ${rate.toFixed(1)} % de son plafond ce mois-ci. Attendez qu’elle dépasse 60 % avant de demander une alimentation`);
         fuelCardId=target.id;
+      } else if(dto.requestType==='CUSTODY_CHANGE') {
+        const card=await client.query(`SELECT id,status,responsible_user_id FROM fuel_card WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`,[dto.fuelCardId]);
+        if(!card.rows[0])throw new BadRequestException('Carte introuvable');
+        if(dto.requestedCardStatus==='SAFE'&&card.rows[0].responsible_user_id!==actor.sub)throw new BadRequestException('Seule une carte sous votre responsabilité peut être remise en coffre');
+        if(dto.requestedCardStatus==='DISTRIBUTED'&&card.rows[0].status!=='SAFE')throw new BadRequestException('Seule une carte en coffre peut être demandée pour distribution');
+        fuelCardId=card.rows[0].id;
       }
       const inserted = await client.query(`INSERT INTO card_request(request_number,request_type,status,requested_by,
-        beneficiary_id,vehicle_id,fuel_card_id,source_card_id,reason,requested_limit) VALUES($1,$2,'SUBMITTED',$3,$4,$5,$6,$7,$8,$9)
+        beneficiary_id,vehicle_id,fuel_card_id,source_card_id,reason,requested_limit,requested_card_status) VALUES($1,$2,'SUBMITTED',$3,$4,$5,$6,$7,$8,$9,$10)
         RETURNING id,request_number AS "requestNumber",status`,
-        [number,dto.requestType==='CARD_FUNDING'?'REACTIVATION':dto.requestType,actor.sub,beneficiary.rows[0].id,vehicle.rows[0].id,fuelCardId,dto.sourceCardId??null,dto.reason,dto.requestedLimit]);
+        [number,dto.requestType==='CARD_FUNDING'?'REACTIVATION':dto.requestType==='CUSTODY_CHANGE'?'ASSIGNMENT_CHANGE':dto.requestType,actor.sub,beneficiary.rows[0].id,vehicle.rows[0].id,fuelCardId,dto.sourceCardId??null,dto.reason,dto.requestedLimit,dto.requestedCardStatus??null]);
       return inserted.rows[0];
     });
-    await this.notifications.notifyRoles(['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'], dto.requestType === 'LIMIT_CHANGE' ? 'Demande d’augmentation de plafond' : dto.requestType==='CARD_FUNDING'?'Demande d’alimentation de carte':'Nouvelle demande de carte', `${number} attend votre traitement`, 'requests', 'card_request', row.id);
+    await this.notifications.notifyRoles(['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'], dto.requestType === 'LIMIT_CHANGE' ? 'Demande d’augmentation de plafond' : dto.requestType==='CARD_FUNDING'?'Demande d’alimentation de carte':dto.requestType==='CUSTODY_CHANGE'?'Demande de changement coffre / distribution':'Nouvelle demande de carte', `${number} attend la double validation Zin et DG`, 'requests', 'card_request', row.id);
     return row;
   }
   async cancel(id: string, actor: Actor) {
@@ -107,6 +115,25 @@ export class RequestsService {
       if (!request || !['SUBMITTED','UNDER_REVIEW'].includes(request.status)) throw new NotFoundException('Demande introuvable ou déjà traitée');
       if (dto.decision === 'APPROVED' && request.request_type === 'NEW_CARD' && !dto.cardNumber?.trim()) throw new BadRequestException('Le numéro de la carte attribuée est obligatoire');
       let fuelCardId: string | null = request.fuel_card_id;
+      const doubleApproval=['ASSIGNMENT_CHANGE','REACTIVATION'].includes(request.request_type);
+      if(doubleApproval&&dto.decision==='APPROVED'){
+        if(actor.role==='ZIN_FINANCE'){
+          if(request.zin_approved_at)throw new BadRequestException('Zin a déjà validé cette demande');
+          await client.query(`UPDATE card_request SET zin_approved_by=$2,zin_approved_at=now(),status='UNDER_REVIEW' WHERE id=$1`,[id,actor.sub]);
+          request.zin_approved_at=new Date();
+        }else if(actor.role==='DIRECTION_GENERAL'){
+          if(request.dg_approved_at)throw new BadRequestException('La DG a déjà validé cette demande');
+          await client.query(`UPDATE card_request SET dg_approved_by=$2,dg_approved_at=now(),status='UNDER_REVIEW' WHERE id=$1`,[id,actor.sub]);
+          request.dg_approved_at=new Date();
+        }else{
+          await client.query(`UPDATE card_request SET zin_approved_by=$2,zin_approved_at=now(),dg_approved_by=$2,dg_approved_at=now() WHERE id=$1`,[id,actor.sub]);
+          request.zin_approved_at=request.dg_approved_at=new Date();
+        }
+        if(!request.zin_approved_at||!request.dg_approved_at){
+          await this.notifications.notifyRoles(request.zin_approved_at?['DIRECTION_GENERAL']:['ZIN_FINANCE'],'Deuxième validation requise',`${request.request_number} attend encore votre autorisation`,'requests','card_request',id);
+          return {id,status:'UNDER_REVIEW',fuelCardId,pendingSecondApproval:true};
+        }
+      }
       if (dto.decision === 'APPROVED' && request.request_type === 'NEW_CARD') {
         const number = dto.cardNumber!.trim();
         const inserted = await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,
@@ -127,6 +154,14 @@ export class RequestsService {
         const funded=await client.query(`UPDATE fuel_card SET monthly_limit=$2,status='ACTIVE' WHERE id=$1 AND deleted_at IS NULL RETURNING masked_card_number`,[request.fuel_card_id,request.requested_limit]);
         if(!funded.rows[0])throw new BadRequestException('La carte à alimenter n’est plus disponible');
         await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'CARD_FUNDING','fuel_card',$2,$3)`,[actor.email??actor.sub,request.fuel_card_id,{amount:request.requested_limit,sourceCardId:request.source_card_id}]);
+      } else if(dto.decision==='APPROVED'&&request.request_type==='ASSIGNMENT_CHANGE') {
+        if(request.requested_card_status==='SAFE'){
+          await client.query(`UPDATE fuel_card SET status='SAFE',responsible_user_id=NULL WHERE id=$1`,[request.fuel_card_id]);
+          await client.query(`UPDATE card_assignment SET ends_at=now() WHERE fuel_card_id=$1 AND ends_at IS NULL`,[request.fuel_card_id]);
+        }else{
+          await client.query(`UPDATE fuel_card SET status='DISTRIBUTED',responsible_user_id=$2,card_category='OFF_PARK' WHERE id=$1`,[request.fuel_card_id,request.requested_by]);
+        }
+        await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'CUSTODY_CHANGE','fuel_card',$2,$3)`,[actor.email??actor.sub,request.fuel_card_id,{status:request.requested_card_status,responsibleUserId:request.requested_card_status==='DISTRIBUTED'?request.requested_by:null}]);
       }
       const receiptNumber=dto.decision==='APPROVED'?`RC-${new Date().getFullYear()}-${request.request_number.replace(/\D/g,'').slice(-10)}`:null;
       const updated = await client.query(`UPDATE card_request SET status=$2::request_status,approved_by=$3,

@@ -144,6 +144,14 @@ export class TransactionsService {
           WHERE fuel_card_id=$1 AND deleted_at IS NULL AND transaction_date>=date_trunc('month',$2::timestamptz)
           AND transaction_date<date_trunc('month',$2::timestamptz)+interval '1 month'`,[card.rows[0].id,row.date]);
         const limit=await client.query(`SELECT monthly_limit,masked_card_number,responsible_user_id FROM fuel_card WHERE id=$1`,[card.rows[0].id]);
+        const usageRate=Number(limit.rows[0].monthly_limit)>0?100*Number(monthUsage.rows[0].consumed)/Number(limit.rows[0].monthly_limit):0;
+        if(usageRate>=60&&limit.rows[0].responsible_user_id){
+          await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
+            SELECT $1,'Carte consommée à 60 %',$2,'WARNING','requests','fuel_card',$3
+            WHERE NOT EXISTS(SELECT 1 FROM notification WHERE user_id=$1 AND title='Carte consommée à 60 %'
+              AND entity_id=$3 AND created_at>=date_trunc('month',$4::timestamptz))`,[limit.rows[0].responsible_user_id,
+            `La carte ${limit.rows[0].masked_card_number} a consommé ${usageRate.toFixed(1)} % de son plafond. Faites prochainement une demande d’alimentation pour éviter sa suspension.`,card.rows[0].id,row.date]);
+        }
         if(Number(limit.rows[0].monthly_limit)>0&&Number(monthUsage.rows[0].consumed)>Number(limit.rows[0].monthly_limit)){
           const anomaly=await client.query(`INSERT INTO anomaly(fuel_card_id,anomaly_type,severity,status,description,assigned_to,metadata)
             VALUES($1,'MONTHLY_LIMIT_EXCEEDED','HIGH','OPEN',$2,$3,$4)

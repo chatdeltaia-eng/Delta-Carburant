@@ -6,7 +6,8 @@ import { RolesGuard } from '../common/roles.guard';
 import { RequestsService } from './requests.service';
 
 class CreateRequestDto {
-  @IsIn(['NEW_CARD','LIMIT_CHANGE','CARD_FUNDING']) requestType!: 'NEW_CARD' | 'LIMIT_CHANGE' | 'CARD_FUNDING';
+  @IsIn(['NEW_CARD','LIMIT_CHANGE','CARD_FUNDING','CUSTODY_CHANGE']) requestType!: 'NEW_CARD' | 'LIMIT_CHANGE' | 'CARD_FUNDING' | 'CUSTODY_CHANGE';
+  @IsOptional() @IsIn(['SAFE','DISTRIBUTED']) requestedCardStatus?: 'SAFE'|'DISTRIBUTED';
   @IsOptional() @IsUUID() fuelCardId?: string;
   @IsOptional() @IsUUID() sourceCardId?: string;
   @IsString() @MinLength(2) beneficiary!: string;

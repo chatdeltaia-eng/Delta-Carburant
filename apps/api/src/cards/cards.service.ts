@@ -11,6 +11,8 @@ export class CardsService {
     FROM app_user u LEFT JOIN company c ON c.id=u.company_id WHERE u.active AND u.role='NAJIB_ASSIGNER'
     AND ($1='' OR u.company_id=$1::uuid) ORDER BY c.code,u.display_name`,[companyId]);}
   companies(){return this.db.query(`SELECT id,code,name FROM company WHERE active ORDER BY code`);}
+  safeInventory(companyId?:string){return this.db.query(`SELECT id,masked_card_number,monthly_limit,status,card_category,company_id FROM fuel_card
+    WHERE status='SAFE' AND deleted_at IS NULL AND ($1::uuid IS NULL OR company_id=$1) ORDER BY masked_card_number`,[companyId??null]);}
   async assignResponsible(id:string,responsibleUserId:string,actor:Actor){return this.db.transaction(async client=>{
     const responsible=await client.query(`SELECT id,display_name FROM app_user WHERE id=$1 AND active AND role='NAJIB_ASSIGNER'`,[responsibleUserId]);
     if(!responsible.rows[0])throw new BadRequestException('Responsable hors parc introuvable');

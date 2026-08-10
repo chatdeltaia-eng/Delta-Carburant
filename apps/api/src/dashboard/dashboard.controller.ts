@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { DashboardService } from './dashboard.service';
 
@@ -6,6 +6,6 @@ import { DashboardService } from './dashboard.service';
 @Controller('dashboard')
 export class DashboardController {
   constructor(private readonly dashboard: DashboardService) {}
-  @Get('summary') summary() { return this.dashboard.summary(); }
+  @Get('summary') summary(@Req() req: { user: { sub: string; role: string } }) { return this.dashboard.summary(req.user); }
   @Get('direction') direction() { return this.dashboard.direction(); }
 }

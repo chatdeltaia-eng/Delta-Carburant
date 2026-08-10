@@ -32,7 +32,7 @@ export class TransactionsService {
     LEFT JOIN beneficiary b ON b.id=ft.beneficiary_id LEFT JOIN vehicle v ON v.id=ft.vehicle_id
     LEFT JOIN transaction_import_batch tib ON tib.id=ft.import_batch_id
     LEFT JOIN transaction_allocation ta ON ta.fuel_transaction_id=ft.id
-    WHERE ft.deleted_at IS NULL AND ($1::boolean=false OR fc.card_category='OFF_PARK' OR fc.responsible_user_id=$2)
+    WHERE ft.deleted_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2)
     GROUP BY ft.id,fc.id,tib.source_filename,b.display_name,v.registration_display
     ORDER BY ft.transaction_date DESC`, [actor.role==='NAJIB_ASSIGNER',actor.sub]);
     if (actor.role === 'NAJIB_ASSIGNER') {
@@ -45,7 +45,7 @@ export class TransactionsService {
         FROM transaction_review tr
         JOIN transaction_import_batch tib ON tib.id=tr.import_batch_id
         JOIN fuel_card fc ON fc.id=tr.fuel_card_id
-        WHERE tr.status='PENDING' AND (fc.card_category='OFF_PARK' OR fc.responsible_user_id=$1)
+        WHERE tr.status='PENDING' AND fc.responsible_user_id=$1
         ORDER BY tr.transaction_date DESC`, [actor.sub]);
       return [...pending,...transactions].sort((a:any,b:any)=>new Date(b.date).getTime()-new Date(a.date).getTime());
     }

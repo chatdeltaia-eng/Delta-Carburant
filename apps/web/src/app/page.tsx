@@ -1395,7 +1395,7 @@ export default function Home() {
       : 0;
   const cardsForUser =
     user?.role === "NAJIB_ASSIGNER"
-      ? cards.filter((card) => card.card_category === "OFF_PARK")
+      ? cards
       : cards;
   function openNotifications(notification: Notification) {
     const next = notifications.map((n) =>
@@ -2453,7 +2453,7 @@ function DataView({
   if (view === "cards") {
     const visibleCards =
       user.role === "NAJIB_ASSIGNER"
-        ? cards.filter((x) => x.card_category === "OFF_PARK")
+        ? cards
         : cards;
     const companyChoices=[...new Set(visibleCards.map(x=>x.company_code).filter(Boolean))];
     const filtered = visibleCards.filter((x) =>

@@ -90,7 +90,7 @@ WITH delta AS (SELECT id FROM company WHERE code='DELTA' LIMIT 1), dep AS (
   RETURNING id,company_id
 )
 INSERT INTO beneficiary(company_id,department_id,display_name)
-SELECT dep.company_id,dep.id,r.holder FROM corrected_card_reference r CROSS JOIN dep
+SELECT DISTINCT dep.company_id,dep.id,r.holder FROM corrected_card_reference r CROSS JOIN dep
 ON CONFLICT(company_id,display_name) DO UPDATE SET active=true;
 
 -- Remplace uniquement une affectation fixe devenue incorrecte; une affectation

@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 type Vehicle = { registration:string; brand?:string; model?:string; active?:boolean;companyId?:string };
-type Actor = { sub:string; email:string; companyId?:string };
+type Actor = { sub:string; email:string; role:string; companyId?:string };
 @Injectable()
 export class VehiclesService {
   constructor(private readonly db:DatabaseService) {}
@@ -12,18 +12,21 @@ export class VehiclesService {
     AND ($1::boolean=false OR EXISTS(SELECT 1 FROM fuel_card fc LEFT JOIN card_assignment ca ON ca.fuel_card_id=fc.id AND ca.ends_at IS NULL
       WHERE fc.responsible_user_id=$2 AND fc.deleted_at IS NULL AND (ca.vehicle_id=v.id OR fc.company_id=v.company_id)))
     AND ($3='' OR v.company_id=$3::uuid) ORDER BY c.code,v.registration_display`,[own,actor.sub,companyId]); }
-  async create(dto:Vehicle,actor:Actor){ const companyId=dto.companyId??actor.companyId;if(!companyId) throw new BadRequestException('Société obligatoire'); const [row]=await this.db.query(`INSERT INTO vehicle(company_id,registration_normalized,registration_display,brand,model,active) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,company_id AS "companyId",registration_display AS registration,brand,model,active`,[companyId,this.normalize(dto.registration),dto.registration.trim(),dto.brand??null,dto.model??null,dto.active??true]);const reconciliation=await this.reconcileTotalCards(row.id,companyId,dto.registration,actor.sub);await this.audit(actor.email,'CREATE',row.id,{...row,reconciliation});return {...row,reconciliation}; }
+  async create(dto:Vehicle,actor:Actor){ const companyId=dto.companyId??actor.companyId;if(!companyId) throw new BadRequestException('Société obligatoire');this.assertCompanyScope(companyId,actor); const [row]=await this.db.query(`INSERT INTO vehicle(company_id,registration_normalized,registration_display,brand,model,active) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,company_id AS "companyId",registration_display AS registration,brand,model,active`,[companyId,this.normalize(dto.registration),dto.registration.trim(),dto.brand??null,dto.model??null,dto.active??true]);const reconciliation=await this.reconcileTotalCards(row.id,companyId,dto.registration,actor.sub);await this.audit(actor.email,'CREATE',row.id,{...row,reconciliation});return {...row,reconciliation}; }
   async update(id:string,dto:Vehicle,actor:Actor){
     const [current]=await this.db.query<{company_id:string}>('SELECT company_id FROM vehicle WHERE id=$1 AND deleted_at IS NULL',[id]);
     if(!current) throw new NotFoundException('Véhicule introuvable');
+    this.assertCompanyScope(current.company_id,actor);
     const companyId=dto.companyId??current.company_id;
+    this.assertCompanyScope(companyId,actor);
     const [company]=await this.db.query('SELECT id FROM company WHERE id=$1 AND active',[companyId]);
     if(!company) throw new BadRequestException('Société introuvable ou inactive');
     const [row]=await this.db.query(`UPDATE vehicle SET company_id=$7,registration_normalized=$2,registration_display=$3,brand=$4,model=$5,active=$6 WHERE id=$1 AND deleted_at IS NULL RETURNING id,company_id AS "companyId",registration_display AS registration,brand,model,active`,[id,this.normalize(dto.registration),dto.registration.trim(),dto.brand??null,dto.model??null,dto.active??true,companyId]);
     const reconciliation=await this.reconcileTotalCards(id,companyId,dto.registration,actor.sub);
     await this.audit(actor.email,'UPDATE',id,{...row,reconciliation}); return {...row,reconciliation};
   }
-  async remove(id:string,actor:Actor){ const [row]=await this.db.query('UPDATE vehicle SET deleted_at=now(),deleted_by=$2 WHERE id=$1 AND deleted_at IS NULL RETURNING id',[id,actor.sub]); if(!row) throw new NotFoundException('Véhicule introuvable'); await this.audit(actor.email,'SOFT_DELETE',id,{deleted:true}); return {success:true}; }
+  async remove(id:string,actor:Actor){ const [current]=await this.db.query<{company_id:string}>('SELECT company_id FROM vehicle WHERE id=$1 AND deleted_at IS NULL',[id]);if(!current) throw new NotFoundException('Véhicule introuvable');this.assertCompanyScope(current.company_id,actor);const [row]=await this.db.query('UPDATE vehicle SET deleted_at=now(),deleted_by=$2 WHERE id=$1 AND deleted_at IS NULL RETURNING id',[id,actor.sub]); await this.audit(actor.email,'SOFT_DELETE',id,{deleted:true}); return {success:true}; }
+  private assertCompanyScope(companyId:string,actor:Actor){if(actor.role==='NAJIB_ASSIGNER'&&actor.companyId!==companyId)throw new BadRequestException('Vous pouvez gérer uniquement les véhicules de votre société');}
   private normalize(value:string){ return value.toUpperCase().replace(/[^A-Z0-9]/g,''); }
   private registrationKeys(value:string){const normalized=this.normalize(value);const match=normalized.match(/^(\d+)TU(\d+)$/);return match?[normalized,`${match[2]}TU${match[1]}`]:[normalized];}
   private reconcileTotalCards(vehicleId:string,companyId:string,registration:string,actorId:string){return this.db.transaction(async client=>{

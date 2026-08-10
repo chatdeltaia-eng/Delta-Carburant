@@ -273,6 +273,7 @@ const canManageCards = (role: Role) =>
   role === "DIRECTION_GENERAL" ||
   role === "ZIN_FINANCE";
 const canManage = (role: Role) => role !== "NAJIB_ASSIGNER";
+const canManageFleet = (role: Role) => canManage(role) || role === "NAJIB_ASSIGNER";
 
 const roleWorkflows: Record<Role, { intro: string; steps: WorkflowStep[] }> = {
   NAJIB_ASSIGNER: {
@@ -462,7 +463,7 @@ export default function Home() {
       fetch(`${API}/drivers`, { headers, cache: "no-store" }),
       fetch(`${API}/fuel-prices`, { headers, cache: "no-store" }),
       canManage(user.role)?fetch(`${API}/cards/responsibles`,{headers,cache:"no-store"}):Promise.resolve(null),
-      canManage(user.role)?fetch(`${API}/cards/companies`,{headers,cache:"no-store"}):Promise.resolve(null),
+      fetch(`${API}/cards/companies`,{headers,cache:"no-store"}),
     ])
       .then(async ([cardResponse, requestResponse, notificationResponse,transactionResponse,summaryResponse,reviewsResponse,vehiclesResponse,mileageResponse,driversResponse,fuelPricesResponse,responsiblesResponse,companiesResponse]) => {
         // Management reference data must remain usable even if an unrelated
@@ -833,7 +834,7 @@ export default function Home() {
       if(!token)return notify("Session distante expirée");
       try{const response=await fetch(`${API}/mileage`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({vehicleId:String(f.get("vehicleId")),mileage:Number(f.get("mileage")),note:String(f.get("note")??"")})});if(!response.ok)throw new Error(await response.text());const created=await response.json();notify(created.anomaly?`Anomalie détectée : kilométrage attendu ${created.expectedMileage}`:"Relevé envoyé à Zin et à la DG");}catch(error){return notify(error instanceof Error?error.message:"Échec du relevé kilométrique");}
     } else if(modal==="driver"||modal==="fuelPrice"){
-      if(!canManage(user.role)||!token)return notify("Action réservée à Zin et à la DG");
+      if((modal==="driver"?!canManageFleet(user.role):!canManage(user.role))||!token)return notify(modal==="driver"?"Gestion des chauffeurs non autorisée":"Action réservée à Zin et à la DG");
       const endpoint=modal==="driver"?"drivers":"fuel-prices";
       const body=modal==="driver"?{companyId:String(f.get("companyId")),fullName:String(f.get("fullName")),cin:String(f.get("cin")||"")||undefined,phone:String(f.get("phone")||"")||undefined,licenseNumber:String(f.get("licenseNumber")||"")||undefined}:{companyId:String(f.get("companyId")),product:String(f.get("product")),newPrice:Number(f.get("newPrice")),effectiveDate:String(f.get("effectiveDate")||"")||undefined};
       try{const response=await fetch(`${API}/${endpoint}`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify(body)});if(!response.ok)throw new Error(await response.text());notify(modal==="driver"?"Chauffeur ajouté":"Prix enregistré et plafonds ajustés");}catch(error){return notify(error instanceof Error?error.message:"Enregistrement impossible");}
@@ -842,8 +843,10 @@ export default function Home() {
         return notify(
           "Les demandes de carte passent obligatoirement par Najib",
         );
-      if (modal !== "request" && !canManage(user.role))
+      if (modal !== "request" && modal !== "vehicle" && !canManage(user.role))
         return notify("Action réservée à Zin et à la Direction Générale");
+      if (modal === "vehicle" && !canManageFleet(user.role))
+        return notify("Gestion des véhicules non autorisée");
       const key =
         modal === "beneficiary"
           ? "beneficiaries"
@@ -1258,9 +1261,9 @@ export default function Home() {
     section: "transactions" | "vehicles" | "beneficiaries",
     id?: string,
   ) {
-    if (!user || !canManage(user.role))
-      return notify("Najib dispose d’un accès en consultation uniquement");
-    if (section !== "transactions" && !isDirection(user.role))
+    if (!user || (section === "vehicles" ? !canManageFleet(user.role) : !canManage(user.role)))
+      return notify("Vous ne disposez pas du droit de suppression");
+    if (section !== "transactions" && section !== "vehicles" && !isDirection(user.role))
       return notify("Zin peut supprimer uniquement les transactions");
     if (section === "vehicles" && id) {
       const vehicle = data.vehicles.find((row) => row.id === id);
@@ -2548,9 +2551,11 @@ function DataView({
         ? canManage(user.role)
           ? c.button
           : ""
-        : view === "vehicles"
-          ? canManage(user.role) ? c.button : ""
-        : view === "drivers" || view === "fuelPrices"
+      : view === "vehicles"
+          ? canManageFleet(user.role) ? c.button : ""
+        : view === "drivers"
+          ? canManageFleet(user.role) ? c.button : ""
+        : view === "fuelPrices"
           ? canManage(user.role) ? c.button : ""
         : view === "beneficiaries"
           ? ""
@@ -2583,10 +2588,10 @@ function DataView({
         <div className={styles.importNotice}>
           <b>{view === "vehicles" ? "Référentiel du parc automobile" : view==="drivers"?"Chauffeurs par société":"Module alimenté automatiquement"}</b>
           <span>{view === "vehicles"
-            ? canManage(user.role)
+            ? canManageFleet(user.role)
               ? "Vous pouvez ajouter, corriger et archiver les véhicules. Les cartes liées restent synchronisées par matricule."
               : "Consultation uniquement. Les véhicules sont gérés par Zin Finance et la Direction Générale."
-            : view==="drivers"?"Chaque chauffeur appartient à une société et peut être relié aux véhicules de cette même société."
+            : view==="drivers"?"Najib peut créer et gérer les chauffeurs DC afin de préparer les affectations aux véhicules."
             : "Les données proviennent des cartes confirmées et de leurs affectations. Aucun ajout manuel n’est nécessaire."}</span>
         </div>
       )}
@@ -2596,7 +2601,7 @@ function DataView({
         button={button}
         click={() => (c.modal ? open(c.modal) : download(rows, view))}
       />
-      {view==="vehicles"&&canManage(user.role)&&<label className={styles.companyFilter}>Société <select value={selectedCompany} onChange={event=>setSelectedCompany(event.target.value)}><option>Toutes</option>{companyChoices.map(company=><option key={company}>{company}</option>)}</select></label>}
+      {view==="vehicles"&&canManageFleet(user.role)&&<label className={styles.companyFilter}>Société <select value={selectedCompany} onChange={event=>setSelectedCompany(event.target.value)}><option>Toutes</option>{companyChoices.map(company=><option key={company}>{company}</option>)}</select></label>}
       {view === "transactions" && canManage(user.role) && rows.length > 0 && (
         <div className={styles.bulkBar}>
           <span>{rows.length} transaction(s)</span>
@@ -2681,11 +2686,13 @@ function DataView({
                       <span>Consultation</span>
                     )
                   ) : view === "vehicles" ? (
-                    isDirection(user.role) && !String(r.id).startsWith("vehicle-card-") ? <>
+                    canManageFleet(user.role) && !String(r.id).startsWith("vehicle-card-") ? <>
                       <button className={styles.smallBtn} onClick={() => editVehicle(r)}>Modifier</button>{" "}
                       <button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={() => deleteRow("vehicles", r.id)}>Supprimer</button>
                     </> : <span>Consultation</span>
-                  ) : view === "drivers" || view === "fuelPrices" ? (
+                  ) : view === "drivers" ? (
+                    <span>{canManageFleet(user.role)?"Gestion autorisée — ajout disponible":"Consultation"}</span>
+                  ) : view === "fuelPrices" ? (
                     <span>{canManage(user.role)?"Gestion centralisée Zin / DG":"Consultation"}</span>
                   ) : view === "beneficiaries" ? (
                     <span>Synchronisé depuis la carte</span>

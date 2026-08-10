@@ -30,7 +30,7 @@ class ReplaceCardDto { @IsUUID() replacementCardId!: string; @IsString() reason!
 export class CardsController {
   constructor(private readonly cards: CardsService) {}
   @Get('responsibles') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') responsibles(@Query('companyId') companyId=''){return this.cards.responsibles(companyId);}
-  @Get('companies') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') companies(){return this.cards.companies();}
+  @Get('companies') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE','NAJIB_ASSIGNER') companies(){return this.cards.companies();}
   @Patch(':id/responsible') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') responsible(@Param('id',ParseUUIDPipe) id:string,@Body() dto:ResponsibleDto,@Req() req:{user:{sub:string;email:string;role:string}}){return this.cards.assignResponsible(id,dto.responsibleUserId,req.user);}
   @Post(':id/assignment') @Roles('NAJIB_ASSIGNER') assignment(@Param('id',ParseUUIDPipe) id:string,@Body() dto:AssignCardDto,@Req() req:{user:{sub:string;email:string;role:string}}){return this.cards.assignVehicle(id,dto,req.user);}
   @Get() list(@Query('page') page='1', @Query('search') search='', @Query('status') status='', @Query('companyId') companyId='',

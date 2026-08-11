@@ -12,7 +12,7 @@ export class TransactionsService {
     if(['GASOIL','GO','DIESEL'].includes(key)) return 'GASOIL ORDINAIRE';
     if(['GASOILSS','GASOIL50','GOSSO'].includes(key)) return 'GASOIL SANS SOUFRE (GASOIL 50)';
     if(['SUPERSP','SSP','ESSENCE','ESSENCESANSPLOMB'].includes(key)) return 'ESSENCE SANS PLOMB';
-    if(['GASEXC','GASSEXC','GASOILEXC','GOSSEXC','GASOILPOWER'].includes(key)) return 'GASOIL PREMIUM / POWER';
+    if(['GASEXC','GASSEXC','GASOILEXC','GOSSEXC','GASOILSSEXC','GASOIL50EXC','GASOILPOWER'].includes(key)) return 'GASOIL PREMIUM / POWER';
     if(['SSPEXC','SUPERSPEXC','SUPEREXC','ESSENCEEXC','ESSENCEPOWER'].includes(key)) return 'ESSENCE PREMIUM / POWER';
     return value.trim().toUpperCase();
   }

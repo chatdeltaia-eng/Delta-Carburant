@@ -12,7 +12,7 @@ import { BadRequestException,Injectable } from '@nestjs/common'; import { Databa
         WHEN regexp_replace(upper(coalesce(ft.product,'')),'[^A-Z0-9]','','g') IN ('GASOIL','GO','DIESEL') THEN 'GASOIL ORDINAIRE'
         WHEN regexp_replace(upper(coalesce(ft.product,'')),'[^A-Z0-9]','','g') IN ('GASOILSS','GASOIL50','GOSSO') THEN 'GASOIL SANS SOUFRE (GASOIL 50)'
         WHEN regexp_replace(upper(coalesce(ft.product,'')),'[^A-Z0-9]','','g') IN ('SUPERSP','SSP','ESSENCE','ESSENCESANSPLOMB') THEN 'ESSENCE SANS PLOMB'
-        WHEN regexp_replace(upper(coalesce(ft.product,'')),'[^A-Z0-9]','','g') IN ('GASEXC','GASSEXC','GASOILEXC','GOSSEXC','GASOILPOWER') THEN 'GASOIL PREMIUM / POWER'
+        WHEN regexp_replace(upper(coalesce(ft.product,'')),'[^A-Z0-9]','','g') IN ('GASEXC','GASSEXC','GASOILEXC','GOSSEXC','GASOILSSEXC','GASOIL50EXC','GASOILPOWER') THEN 'GASOIL PREMIUM / POWER'
         WHEN regexp_replace(upper(coalesce(ft.product,'')),'[^A-Z0-9]','','g') IN ('SSPEXC','SUPEREXC','ESSENCEEXC','ESSENCEPOWER') THEN 'ESSENCE PREMIUM / POWER'
         ELSE upper(trim(coalesce(ft.product,''))) END
       ORDER BY (fp.effective_date<=ft.transaction_date::date) DESC,

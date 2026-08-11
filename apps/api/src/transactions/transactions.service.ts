@@ -3,7 +3,7 @@ import { DatabaseService } from '../database/database.service';
 type Actor = { sub: string; email: string };
 type Correction = { station?: string; liters?: number; amount?: number; reason: string };
 type Allocation = { driverId: string; vehicleId: string; amount: number; mileage: number; liters?: number; note?: string };
-type ImportRow = { date:string; cardNumber:string; vehicle?:string; beneficiary?:string; station?:string; product?:string; liters:number; amount:number; previousMileage?:number; mileage?:number; authorizationCode?:string };
+type ImportRow = { date:string; cardNumber:string; vehicle?:string; beneficiary?:string; station:string; product:string; liters:number; amount:number; previousMileage?:number; mileage?:number; authorizationCode?:string };
 @Injectable()
 export class TransactionsService {
   constructor(private readonly db: DatabaseService) {}
@@ -89,6 +89,10 @@ export class TransactionsService {
       if (!cardKey) throw new BadRequestException(
         `Numéro du mode de paiement absent à la ligne ${index+2}. Import annulé : aucune consommation n'a été regroupée sur une carte inconnue.`,
       );
+      row.station=String(row.station??'').trim();
+      row.product=String(row.product??'').trim();
+      if(!row.product) throw new BadRequestException(`Nom de produit absent à la ligne ${index+2}. Import annulé.`);
+      if(!row.station) throw new BadRequestException(`Nom de la station absent à la ligne ${index+2}. Import annulé.`);
       let card=await client.query(`SELECT id,company_id,official_registration,holder_name,card_category,reference_vehicle_id FROM fuel_card WHERE deleted_at IS NULL AND (
         total_payment_number=$1
         OR (length($1)>6 AND total_payment_number=right($1,6))
@@ -197,7 +201,9 @@ export class TransactionsService {
     if(review) await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
       SELECT id,'Transactions inconnues détectées',$2,'WARNING','anomalies','transaction_import_batch',$3 FROM app_user
       WHERE active AND role::text=ANY($1::text[])`,[['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'],`${review} transaction(s) nécessitent la vérification d’une carte ou d’un véhicule`,batch.rows[0].id]);
-    return {batchId:batch.rows[0].id,imported,duplicates,pendingReview:review};
+    return {batchId:batch.rows[0].id,imported,duplicates,pendingReview:review,
+      products:new Set(dto.rows.map(row=>row.product.toUpperCase())).size,
+      stations:new Set(dto.rows.map(row=>row.station.toUpperCase())).size};
   }); }
   async review(id:string,dto:{decision:'ACCEPTED'|'REJECTED';reason?:string;fuelCardId?:string;vehicleId?:string;newVehicleRegistration?:string;newVehicleType?:string;newVehicleCompanyId?:string;beneficiaryName?:string},actor:Actor) { return this.db.transaction(async client => {
     const found=await client.query(`SELECT * FROM transaction_review WHERE id=$1 AND status='PENDING' FOR UPDATE`,[id]);

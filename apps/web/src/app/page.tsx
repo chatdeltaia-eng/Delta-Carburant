@@ -1055,6 +1055,15 @@ export default function Home() {
           return notify(
             'Colonne "Montant" introuvable : utilisez le fichier de transactions exporté depuis TotalEnergies',
           );
+        const sourceHeaders = Object.keys(sourceRows[0]).map(normalizedKey);
+        if (!sourceHeaders.includes("nomdeproduit"))
+          return notify(
+            'Colonne « Nom de produit » introuvable dans le fichier TotalEnergies',
+          );
+        if (!sourceHeaders.includes("nomdelastation"))
+          return notify(
+            'Colonne « Nom de la station » introuvable dans le fichier TotalEnergies',
+          );
         const paymentNumberKey = totalPaymentNumberKey(sourceRows[0]);
         if (!paymentNumberKey)
           return notify(
@@ -1070,13 +1079,23 @@ export default function Home() {
           return notify(
             `Numéro du mode de paiement absent à la ligne ${missingCardRow + 2}. Import annulé pour éviter de regrouper les consommations sur une seule carte.`,
           );
+        const missingProductRow = normalized.findIndex(
+          (row) => !String(row.produit).trim() || row.produit === "—",
+        );
+        if (missingProductRow >= 0)
+          return notify(`Nom de produit absent à la ligne ${missingProductRow + 2}. Import annulé.`);
+        const missingStationRow = normalized.findIndex(
+          (row) => !String(row.station).trim() || row.station === "—",
+        );
+        if (missingStationRow >= 0)
+          return notify(`Nom de la station absent à la ligne ${missingStationRow + 2}. Import annulé.`);
         if (!token) return notify("Session distante expirée : reconnectez-vous");
         const response=await fetch(`${API}/transactions/import`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({filename:file.name,rows:normalized.map(row=>({date:String(row.dateApi),cardNumber:String(row.carte),vehicle:String(row.vehicule??""),beneficiary:String(row.beneficiaire??""),station:String(row.station??""),product:String(row.produit??""),liters:parseNumeric(row.litres),amount:parseNumeric(row.montant),previousMileage:parseNumeric(row.kilometragePrecedent)||undefined,mileage:parseNumeric(row.kilometrage)||undefined,authorizationCode:String(row.codeAutorisation??"")||undefined}))})});
         if(!response.ok) throw new Error(await response.text());
         const result=await response.json();
         setRefreshTick(value=>value+1);
         setView("dashboard");
-        notify(`${result.imported} transaction(s) liée(s) automatiquement · ${result.duplicates} doublon(s) · ${result.pendingReview} ligne(s) non rapprochée(s)`);
+        notify(`${result.imported} transaction(s) importée(s) avec produit et station · ${result.products ?? 0} produit(s) · ${result.stations ?? 0} station(s) · ${result.duplicates} doublon(s) · ${result.pendingReview} ligne(s) non rapprochée(s)`);
       } catch (error) {
         const raw=error instanceof Error?error.message:"";
         try { const parsed=JSON.parse(raw); return notify(String(parsed.message??raw)); }
@@ -2589,8 +2608,8 @@ function DataView({
         "carte",
         "beneficiaire",
         "vehicule",
-        "station",
-        "produit",
+        "nomStation",
+        "nomProduit",
         "litres",
         "montant",
         "typeCarte",
@@ -2690,7 +2709,7 @@ function DataView({
   const transactionRows: Row[] = data.transactions.map((row) => {
     const card = cards.find((item) => item.masked_card_number === String(row.carte));
     const allocated = parseNumeric(row.montantReparti);
-    return { ...row, typeCarte: card?.card_category === "OFF_PARK" ? "Hors parc" : "Personnalisée", reparti: `${allocated.toFixed(3)} DT`, detailRepartition: row.repartition || "Non répartie" };
+    return { ...row, nomStation: row.station || "—", nomProduit: row.produit || "—", typeCarte: card?.card_category === "OFF_PARK" ? "Hors parc" : "Personnalisée", reparti: `${allocated.toFixed(3)} DT`, detailRepartition: row.repartition || "Non répartie" };
   });
   const sourceRows = view === "beneficiaries" ? beneficiaryRows : view === "vehicles" ? vehicleRows : view === "transactions" ? transactionRows : (data[view] ?? []);
   const companyChoices=[...new Set((view==="vehicles"?vehicleRows:cards.map(card=>({societe:card.company_code}))).map(row=>String(row.societe??"")).filter(Boolean))];
@@ -2790,7 +2809,7 @@ function DataView({
           <thead>
             <tr>
               {c.cols.map((x) => (
-                <th key={x}>{x.toUpperCase()}</th>
+                <th key={x}>{x === "nomStation" ? "NOM DE LA STATION / RÉGION" : x === "nomProduit" ? "NOM DE PRODUIT" : x.toUpperCase()}</th>
               ))}
               <th>ACTION</th>
             </tr>
@@ -3421,8 +3440,9 @@ function ModalForm({
               <div className={styles.workflowInfo}>
                 <b>Import sécurisé</b>
                 <span>
-                  Aucune transaction ne sera créée manuellement. Les doublons du
-                  fichier Total seront détectés et ignorés.
+                  Colonnes obligatoires : « Nom de produit » et « Nom de la station ».
+                  Elles identifient le carburant consommé et la région de la transaction.
+                  Les doublons du fichier Total seront détectés et ignorés.
                 </span>
               </div>
             )}
@@ -3729,6 +3749,8 @@ function totalTransaction(
     carte: digits || rawCard,
     station: String(
       totalValue(source, [
+        "nomdelastation",
+        "nomstation",
         "stationservice",
         "station",
         "site",
@@ -3737,7 +3759,7 @@ function totalTransaction(
     ),
     vehicule: String(totalValue(source,["plaquedimmatriculation","immatriculation","matriculevehicule","vehicle","registration"])||""),
     beneficiaire: totalHolderName(source),
-    produit: String(totalValue(source,["nomdeproduit","nomduproduit","produit","product","carburant"])||"Carburant"),
+    produit: String(totalValue(source,["nomdeproduit","nomduproduit","produit","product","carburant"])||"—"),
     kilometragePrecedent: parseNumeric(totalValue(source,["kilometrageprecedent"])),
     kilometrage: parseNumeric(totalValue(source,["kilometrageactuelle","kilometrageactuel"])),
     codeAutorisation: String(totalValue(source,["codedautorisation","codeautorisation","numerodetransaction"])||""),

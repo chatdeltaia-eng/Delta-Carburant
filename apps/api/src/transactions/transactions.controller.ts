@@ -24,8 +24,8 @@ class ImportRowDto {
   @IsString() cardNumber!: string;
   @IsOptional() @IsString() vehicle?: string;
   @IsOptional() @IsString() beneficiary?: string;
-  @IsOptional() @IsString() station?: string;
-  @IsOptional() @IsString() product?: string;
+  @IsString() @MinLength(1) station!: string;
+  @IsString() @MinLength(1) product!: string;
   @IsNumber() @Min(0.001) liters!: number;
   @IsNumber() @Min(0) amount!: number;
   @IsOptional() @IsNumber() @Min(0) previousMileage?: number;

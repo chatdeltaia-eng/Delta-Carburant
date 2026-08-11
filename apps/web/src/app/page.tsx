@@ -2672,6 +2672,7 @@ function DataView({
         <Toolbar
           search={search}
           setSearch={setSearch}
+          count={filtered.length}
           button={canCreate(user.role) ? c.button : ""}
           click={() => open("card")}
         />
@@ -2799,6 +2800,7 @@ function DataView({
       <Toolbar
         search={search}
         setSearch={setSearch}
+        count={rows.length}
         button={button}
         click={() => (c.modal ? open(c.modal) : download(rows, view))}
       />
@@ -2933,21 +2935,31 @@ function printReceipt(row:Row){
 function Toolbar({
   search,
   setSearch,
+  count,
   button,
   click,
 }: {
   search: string;
   setSearch: (s: string) => void;
+  count: number;
   button: string;
   click: () => void;
 }) {
   return (
     <div className={styles.toolbar}>
-      <input
-        placeholder="Rechercher dans la liste…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-      />
+      <div className={styles.listTools}>
+        <label className={styles.searchField}>
+          <span aria-hidden="true">⌕</span>
+          <input
+            aria-label="Rechercher dans la liste"
+            placeholder="Rechercher par carte, véhicule, bénéficiaire…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {search && <button type="button" aria-label="Effacer la recherche" onClick={() => setSearch("")}>×</button>}
+        </label>
+        <span className={styles.resultCount}><b>{count}</b> résultat{count === 1 ? "" : "s"}</span>
+      </div>
       {button && <button onClick={click}>＋ {button}</button>}
     </div>
   );

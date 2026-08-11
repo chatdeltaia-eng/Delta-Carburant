@@ -1,6 +1,30 @@
 import { BadRequestException,Injectable } from '@nestjs/common'; import { DatabaseService } from '../database/database.service'; import type { PoolClient } from 'pg';
 @Injectable() export class FuelPricesService{constructor(private readonly db:DatabaseService){}
  private readonly officialUrl='https://www.energiemines.gov.tn/fr/themes/energie/hydrocarbures/prix-et-marges-des-produits-petroliers/';
+ private parseFrenchDate(value:string){
+  const normalized=value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,' ').replace(/\s+/g,' ');
+  const match=normalized.match(/(\d{1,2})\s*(?:er\s*)?(janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre)\s+(\d{4,5})/);
+  if(!match)return null;
+  const months=['janvier','fevrier','mars','avril','mai','juin','juillet','aout','septembre','octobre','novembre','decembre'];
+  const year=Number(match[3]); if(year<2000||year>2100)return null;
+  return `${year}-${String(months.indexOf(match[2])+1).padStart(2,'0')}-${String(Number(match[1])).padStart(2,'0')}`;
+ }
+ private parseOfficialHistory(html:string){
+  const decode=(value:string)=>value.replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/&eacute;/gi,'é').replace(/&egrave;/gi,'è').replace(/&ecirc;/gi,'ê').replace(/&agrave;/gi,'à').replace(/&acirc;/gi,'â').replace(/&ucirc;/gi,'û').replace(/&ocirc;/gi,'ô').replace(/&icirc;/gi,'î').replace(/&[^;]+;/g,' ').replace(/\s+/g,' ').trim();
+  const entries:{product:string;price:number;effectiveDate:string}[]=[]; let effectiveDate:string|null=null;
+  for(const row of html.match(/<tr\b[\s\S]*?<\/tr>/gi)??[]){
+   const cells=(row.match(/<t[dh]\b[\s\S]*?<\/t[dh]>/gi)??[]).map(decode);
+   const rowDate=cells.map(cell=>this.parseFrenchDate(cell)).filter((date):date is string=>Boolean(date)).at(-1);
+   if(rowDate)effectiveDate=rowDate;
+   const productCell=cells.find(cell=>/essence\s+sans\s+plomb|gasoil\s+sans\s+soufre|gasoil\s+ordinaire/i.test(cell));
+   const priceText=[...cells].reverse().find(cell=>/^\d{4}$/.test(cell));
+   if(!productCell||!priceText||!effectiveDate)continue;
+   const key=productCell.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+   const product=key.includes('essence')?'ESSENCE SANS PLOMB':key.includes('sans soufre')?'GASOIL SANS SOUFRE (GASOIL 50)':'GASOIL ORDINAIRE';
+   entries.push({product,price:Number(priceText)/1000,effectiveDate});
+  }
+  return entries.filter(item=>item.price>=1&&item.price<=5);
+ }
  private async recalculateBilling(client:PoolClient,companyId:string){
   const result=await client.query(`WITH priced AS (
     SELECT ft.id,ft.quantity_liters,ft.amount_incl_tax,price.new_price
@@ -43,16 +67,20 @@ import { BadRequestException,Injectable } from '@nestjs/common'; import { Databa
  list(companyId:string){return this.db.query(`SELECT fp.id,fp.company_id AS "companyId",c.code AS company,fp.product,fp.old_price AS "oldPrice",fp.new_price AS "newPrice",fp.variation_percent AS "variationPercent",fp.effective_date AS "effectiveDate",u.display_name AS "createdBy",fp.created_at AS "createdAt",fp.source,fp.source_url AS "sourceUrl" FROM fuel_price fp JOIN company c ON c.id=fp.company_id LEFT JOIN app_user u ON u.id=fp.created_by WHERE ($1='' OR fp.company_id=$1::uuid) ORDER BY fp.effective_date DESC,fp.created_at DESC`,[companyId]);}
  async refreshTunisia(actor:{sub:string;email:string}){
   let html='';try{const response=await fetch(this.officialUrl,{headers:{'user-agent':'DeltaCarburant/1.0 price-monitor'}});if(!response.ok)throw new Error(String(response.status));html=await response.text();}catch{throw new BadRequestException('Source officielle tunisienne temporairement inaccessible');}
-  const plain=html.replace(/<[^>]+>/g,' ').replace(/&[^;]+;/g,' ').replace(/\s+/g,' ');
-  const definitions=[['ESSENCE SANS PLOMB','essence sans plomb'],['GASOIL SANS SOUFRE (GASOIL 50)','gasoil sans soufre'],['GASOIL ORDINAIRE','gasoil ordinaire']] as const;
-  const lower=plain.toLowerCase();
-  const prices=definitions.map(([product,label])=>{const position=lower.lastIndexOf(label);const values=position<0?[]:(plain.slice(position,position+180).match(/\b\d{4}\b/g)??[]).map(Number).filter(value=>value<2000||value>2099);return {product,price:Number(values[0])/1000};});
-  if(prices.some(item=>!Number.isFinite(item.price)||item.price<1||item.price>5))throw new BadRequestException('Format de la source officielle modifié : aucun prix n’a été enregistré');
+  const history=this.parseOfficialHistory(html);
+  const latest=[...new Map(history.map(item=>[item.product,item])).values()];
+  if(latest.length!==3)throw new BadRequestException('Format de la source officielle modifié : les trois carburants réglementés n’ont pas été trouvés');
   return this.db.transaction(async client=>{const company=await client.query(`SELECT id FROM company WHERE code='DC' AND active LIMIT 1`);if(!company.rows[0])throw new BadRequestException('Société DC introuvable');let changed=0;
-   for(const item of prices){const previous=await client.query(`SELECT new_price FROM fuel_price WHERE company_id=$1 AND product=$2 ORDER BY effective_date DESC,created_at DESC LIMIT 1`,[company.rows[0].id,item.product]);const old=Number(previous.rows[0]?.new_price??item.price);if(old===item.price&&previous.rows[0])continue;const variation=100*(item.price-old)/old;const inserted=await client.query(`INSERT INTO fuel_price(company_id,product,old_price,new_price,variation_percent,effective_date,created_by,source,source_url) VALUES($1,$2,$3,$4,$5,current_date,$6,'OFFICIAL_TUNISIA',$7) RETURNING id`,[company.rows[0].id,item.product,old,item.price,variation,actor.sub,this.officialUrl]);changed++;
-    await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id) SELECT id,$1,$2,'WARNING','fuelPrices','fuel_price',$3 FROM app_user WHERE active AND role IN('ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN')`,[`Prix carburant en Tunisie ${variation>0?'augmenté':'diminué'}`,`${item.product} : ${old.toFixed(3)} → ${item.price.toFixed(3)} TND/l (${variation.toFixed(2)} %)`,inserted.rows[0].id]);}
+   const before=new Map<string,number>();
+   for(const item of latest){const previous=await client.query(`SELECT new_price FROM fuel_price WHERE company_id=$1 AND product=$2 ORDER BY effective_date DESC,created_at DESC LIMIT 1`,[company.rows[0].id,item.product]);if(previous.rows[0])before.set(item.product,Number(previous.rows[0].new_price));}
+   let imported=0;
+   for(const item of history){const previous=await client.query(`SELECT new_price FROM fuel_price WHERE company_id=$1 AND product=$2 AND effective_date<$3::date ORDER BY effective_date DESC,created_at DESC LIMIT 1`,[company.rows[0].id,item.product,item.effectiveDate]);const old=Number(previous.rows[0]?.new_price??item.price);const variation=old?100*(item.price-old)/old:0;
+    const inserted=await client.query(`INSERT INTO fuel_price(company_id,product,old_price,new_price,variation_percent,effective_date,created_by,source,source_url)
+      SELECT $1,$2,$3,$4,$5,$6::date,$7,'OFFICIAL_TUNISIA',$8 WHERE NOT EXISTS(SELECT 1 FROM fuel_price WHERE company_id=$1 AND product=$2 AND effective_date=$6::date AND source='OFFICIAL_TUNISIA') RETURNING id`,[company.rows[0].id,item.product,old,item.price,variation,item.effectiveDate,actor.sub,this.officialUrl]);imported+=inserted.rowCount??0;}
+   for(const item of latest){const old=before.get(item.product);if(old===undefined||old===item.price)continue;const variation=100*(item.price-old)/old;changed++;
+    await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id) SELECT id,$1,$2,'WARNING','fuelPrices','fuel_price',NULL FROM app_user WHERE active AND role IN('ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN')`,[`Prix carburant en Tunisie ${variation>0?'augmenté':'diminué'}`,`${item.product} : ${old.toFixed(3)} → ${item.price.toFixed(3)} TND/l (${variation.toFixed(2)} %), applicable le ${item.effectiveDate}`]);}
    const billing=await this.recalculateBilling(client,company.rows[0].id);
-   await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'REFRESH_TUNISIA','fuel_price','OFFICIAL',$2)`,[actor.email,{source:this.officialUrl,prices,changed,billing}]);return {source:this.officialUrl,checked:prices.length,changed,prices,billing};});
+   await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'REFRESH_TUNISIA','fuel_price','OFFICIAL',$2)`,[actor.email,{source:this.officialUrl,prices:latest,historyImported:imported,changed,billing}]);return {source:this.officialUrl,checked:latest.length,changed,prices:latest,historyImported:imported,billing,scope:'3 carburants réglementés publiés par le ministère'};});
  }
  async create(dto:{companyId:string;product:string;newPrice:number;effectiveDate?:string},actor:{sub:string;email:string}){return this.db.transaction(async client=>{
   const previous=await client.query(`SELECT new_price FROM fuel_price WHERE company_id=$1 AND lower(product)=lower($2) ORDER BY effective_date DESC,created_at DESC LIMIT 1`,[dto.companyId,dto.product.trim()]);

@@ -416,6 +416,7 @@ export default function Home() {
     [safeCards,setSafeCards]=useState<Card[]>([]),
     [data, setData] = useState(seeds),
     [databaseSummary, setDatabaseSummary] = useState<Record<string, number> | null>(null),
+    [directionData,setDirectionData]=useState<Record<string,unknown>|null>(null),
     [responsibles,setResponsibles]=useState<{id:string;name:string;email:string}[]>([]),
     [companies,setCompanies]=useState<{id:string;code:string;name:string}[]>([]),
     [notifications, setNotifications] = useState<Notification[]>([]),
@@ -563,7 +564,7 @@ export default function Home() {
           transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => {const allocations=Array.isArray(row.allocations)?row.allocations as Record<string,unknown>[]:[];return { id:String(row.id),reviewId:String(row.reviewId??""),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),prixApplique:row.appliedPrice==null?"—":Number(row.appliedPrice),montantTheorique:row.expectedAmount==null?"—":Number(row.expectedAmount),ecartFacturation:row.billingDifference==null?"—":Number(row.billingDifference),controleFacturation:String(row.billingStatus??"PRICE_UNAVAILABLE"),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),repartition:allocations.map(item=>`${String(item.beneficiary)} — ${String(item.vehicle)} — ${Number(item.amount).toFixed(3)} DT${item.mileage?` — ${Number(item.mileage)} km`:""}`).join(" | "),observation:row.observation?`${String(row.observation)} — ${String(row.observationBy??"—")}`:"—",statut:row.reviewStatus==="PENDING"?(row.reviewIssue==="MISSING_BENEFICIARY"?"Bénéficiaire à identifier":"Véhicule inconnu à valider"):"Importée Total",fichier:String(row.file??"—") }}),
           anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.issueType)==="MISSING_BENEFICIARY"?"Bénéficiaire manquant":"Véhicule inconnu",carte:String(row.cardNumber),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),gravite:"Haute",statut:String(row.status)==="PENDING"?"À vérifier":String(row.status)==="ACCEPTED"?"Acceptée":"Refusée" })),
           vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>,index:number)=>({id:String(row.id),companyId:String(row.companyId??""),numero:Number(row.fleetNumber??0)||index+1,immatriculation:Boolean(row.registrationMissing)?"Sans matricule":String(row.registration),sansMatricule:Boolean(row.registrationMissing),type:String(row.vehicleType??row.model??"À compléter"),societe:String(row.company??"—"),mise_en_circulation:row.firstRegistrationDate?new Date(String(row.firstRegistrationDate)).toLocaleDateString("fr-FR"):"À compléter",reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??row.cardHolder??"—"),titulaire:String(row.cardHolder??row.driver??"—"),carte:String(row.cardNumber??"—"),garde:String(row.custody)==="IN_SAFE"?"En coffre · non distribuée":"Distribuée / active",observation:String(row.notes??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
-          mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:String(row.week??"—"),vehicule:String(row.vehicle),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),attendu:Number(row.expectedMileage??0),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—")})),
+          mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:String(row.week??"—"),vehicule:String(row.vehicle),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),litresPeriode:Number(row.periodLiters??0),consommation100km:row.litersPer100Km==null?"—":Number(row.litersPer100Km),attendu:Number(row.expectedMileage??0),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—")})),
           drivers:(driversPayload.items??driversPayload).map((row:Record<string,unknown>)=>({id:String(row.id),companyId:String(row.companyId??""),nomComplet:String(row.fullName??"—"),numeroClient:String(row.customerNumber??"—"),nomClient:String(row.customerName??"—"),numeroChauffeur:String(row.driverNumber??"—"),prenom:String(row.firstName??"—"),nom:String(row.lastName??row.fullName??"—"),codeChauffeur:String(row.driverCode??"—"),vehicules:Array.isArray(row.vehicles)?(row.vehicles as {registration:string}[]).map(item=>item.registration).join(", "):"—",statut:Boolean(row.active)?"Actif":"Inactif"})),
           fuelPrices:(fuelPricesPayload.items??fuelPricesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),societe:String(row.company),produit:String(row.product),ancienPrix:Number(row.oldPrice),nouveauPrix:Number(row.newPrice),variation:`${Number(row.variationPercent).toFixed(2)} %`,date:new Date(String(row.effectiveDate)).toLocaleDateString("fr-FR"),auteur:String(row.createdBy??"—"),source:String(row.source)==="OFFICIAL_TUNISIA"?"Ministère tunisien":String(row.source)==="TOTAL_SUPPLIER"?"Tarif fournisseur Total":"Saisie manuelle"})),
         }));
@@ -585,6 +586,18 @@ export default function Home() {
     const timer = window.setInterval(() => setRefreshTick((current) => current + 1), 30000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [token, user, refreshTick]);
+  useEffect(()=>{
+    if(!token||!user||user.role==="NAJIB_ASSIGNER")return;
+    const headers={Authorization:`Bearer ${token}`};
+    Promise.all([fetch(`${API}/dashboard/direction`,{headers,cache:"no-store"}),fetch(`${API}/transactions/imports`,{headers,cache:"no-store"})])
+      .then(async([directionResponse,importsResponse])=>{
+        if(directionResponse.ok)setDirectionData(await directionResponse.json());
+        if(importsResponse.ok){const payload=await importsResponse.json();setData(current=>({...current,importHistory:(payload.items??payload).map((row:Record<string,unknown>)=>({
+          id:String(row.id),date:new Date(String(row.importedAt)).toLocaleString("fr-FR"),fichier:String(row.filename),auteur:String(row.importedBy??"—"),
+          lignes:Number(row.totalRows),importees:Number(row.importedRows),doublons:Number(row.duplicateRows),controle:Number(row.rejectedRows),actives:Number(row.activeTransactions),statut:String(row.status),motif:String(row.revertReason??"—")
+        }))}));}
+      }).catch(()=>undefined);
+  },[token,user,refreshTick]);
   const persist = (
     nextCards = cards,
     nextData = data,
@@ -1826,7 +1839,7 @@ export default function Home() {
             edit={openCard}
           />
         ) : view === "reports" ? (
-          <DirectionReports cards={cards} transactions={data.transactions} />
+          <DirectionReports cards={cards} transactions={data.transactions} analytics={directionData} />
         ) : view === "settings" ? (
           <Settings
             reset={() => {
@@ -2171,9 +2184,11 @@ function Dashboard({
 function DirectionReports({
   cards,
   transactions,
+  analytics,
 }: {
   cards: Card[];
   transactions: Row[];
+  analytics: Record<string,unknown>|null;
 }) {
   const [scenario, setScenario] = useState<"migration" | "new">("migration");
   const [company, setCompany] = useState("Toutes"),
@@ -2252,6 +2267,12 @@ function DirectionReports({
       </div>
       <div className={styles.reportLayout}>
         <div>
+          {analytics&&<div className={styles.executiveStrip}>
+            <ReportKpi label="DÉPENSE DU MOIS" value={`${Number(analytics.monthAmount??0).toLocaleString("fr-FR")} TND`}/>
+            <ReportKpi label="VOLUME DU MOIS" value={`${Number(analytics.monthLiters??0).toLocaleString("fr-FR")} L`}/>
+            <ReportKpi label="ÉCARTS FACTURATION" value={Number(analytics.billingMismatches??0)}/>
+            <ReportKpi label="ANOMALIES OUVERTES" value={Number(analytics.openAnomalies??0)}/>
+          </div>}
           <div className={styles.reportKpis}>
             {scenario === "migration" ? (
               <>
@@ -2296,6 +2317,11 @@ function DirectionReports({
               bars={byBeneficiary}
             />
           )}
+          {analytics&&<section className={styles.intelligenceGrid}>
+            <article><h3>Top consommateurs du mois</h3><Bars items={((analytics.topConsumers??[]) as Record<string,unknown>[]).slice(0,7).map(row=>({name:`${String(row.card)} · ${String(row.beneficiary??"—")}`,value:Number(row.amount??0)}))}/></article>
+            <article><h3>Répartition par produit</h3><Bars items={((analytics.products??[]) as Record<string,unknown>[]).map(row=>({name:String(row.product),value:Number(row.liters??0)}))}/></article>
+            <article className={styles.riskPanel}><h3>Contrôles intelligents</h3>{((analytics.risks??[]) as Record<string,unknown>[]).length?((analytics.risks??[]) as Record<string,unknown>[]).slice(0,8).map((row,index)=><div key={`${String(row.id)}-${index}`}><b>{String(row.reason)}</b><span>Carte {String(row.card)} · {String(row.station??"—")} · {Number(row.amount??0).toFixed(3)} TND</span></div>):<p>Aucun mouvement à risque détecté.</p>}</article>
+          </section>}
         </div>
         <aside className={styles.reportFilters}>
           <h3>⚱ Filtres</h3>
@@ -2682,7 +2708,7 @@ function DataView({
         "recu",
       ],
     },
-    mileage:{button:"Nouveau relevé hebdomadaire",modal:"mileage",cols:["semaine","vehicule","societe","responsable","precedent","distanceDetectee","attendu","kilometrage","anomalie","statut","validateur"]},
+    mileage:{button:"Nouveau relevé hebdomadaire",modal:"mileage",cols:["semaine","vehicule","societe","responsable","precedent","distanceDetectee","litresPeriode","consommation100km","kilometrage","anomalie","statut","validateur"]},
     anomalies: {
       button: "Exporter",
       modal: null,
@@ -2810,6 +2836,12 @@ function DataView({
           <article><span>!</span><div><small>À corriger par Zin</small><strong>{corrections}</strong></div></article>
         </div>;
       })()}
+      {view==="transactions"&&canManage(user.role)&&data.importHistory?.length>0&&<details className={styles.importHistory}>
+        <summary>Journal sécurisé des imports Total · {data.importHistory.length} import(s)</summary>
+        <div className={styles.tableWrap}><table><thead><tr>{["Date","Fichier","Auteur","Lignes","Importées","Doublons ignorés","À contrôler","Actives","Statut"].map(label=><th key={label}>{label}</th>)}</tr></thead>
+          <tbody>{data.importHistory.slice(0,10).map(row=><tr key={row.id}><td>{row.date}</td><td>{row.fichier}</td><td>{row.auteur}</td><td>{row.lignes}</td><td>{row.importees}</td><td>{row.doublons}</td><td>{row.controle}</td><td>{row.actives}</td><td><span className={styles.badge}>{row.statut}</span></td></tr>)}</tbody>
+        </table></div>
+      </details>}
       {(view === "beneficiaries" || view === "vehicles" || view === "drivers") && (
         <div className={styles.importNotice}>
           <b>{view === "vehicles" ? "Référentiel du parc automobile" : view==="drivers"?"Chauffeurs par société":"Module alimenté automatiquement"}</b>

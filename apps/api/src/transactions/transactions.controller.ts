@@ -48,6 +48,7 @@ class ReviewDecisionDto {
 }
 class AllocationDecisionDto { @IsIn(['APPROVED','REJECTED']) decision!:'APPROVED'|'REJECTED'; @IsOptional() @IsString() reason?:string; }
 class ObservationDto { @IsString() @MinLength(3) observation!:string; }
+class RevertBatchDto { @IsString() @MinLength(5) reason!:string; }
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('transactions')
@@ -56,6 +57,8 @@ export class TransactionsController {
   @Get() @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE','NAJIB_ASSIGNER') list(@Req() req: { user: { sub: string; role: string } }) { return this.transactions.list(req.user); }
   @Post('import') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') import(@Body() dto: ImportTransactionsDto, @Req() req: { user: { sub:string; email:string } }) { return this.transactions.import(dto,req.user); }
   @Get('reviews') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') reviews() { return this.transactions.reviews(); }
+  @Get('imports') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') imports() { return this.transactions.imports(); }
+  @Patch('imports/:id/revert') @Roles('SUPER_ADMIN','DIRECTION_GENERAL') revertImport(@Param('id',ParseUUIDPipe) id:string,@Body() dto:RevertBatchDto,@Req() req:{user:{sub:string;email:string}}){return this.transactions.revertImport(id,dto.reason,req.user);}
   @Patch('reviews/:id') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') review(@Param('id',ParseUUIDPipe) id:string,@Body() dto:ReviewDecisionDto,@Req() req:{user:{sub:string;email:string}}) { return this.transactions.review(id,dto,req.user); }
   @Patch('allocations/:id/decision') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') decideAllocation(@Param('id',ParseUUIDPipe) id:string,@Body() dto:AllocationDecisionDto,@Req() req:{user:{sub:string;email:string}}){return this.transactions.decideAllocation(id,dto,req.user);}
   @Post(':id/allocations') @Roles('NAJIB_ASSIGNER') allocate(@Param('id', ParseUUIDPipe) id: string,

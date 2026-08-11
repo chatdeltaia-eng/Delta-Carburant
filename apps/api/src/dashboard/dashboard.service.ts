@@ -43,6 +43,39 @@ export class DashboardService {
     const migrations = await this.db.query('SELECT * FROM v_direction_card_reporting ORDER BY lifecycle_liters DESC');
     const companies = await this.db.query(`SELECT c.code AS company,coalesce(sum(ft.quantity_liters),0)::float AS liters
       FROM company c LEFT JOIN fuel_card fc ON fc.company_id=c.id LEFT JOIN fuel_transaction ft ON ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL GROUP BY c.code ORDER BY liters DESC`);
-    return { ...kpis[0], migrations, companies };
+    const [overview] = await this.db.query(`SELECT
+      coalesce(sum(ft.amount_incl_tax) FILTER(WHERE ft.transaction_date>=date_trunc('month',now())),0)::float AS "monthAmount",
+      coalesce(sum(ft.quantity_liters) FILTER(WHERE ft.transaction_date>=date_trunc('month',now())),0)::float AS "monthLiters",
+      (SELECT coalesce(sum(monthly_limit),0)::float FROM fuel_card WHERE deleted_at IS NULL AND status='ACTIVE') AS "monthBudget",
+      count(*) FILTER(WHERE ft.validation_status='BILLING_MISMATCH' AND ft.transaction_date>=date_trunc('month',now()))::int AS "billingMismatches",
+      coalesce(sum(abs(ft.billing_difference)) FILTER(WHERE ft.validation_status='BILLING_MISMATCH' AND ft.transaction_date>=date_trunc('month',now())),0)::float AS "billingExposure",
+      (SELECT count(*)::int FROM anomaly WHERE status IN('OPEN','IN_REVIEW')) AS "openAnomalies"
+      FROM fuel_card fc LEFT JOIN fuel_transaction ft ON ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL`);
+    const monthly = await this.db.query(`SELECT to_char(date_trunc('month',transaction_date),'YYYY-MM') AS month,
+      sum(quantity_liters)::float AS liters,sum(amount_incl_tax)::float AS amount
+      FROM fuel_transaction WHERE deleted_at IS NULL AND transaction_date>=date_trunc('month',now())-interval '11 months'
+      GROUP BY 1 ORDER BY 1`);
+    const topConsumers = await this.db.query(`SELECT fc.masked_card_number AS card,coalesce(b.display_name,fc.holder_name) AS beneficiary,
+      v.registration_display AS vehicle,sum(ft.quantity_liters)::float AS liters,sum(ft.amount_incl_tax)::float AS amount,
+      CASE WHEN fc.monthly_limit>0 THEN round(100*sum(ft.amount_incl_tax)/fc.monthly_limit,1)::float ELSE 0 END AS "usageRate"
+      FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
+      LEFT JOIN beneficiary b ON b.id=ft.beneficiary_id LEFT JOIN vehicle v ON v.id=ft.vehicle_id
+      WHERE ft.deleted_at IS NULL AND ft.transaction_date>=date_trunc('month',now())
+      GROUP BY fc.id,b.display_name,v.registration_display ORDER BY amount DESC LIMIT 10`);
+    const products = await this.db.query(`SELECT coalesce(product,'Non renseigné') AS product,sum(quantity_liters)::float AS liters,
+      sum(amount_incl_tax)::float AS amount FROM fuel_transaction WHERE deleted_at IS NULL
+      AND transaction_date>=date_trunc('month',now()) GROUP BY product ORDER BY amount DESC`);
+    const risks = await this.db.query(`SELECT ft.id,fc.masked_card_number AS card,ft.transaction_date AS date,ft.station,ft.product,
+      ft.quantity_liters::float AS liters,ft.amount_incl_tax::float AS amount,
+      CASE
+        WHEN ft.validation_status='BILLING_MISMATCH' THEN 'Écart de facturation'
+        WHEN lag(ft.transaction_date) OVER(PARTITION BY ft.fuel_card_id ORDER BY ft.transaction_date) > ft.transaction_date-interval '90 minutes' THEN 'Deux pleins rapprochés'
+        WHEN extract(hour FROM ft.transaction_date)<5 OR extract(hour FROM ft.transaction_date)>=23 THEN 'Horaire inhabituel'
+        ELSE null END AS reason
+      FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
+      WHERE ft.deleted_at IS NULL AND ft.transaction_date>=now()-interval '90 days'
+      ORDER BY ft.transaction_date DESC`);
+    return { ...kpis[0], ...overview, migrations, companies, monthly, topConsumers, products,
+      risks: risks.filter((row:{reason:string|null})=>row.reason).slice(0,25) };
   }
 }

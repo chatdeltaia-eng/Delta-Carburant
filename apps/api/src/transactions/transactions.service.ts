@@ -92,6 +92,22 @@ export class TransactionsService {
   reviews() { return this.db.query(`SELECT id,issue_type AS "issueType",status,card_number AS "cardNumber",
     vehicle_registration AS vehicle,beneficiary_name AS beneficiary,transaction_date AS date,station,product,quantity_liters AS liters,
     amount_incl_tax AS amount,created_at AS "createdAt" FROM transaction_review WHERE status='PENDING' ORDER BY created_at DESC`); }
+  imports(){return this.db.query(`SELECT tib.id,tib.source_filename AS filename,tib.imported_at AS "importedAt",tib.total_rows AS "totalRows",
+    tib.imported_rows AS "importedRows",tib.duplicate_rows AS "duplicateRows",tib.rejected_rows AS "rejectedRows",tib.status,
+    tib.reverted_at AS "revertedAt",tib.revert_reason AS "revertReason",u.display_name AS "importedBy",
+    count(ft.id) FILTER(WHERE ft.deleted_at IS NULL)::int AS "activeTransactions"
+    FROM transaction_import_batch tib LEFT JOIN app_user u ON u.id=tib.imported_by
+    LEFT JOIN fuel_transaction ft ON ft.import_batch_id=tib.id GROUP BY tib.id,u.display_name ORDER BY tib.imported_at DESC LIMIT 100`);}
+  async revertImport(id:string,reason:string,actor:Actor){return this.db.transaction(async client=>{
+    const batch=await client.query(`SELECT id,status,source_filename FROM transaction_import_batch WHERE id=$1 FOR UPDATE`,[id]);
+    if(!batch.rows[0])throw new NotFoundException('Import introuvable');
+    if(batch.rows[0].status==='REVERTED')throw new BadRequestException('Cet import est déjà annulé');
+    const removed=await client.query(`UPDATE fuel_transaction SET deleted_at=now() WHERE import_batch_id=$1 AND deleted_at IS NULL RETURNING id`,[id]);
+    await client.query(`UPDATE anomaly SET status='DISMISSED',resolved_at=now(),resolution=$2 WHERE fuel_transaction_id=ANY($1::uuid[]) AND status IN('OPEN','IN_REVIEW')`,[removed.rows.map((row:{id:string})=>row.id),`Import annulé : ${reason.trim()}`]);
+    await client.query(`UPDATE transaction_import_batch SET status='REVERTED',reverted_at=now(),reverted_by=$2,revert_reason=$3 WHERE id=$1`,[id,actor.sub,reason.trim()]);
+    await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'REVERT_IMPORT','transaction_import_batch',$2,$3)`,[actor.email,id,{reason:reason.trim(),transactions:removed.rowCount,filename:batch.rows[0].source_filename}]);
+    return {id,reverted:true,transactions:removed.rowCount};
+  });}
   async observe(id:string,observation:string,actor:{sub:string;email:string;role:string}){return this.db.transaction(async client=>{
     const found=await client.query(`SELECT ft.id,fc.masked_card_number FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
       WHERE ft.id=$1 AND ft.deleted_at IS NULL AND ($3<>'NAJIB_ASSIGNER' OR fc.responsible_user_id=$2)`,[id,actor.sub,actor.role]);
@@ -260,7 +276,11 @@ export class TransactionsService {
         }
       } else duplicates++;
     }
-    await client.query(`UPDATE transaction_import_batch SET imported_rows=$2,duplicate_rows=$3,rejected_rows=$4 WHERE id=$1`,[batch.rows[0].id,imported,duplicates,review]);
+    await client.query(`UPDATE transaction_import_batch SET imported_rows=$2,duplicate_rows=$3,rejected_rows=$4,
+      status=CASE WHEN $4>0 THEN 'PARTIAL' ELSE 'COMPLETED' END,
+      metadata=jsonb_build_object('verified',$5::int,'mismatches',$6::int,'unpriced',$7::int,'products',$8::int,'stations',$9::int)
+      WHERE id=$1`,[batch.rows[0].id,imported,duplicates,review,verified,mismatches,unpriced,
+      new Set(dto.rows.map(row=>row.product.toUpperCase())).size,new Set(dto.rows.map(row=>row.station.toUpperCase())).size]);
     if(review) await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
       SELECT id,'Transactions inconnues détectées',$2,'WARNING','anomalies','transaction_import_batch',$3 FROM app_user
       WHERE active AND role::text=ANY($1::text[])`,[['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'],`${review} transaction(s) nécessitent la vérification d’une carte ou d’un véhicule`,batch.rows[0].id]);

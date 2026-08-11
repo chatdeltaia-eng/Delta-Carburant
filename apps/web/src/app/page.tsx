@@ -2984,13 +2984,15 @@ function CardTable({
               const allocations = allocationDetails(cardTransactions);
               const allocated = allocations.reduce((sum, item) => sum + item.amount, 0);
               const rate = c.monthly_limit > 0 ? Math.min(100, Math.round(consumed / c.monthly_limit * 100)) : 0;
+              const isNajibLimitWarning = user.role === "NAJIB_ASSIGNER" && rate >= 60;
+              const isLimitReached = rate >= 100;
               const previous = c.old_card_id ? cards.find((item) => item.id === c.old_card_id) : undefined;
               const previousConsumed = Number(previous?.consumed_amount ?? 0);
               const previousRate = previous?.monthly_limit ? Math.min(100, Math.round(previousConsumed / previous.monthly_limit * 100)) : 100;
               const locked = Boolean(c.activation_locked && previousRate < 100);
               return (
               <Fragment key={c.id}>
-              <tr>
+              <tr className={isNajibLimitWarning ? (isLimitReached ? styles.limitReachedRow : styles.limitWarningRow) : undefined}>
                 <td>
                   <b>{c.masked_card_number}</b>
                   <small>
@@ -3013,12 +3015,33 @@ function CardTable({
                       : "—"}
                 </td>
                 <td>
-                  <b>Plafond : {c.monthly_limit.toLocaleString("fr-FR")} TND</b>
-                  <small>
-                    Total consommé : {totalConsumed.toLocaleString("fr-FR")} TND
-                    {" · "}Ce mois : {consumed.toLocaleString("fr-FR")} TND · {rate}%
-                    {" · "}Solde mensuel : {Math.max(0, c.monthly_limit-consumed).toLocaleString("fr-FR")} TND
-                  </small>
+                  <div className={`${styles.consumptionCell} ${isNajibLimitWarning ? styles.consumptionWarning : ""} ${isLimitReached ? styles.consumptionReached : ""}`}>
+                    <div className={styles.consumptionTopline}>
+                      <b>Plafond : {c.monthly_limit.toLocaleString("fr-FR")} TND</b>
+                      <strong>{rate}%</strong>
+                    </div>
+                    <div
+                      className={styles.consumptionTrack}
+                      role="progressbar"
+                      aria-label={`Consommation mensuelle de la carte ${c.masked_card_number}`}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={rate}
+                    >
+                      <span style={{ width: `${rate}%` }} />
+                    </div>
+                    <small>
+                      Ce mois : <b>{consumed.toLocaleString("fr-FR")} TND</b>
+                      {" · "}Solde : <b>{Math.max(0, c.monthly_limit-consumed).toLocaleString("fr-FR")} TND</b>
+                      {" · "}Cumul : {totalConsumed.toLocaleString("fr-FR")} TND
+                    </small>
+                    {isNajibLimitWarning && (
+                      <span className={styles.limitWarningBadge}>
+                        <i aria-hidden="true">!</i>
+                        {isLimitReached ? "Plafond atteint — carte à clôturer" : "Seuil 60 % dépassé — clôture prochaine"}
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td>
                   <span

@@ -4,9 +4,11 @@ services:
     runtime: node
     region: frankfurt
     plan: free
+    autoDeployTrigger: off
     buildCommand: npm ci --include=dev --prefix apps/api && npm run build --prefix apps/api
     startCommand: node apps/api/scripts/migrate.js && npm run start:prod --prefix apps/api
-    healthCheckPath: /api/v1
+    healthCheckPath: /api/v1/health
+    maxShutdownDelaySeconds: 60
     envVars:
       - key: NODE_ENV
         value: production
@@ -36,6 +38,7 @@ services:
     runtime: node
     region: frankfurt
     plan: free
+    autoDeployTrigger: off
     buildCommand: npm ci --include=dev --prefix apps/web && npm run build --prefix apps/web
     startCommand: npm run start --prefix apps/web
     healthCheckPath: /

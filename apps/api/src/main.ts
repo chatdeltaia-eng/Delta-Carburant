@@ -7,6 +7,7 @@ import { assertProductionEnvironment } from './config/production-env';
 async function bootstrap() {
   assertProductionEnvironment();
   const app = await NestFactory.create(AppModule);
+  app.enableShutdownHooks();
   app.setGlobalPrefix('api/v1');
   app.enableCors({ origin: process.env.WEB_ORIGIN ?? 'http://localhost:3000' });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));

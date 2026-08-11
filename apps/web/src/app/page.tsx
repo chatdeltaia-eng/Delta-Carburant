@@ -459,7 +459,9 @@ export default function Home() {
         // Une copie locale obsolète ne doit jamais réapparaître à l'écran.
         vehicles: [],
       });
-      setNotifications(x.notifications ?? []);
+      // Les notifications sont privées et toujours rechargées depuis l'API
+      // pour l'utilisateur authentifié. Ne jamais hydrater celles d'une autre session.
+      setNotifications([]);
     }
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -586,14 +588,12 @@ export default function Home() {
   const persist = (
     nextCards = cards,
     nextData = data,
-    nextNotifications = notifications,
   ) =>
     localStorage.setItem(
       "delta_app_data_v1",
       JSON.stringify({
         cards: nextCards,
         data: nextData,
-        notifications: nextNotifications,
       }),
     );
   const notify = (message: string) => {
@@ -618,6 +618,7 @@ export default function Home() {
       sessionStorage.setItem("delta_access", x.accessToken);
       sessionStorage.setItem("delta_refresh", x.refreshToken);
       sessionStorage.setItem("delta_user", JSON.stringify(x.user));
+      setNotifications([]);
       setToken(x.accessToken);
       setUser(x.user);
     } catch {
@@ -653,6 +654,8 @@ export default function Home() {
     sessionStorage.clear();
     setToken(null);
     setUser(null);
+    setNotifications([]);
+    setShowNotifications(false);
     setSessionSeconds(null);
     if (reason === "expired") setError("Votre session sécurisée a expiré. Veuillez vous reconnecter.");
   }
@@ -1568,7 +1571,6 @@ export default function Home() {
       n.id === notification.id ? { ...n, read: true } : n,
     );
     setNotifications(next);
-    persist(cards, data, next);
     if (token && !notification.read)
       fetch(`${API}/notifications/${notification.id}/read`, {
         method: "PATCH",
@@ -1576,6 +1578,22 @@ export default function Home() {
       }).catch(() => undefined);
     setShowNotifications(false);
     setView(notification.view);
+  }
+  async function markAllNotifications(read: boolean) {
+    if (!token) return;
+    const previous = notifications;
+    setNotifications((items) => items.map((item) => ({ ...item, read })));
+    try {
+      const response = await fetch(`${API}/notifications/${read ? "read-all" : "unread-all"}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error();
+      notify(read ? "Toutes vos notifications sont marquées comme lues" : "Toutes vos notifications sont marquées comme non lues");
+    } catch {
+      setNotifications(previous);
+      notify("La mise à jour des notifications a échoué");
+    }
   }
   function openCard(card: Card) {
     setSelected(card);
@@ -1755,7 +1773,16 @@ export default function Home() {
               </button>
               {showNotifications && (
                 <div className={styles.notificationMenu}>
-                  <h3>Notifications</h3>
+                  <div className={styles.notificationHeader}>
+                    <div><h3>Notifications</h3><small>Privées · {roleLabel(user.role)}</small></div>
+                    <span>{unread} non lue{unread > 1 ? "s" : ""}</span>
+                  </div>
+                  {userNotifications.length > 0 && (
+                    <div className={styles.notificationTools}>
+                      <button type="button" onClick={() => void markAllNotifications(true)} disabled={unread === 0}>✓ Tout lire</button>
+                      <button type="button" onClick={() => void markAllNotifications(false)} disabled={unread === userNotifications.length}>○ Tout non lu</button>
+                    </div>
+                  )}
                   {userNotifications.length ? (
                     userNotifications.map((n) => (
                       <button

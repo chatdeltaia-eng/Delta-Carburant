@@ -1399,7 +1399,10 @@ export default function Home() {
       const response=await fetch(`${API}/fuel-prices/refresh-tunisia`,{method:"POST",headers:{Authorization:`Bearer ${token}`}});
       if(!response.ok)throw new Error(await response.text());
       const result=await response.json();setRefreshTick(value=>value+1);
-      notify(result.changed?`${result.changed} prix officiel(s) modifié(s) — Zin et la DG ont été notifiés`:"Prix officiels vérifiés : aucun changement");
+      const billing=result.billing;
+      notify(billing
+        ? `Contrôle terminé : ${billing.verified} correcte(s) · ${billing.mismatches} écart(s) · ${billing.unpriced} tarif(s) manquant(s)`
+        : result.changed?`${result.changed} prix officiel(s) modifié(s) — Zin et la DG ont été notifiés`:"Prix officiels vérifiés : aucun changement");
     } catch(error){notify(error instanceof Error?error.message:"Actualisation impossible");}
   }
   async function observeTransaction(row:Row) {

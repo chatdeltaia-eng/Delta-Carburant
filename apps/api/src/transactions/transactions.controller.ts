@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
-import { IsArray, IsIn, IsNumber, IsOptional, IsString, IsUUID, Min, ValidateNested } from 'class-validator';
+import { IsArray, IsIn, IsNumber, IsOptional, IsString, IsUUID, Min, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { AuthGuard } from '@nestjs/passport';
 import { Roles } from '../common/roles';
@@ -47,6 +47,7 @@ class ReviewDecisionDto {
   @IsOptional() @IsString() beneficiaryName?: string;
 }
 class AllocationDecisionDto { @IsIn(['APPROVED','REJECTED']) decision!:'APPROVED'|'REJECTED'; @IsOptional() @IsString() reason?:string; }
+class ObservationDto { @IsString() @MinLength(3) observation!:string; }
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('transactions')
@@ -61,6 +62,8 @@ export class TransactionsController {
     @Body() dto: AllocateTransactionDto, @Req() req: { user: { sub: string; email: string } }) {
     return this.transactions.allocate(id,dto,req.user);
   }
+  @Post(':id/observations') @Roles('NAJIB_ASSIGNER','ZIN_FINANCE') observe(@Param('id',ParseUUIDPipe) id:string,
+    @Body() dto:ObservationDto,@Req() req:{user:{sub:string;email:string;role:string}}){return this.transactions.observe(id,dto.observation,req.user);}
   @Patch(':id') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') correct(@Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CorrectTransactionDto, @Req() req: { user: { sub: string; email: string } }) { return this.transactions.correct(id,dto,req.user); }
   @Delete('batch/all') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') removeAll(@Req() req: { user: { sub: string; email: string } }) { return this.transactions.removeAll(req.user); }

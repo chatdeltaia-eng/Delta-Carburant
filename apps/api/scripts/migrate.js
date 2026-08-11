@@ -41,6 +41,7 @@ const migrations = [
   '038_rebuild_vehicle_card_reference.sql',
   '039_correct_haithem_melliti_reference.sql',
   '040_request_archiving.sql',
+  '041_operational_controls.sql',
 ];
 
 async function main() {

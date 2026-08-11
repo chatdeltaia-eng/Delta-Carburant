@@ -508,12 +508,12 @@ export default function Home() {
         setData((current) => ({
           ...current,
           requests: (requestPayload.items ?? requestPayload).map(toRequestRow),
-          transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => {const allocations=Array.isArray(row.allocations)?row.allocations as Record<string,unknown>[]:[];return { id:String(row.id),reviewId:String(row.reviewId??""),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),repartition:allocations.map(item=>`${String(item.beneficiary)} — ${String(item.vehicle)} — ${Number(item.amount).toFixed(3)} DT${item.mileage?` — ${Number(item.mileage)} km`:""}`).join(" | "),statut:row.reviewStatus==="PENDING"?(row.reviewIssue==="MISSING_BENEFICIARY"?"Bénéficiaire à identifier":"Véhicule inconnu à valider"):"Importée Total",fichier:String(row.file??"—") }}),
+          transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => {const allocations=Array.isArray(row.allocations)?row.allocations as Record<string,unknown>[]:[];return { id:String(row.id),reviewId:String(row.reviewId??""),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),repartition:allocations.map(item=>`${String(item.beneficiary)} — ${String(item.vehicle)} — ${Number(item.amount).toFixed(3)} DT${item.mileage?` — ${Number(item.mileage)} km`:""}`).join(" | "),observation:row.observation?`${String(row.observation)} — ${String(row.observationBy??"—")}`:"—",statut:row.reviewStatus==="PENDING"?(row.reviewIssue==="MISSING_BENEFICIARY"?"Bénéficiaire à identifier":"Véhicule inconnu à valider"):"Importée Total",fichier:String(row.file??"—") }}),
           anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.issueType)==="MISSING_BENEFICIARY"?"Bénéficiaire manquant":"Véhicule inconnu",carte:String(row.cardNumber),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),gravite:"Haute",statut:String(row.status)==="PENDING"?"À vérifier":String(row.status)==="ACCEPTED"?"Acceptée":"Refusée" })),
           vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>,index:number)=>({id:String(row.id),companyId:String(row.companyId??""),numero:Number(row.fleetNumber??0)||index+1,immatriculation:Boolean(row.registrationMissing)?"Sans matricule":String(row.registration),sansMatricule:Boolean(row.registrationMissing),type:String(row.vehicleType??row.model??"À compléter"),societe:String(row.company??"—"),mise_en_circulation:row.firstRegistrationDate?new Date(String(row.firstRegistrationDate)).toLocaleDateString("fr-FR"):"À compléter",reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??row.cardHolder??"—"),titulaire:String(row.cardHolder??row.driver??"—"),carte:String(row.cardNumber??"—"),garde:String(row.custody)==="IN_SAFE"?"En coffre · non distribuée":"Distribuée / active",observation:String(row.notes??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
           mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:String(row.week??"—"),vehicule:String(row.vehicle),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),attendu:Number(row.expectedMileage??0),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—")})),
           drivers:(driversPayload.items??driversPayload).map((row:Record<string,unknown>)=>({id:String(row.id),companyId:String(row.companyId??""),nomComplet:String(row.fullName??"—"),numeroClient:String(row.customerNumber??"—"),nomClient:String(row.customerName??"—"),numeroChauffeur:String(row.driverNumber??"—"),prenom:String(row.firstName??"—"),nom:String(row.lastName??row.fullName??"—"),codeChauffeur:String(row.driverCode??"—"),vehicules:Array.isArray(row.vehicles)?(row.vehicles as {registration:string}[]).map(item=>item.registration).join(", "):"—",statut:Boolean(row.active)?"Actif":"Inactif"})),
-          fuelPrices:(fuelPricesPayload.items??fuelPricesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),societe:String(row.company),produit:String(row.product),ancienPrix:Number(row.oldPrice),nouveauPrix:Number(row.newPrice),variation:`${Number(row.variationPercent).toFixed(2)} %`,date:new Date(String(row.effectiveDate)).toLocaleDateString("fr-FR"),auteur:String(row.createdBy??"—")})),
+          fuelPrices:(fuelPricesPayload.items??fuelPricesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),societe:String(row.company),produit:String(row.product),ancienPrix:Number(row.oldPrice),nouveauPrix:Number(row.newPrice),variation:`${Number(row.variationPercent).toFixed(2)} %`,date:new Date(String(row.effectiveDate)).toLocaleDateString("fr-FR"),auteur:String(row.createdBy??"—"),source:String(row.source)==="OFFICIAL_TUNISIA"?"Ministère tunisien":"Saisie manuelle"})),
         }));
         setDatabaseSummary(summaryPayload);
       })
@@ -850,9 +850,9 @@ export default function Home() {
         notify("Carte mise à jour");
       }
     } else if(modal==="mileage") {
-      if(user.role!=="NAJIB_ASSIGNER")return notify("Le relevé est saisi par un responsable hors parc");
+      if(!["NAJIB_ASSIGNER","ZIN_FINANCE"].includes(user.role))return notify("Saisie réservée à Najib et Zin");
       if(!token)return notify("Session distante expirée");
-      try{const response=await fetch(`${API}/mileage`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({vehicleId:String(f.get("vehicleId")),mileage:Number(f.get("mileage")),note:String(f.get("note")??"")})});if(!response.ok)throw new Error(await response.text());const created=await response.json();notify(created.anomaly?`Anomalie détectée : kilométrage attendu ${created.expectedMileage}`:"Relevé envoyé à Zin et à la DG");}catch(error){return notify(error instanceof Error?error.message:"Échec du relevé kilométrique");}
+      try{const response=await fetch(`${API}/mileage`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({vehicleId:String(f.get("vehicleId")),mileage:Number(f.get("mileage")),note:String(f.get("note")??"")})});if(!response.ok)throw new Error(await response.text());const created=await response.json();setRefreshTick(value=>value+1);notify(created.anomaly?`Anomalie détectée : kilométrage attendu ${created.expectedMileage}`:user.role==="ZIN_FINANCE"?"Kilométrage enregistré et validé par Zin":"Relevé envoyé à Zin et à la DG");}catch(error){return notify(error instanceof Error?error.message:"Échec du relevé kilométrique");}
     } else if(modal==="driver"||modal==="fuelPrice"){
       if((modal==="driver"?!canManageFleet(user.role):!canManage(user.role))||!token)return notify(modal==="driver"?"Gestion des chauffeurs non autorisée":"Action réservée à Zin et à la DG");
       const endpoint=modal==="driver"?"drivers":"fuel-prices";
@@ -1295,6 +1295,24 @@ export default function Home() {
       notify(error instanceof Error ? error.message : "Échec de l’archivage");
     }
   }
+  async function refreshFuelPrices() {
+    if (!token) return notify("Session distante expirée");
+    try {
+      const response=await fetch(`${API}/fuel-prices/refresh-tunisia`,{method:"POST",headers:{Authorization:`Bearer ${token}`}});
+      if(!response.ok)throw new Error(await response.text());
+      const result=await response.json();setRefreshTick(value=>value+1);
+      notify(result.changed?`${result.changed} prix officiel(s) modifié(s) — Zin et la DG ont été notifiés`:"Prix officiels vérifiés : aucun changement");
+    } catch(error){notify(error instanceof Error?error.message:"Actualisation impossible");}
+  }
+  async function observeTransaction(row:Row) {
+    const observation=window.prompt("Observation à transmettre à la Direction Générale",String(row.observation??""));
+    if(!observation?.trim()||observation.trim().length<3)return;
+    if(!token)return notify("Session distante expirée");
+    try{
+      const response=await fetch(`${API}/transactions/${row.id}/observations`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({observation:observation.trim()})});
+      if(!response.ok)throw new Error(await response.text());setRefreshTick(value=>value+1);notify("Observation transmise à la Direction Générale");
+    }catch(error){notify(error instanceof Error?error.message:"Observation non enregistrée");}
+  }
   async function deleteRow(
     section: "transactions" | "vehicles" | "beneficiaries",
     id?: string,
@@ -1694,6 +1712,8 @@ export default function Home() {
             decideRequest={decideRequest}
             cancelRequest={cancelRequest}
             archiveRequest={archiveRequest}
+            refreshFuelPrices={refreshFuelPrices}
+            observeTransaction={observeTransaction}
           />
         )}
       </main>
@@ -2408,6 +2428,8 @@ function DataView({
   decideRequest,
   cancelRequest,
   archiveRequest,
+  refreshFuelPrices,
+  observeTransaction,
 }: {
   view: View;
   cards: Card[];
@@ -2431,6 +2453,8 @@ function DataView({
   decideRequest: (id: string, accepted: boolean) => void;
   cancelRequest: (id: string) => void;
   archiveRequest: (id: string) => void;
+  refreshFuelPrices: () => void;
+  observeTransaction: (row: Row) => void;
 }) {
   const [selectedCompany,setSelectedCompany]=useState("Toutes");
   const config: Record<
@@ -2458,7 +2482,7 @@ function DataView({
       ],
     },
     drivers:{button:"Nouveau chauffeur Total",modal:"driver",cols:["numeroClient","nomClient","numeroChauffeur","prenom","nom","codeChauffeur","vehicules","statut"]},
-    fuelPrices:{button:"Nouveau prix",modal:"fuelPrice",cols:["societe","produit","ancienPrix","nouveauPrix","variation","date","auteur"]},
+    fuelPrices:{button:"Nouveau prix",modal:"fuelPrice",cols:["societe","produit","ancienPrix","nouveauPrix","variation","date","auteur","source"]},
     transactions: {
       button: "Importer Excel Total",
       modal: "import",
@@ -2474,6 +2498,7 @@ function DataView({
         "typeCarte",
         "reparti",
         "detailRepartition",
+        "observation",
         "statut",
         "fichier",
       ],
@@ -2581,7 +2606,7 @@ function DataView({
         ? c.button
         : ""
       : view === "mileage"
-        ? user.role === "NAJIB_ASSIGNER" ? c.button : ""
+        ? ["NAJIB_ASSIGNER","ZIN_FINANCE"].includes(user.role) ? c.button : ""
       : view === "transactions"
         ? canManage(user.role)
           ? c.button
@@ -2656,6 +2681,12 @@ function DataView({
           </button>
         </div>
       )}
+      {view === "fuelPrices" && canManage(user.role) && (
+        <div className={styles.bulkBar}>
+          <span>Source officielle : Ministère tunisien de l’Énergie</span>
+          <button onClick={refreshFuelPrices}>Actualiser les prix Tunisie</button>
+        </div>
+      )}
       <div className={styles.tableWrap}>
         <table>
           <thead>
@@ -2720,7 +2751,7 @@ function DataView({
                     canManage(user.role) ? <><button className={styles.smallBtn} onClick={()=>decideReview(String(r.reviewId),true)}>Accepter et créer/lier</button>{" "}<button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>decideReview(String(r.reviewId),false)}>Déclarer inexistante</button></> : <span className={styles.waitingStatus}>À corriger par Zin / DG</span>
                   ) : view === "transactions" ? (
                     user.role === "NAJIB_ASSIGNER" ? (
-                      <button className={styles.smallBtn} onClick={() => allocateConsumption(r)}>Répartir</button>
+                      <><button className={styles.smallBtn} onClick={() => allocateConsumption(r)}>Répartir</button>{" "}<button className={styles.smallBtn} onClick={()=>observeTransaction(r)}>Observation DG</button></>
                     ) : canManage(user.role) ? (
                       <>
                         {r.repartitionEnAttente&&<><button className={styles.smallBtn} onClick={()=>decideAllocation(String(r.repartitionEnAttente),true)}>Valider répartition</button>{" "}<button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>decideAllocation(String(r.repartitionEnAttente),false)}>Refuser répartition</button>{" "}</>}
@@ -2730,6 +2761,7 @@ function DataView({
                         >
                           Corriger
                         </button>{" "}
+                        {user.role==="ZIN_FINANCE"&&<><button className={styles.smallBtn} onClick={()=>observeTransaction(r)}>Observation DG</button>{" "}</>}
                         <button
                           className={`${styles.smallBtn} ${styles.dangerBtn}`}
                           onClick={() => deleteRow("transactions", r.id)}
@@ -3250,9 +3282,9 @@ function ModalForm({
                 )}
               </label>
             ))}
-            {type === "mileage" && <><label className={styles.fullField}>Véhicule de votre périmètre<select name="vehicleId" required defaultValue=""><option value="" disabled>Sélectionner un véhicule</option>{vehicles.map(vehicle=><option value={String(vehicle.id)} key={String(vehicle.id)}>{String(vehicle.immatriculation)} · dernier relevé {Number(vehicle.kilometrage??0).toLocaleString("fr-FR")} km</option>)}</select></label><label>Nouveau kilométrage<input name="mileage" type="number" min="0" step="0.1" required /></label><label>Observation<input name="note" /></label><div className={styles.workflowInfo}><b>Contrôle automatique</b><span>La plateforme compare le relevé au dernier kilométrage validé augmenté de la distance détectée dans les transactions. Tout écart est envoyé à Zin et à la DG.</span></div></>}
+            {type === "mileage" && <><label className={styles.fullField}>{user.role==="ZIN_FINANCE"?"Véhicule actif du parc DC":"Véhicule de votre périmètre"}<select name="vehicleId" required defaultValue=""><option value="" disabled>Sélectionner un véhicule</option>{vehicles.map(vehicle=><option value={String(vehicle.id)} key={String(vehicle.id)}>{String(vehicle.immatriculation)} · dernier relevé {Number(vehicle.kilometrage??0).toLocaleString("fr-FR")} km</option>)}</select></label><label>Nouveau kilométrage<input name="mileage" type="number" min="0" step="0.1" required /></label><label>Observation<input name="note" /></label><div className={styles.workflowInfo}><b>Contrôle automatique</b><span>{user.role==="ZIN_FINANCE"?"La saisie Zin est validée immédiatement et notifiée à la DG. Tout écart génère une anomalie.":"Après la répartition, Najib saisit le kilométrage. Zin ou la DG contrôle ensuite le relevé et tout écart détecté."}</span></div></>}
             {type==="driver"&&<><label>Société<select name="companyId" required defaultValue=""><option value="" disabled>Sélectionner</option>{companies.map(item=><option value={item.id} key={item.id}>{item.code} · {item.name}</option>)}</select></label><label>N° du client Total<input name="customerNumber" defaultValue="10391" required inputMode="numeric"/></label><label>Nom du client<input name="customerName" defaultValue="DELTA CUISINE" required/></label><label>Numéro de chauffeur<input name="driverNumber" placeholder="0005" required inputMode="numeric"/></label><label>Prénom<input name="firstName" required minLength={2}/></label><label>Nom<input name="lastName" required minLength={2}/></label><label>Code chauffeur Total<input name="driverCode" placeholder="0000" required inputMode="numeric"/></label><div className={styles.workflowInfo}><b>Référence TotalEnergies</b><span>Le numéro et le code chauffeur sont conservés sur 4 chiffres, y compris les zéros au début.</span></div></>}
-            {type==="fuelPrice"&&<><label>Société<select name="companyId" required defaultValue=""><option value="" disabled>Sélectionner</option>{companies.map(item=><option value={item.id} key={item.id}>{item.code} · {item.name}</option>)}</select></label><label>Produit<input name="product" placeholder="Gasoil" required/></label><label>Nouveau prix / litre<input name="newPrice" type="number" min="0.001" step="0.001" required/></label><label>Date d’effet<input name="effectiveDate" type="date"/></label><div className={styles.workflowInfo}><b>Ajustement automatique</b><span>La variation du prix est appliquée dans la même proportion à tous les plafonds actifs de la société, avec audit et notifications.</span></div></>}
+            {type==="fuelPrice"&&<><label>Société<select name="companyId" required defaultValue=""><option value="" disabled>Sélectionner</option>{companies.map(item=><option value={item.id} key={item.id}>{item.code} · {item.name}</option>)}</select></label><label>Produit<select name="product" required defaultValue=""><option value="" disabled>Sélectionner</option><option>ESSENCE SANS PLOMB</option><option>GASOIL ORDINAIRE</option><option>GASOIL SANS SOUFRE (GASOIL 50)</option><option>GASOIL PREMIUM / POWER</option><option>ESSENCE PREMIUM / POWER</option></select></label><label>Nouveau prix / litre (TND)<input name="newPrice" type="number" min="0.001" step="0.001" required/></label><label>Date d’effet<input name="effectiveDate" type="date"/></label><div className={styles.workflowInfo}><b>Prix en TND par litre</b><span>Les trois carburants réglementés peuvent être vérifiés depuis le Ministère tunisien. Les produits premium / Power restent saisis selon le tarif fournisseur.</span></div></>}
             {type==="card"&&<label className={styles.fullField}>Responsable de la carte<select name="responsibleUserId" required defaultValue=""><option value="" disabled>Sélectionner un responsable</option>{responsibles.map(item=><option value={item.id} key={item.id}>{item.name} · {item.email}</option>)}</select></label>}
             {type==="card"&&<label className={styles.fullField}>Société propriétaire<select name="companyId" required defaultValue=""><option value="" disabled>Sélectionner une société</option>{companies.map(item=><option value={item.id} key={item.id}>{item.code} · {item.name}</option>)}</select></label>}
             {type === "card" && (

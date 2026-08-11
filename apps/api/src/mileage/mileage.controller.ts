@@ -11,6 +11,6 @@ type Actor={sub:string;email:string;role:string};
 export class MileageController {
  constructor(private readonly mileage:MileageService){}
  @Get() @Roles('NAJIB_ASSIGNER','ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN') list(@Req() req:{user:Actor}){return this.mileage.list(req.user);}
- @Post() @Roles('NAJIB_ASSIGNER') create(@Body() dto:MileageDto,@Req() req:{user:Actor}){return this.mileage.create(dto,req.user);}
+ @Post() @Roles('NAJIB_ASSIGNER','ZIN_FINANCE') create(@Body() dto:MileageDto,@Req() req:{user:Actor}){return this.mileage.create(dto,req.user);}
  @Patch(':id/decision') @Roles('ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN') decide(@Param('id',ParseUUIDPipe) id:string,@Body() dto:MileageDecisionDto,@Req() req:{user:Actor}){return this.mileage.decide(id,dto,req.user);}
 }

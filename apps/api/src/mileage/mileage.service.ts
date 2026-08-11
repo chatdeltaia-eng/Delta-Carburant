@@ -12,9 +12,11 @@ export class MileageService {
    LEFT JOIN app_user u ON u.id=mr.created_by LEFT JOIN app_user reviewer ON reviewer.id=mr.validated_by
    WHERE ($1::boolean=false OR mr.created_by=$2) ORDER BY mr.week_start DESC,mr.created_at DESC`,[own,actor.sub]);}
  async create(dto:{vehicleId:string;mileage:number;note?:string},actor:Actor){return this.db.transaction(async client=>{
-   const allowed=await client.query(`SELECT v.id,v.registration_display FROM vehicle v WHERE v.id=$1 AND v.deleted_at IS NULL AND v.active
-     AND (v.managed_by=$2 OR EXISTS(SELECT 1 FROM transaction_allocation ta WHERE ta.vehicle_id=v.id AND ta.allocated_by=$2))`,[dto.vehicleId,actor.sub]);
-   if(!allowed.rows[0]) throw new NotFoundException('Ce véhicule ne fait pas partie de votre périmètre hors parc');
+   const zin=actor.role==='ZIN_FINANCE';
+   const allowed=await client.query(`SELECT v.id,v.registration_display FROM vehicle v JOIN company c ON c.id=v.company_id
+     WHERE v.id=$1 AND v.deleted_at IS NULL AND v.active AND c.code='DC'
+     AND ($3::boolean OR v.managed_by=$2 OR EXISTS(SELECT 1 FROM transaction_allocation ta WHERE ta.vehicle_id=v.id AND ta.allocated_by=$2))`,[dto.vehicleId,actor.sub,zin]);
+   if(!allowed.rows[0]) throw new NotFoundException(zin?'Véhicule actif introuvable dans le parc DC':'Ce véhicule ne fait pas partie de votre périmètre hors parc');
    const last=await client.query(`SELECT mileage,created_at FROM mileage_reading WHERE vehicle_id=$1 AND status='VALIDATED' ORDER BY reading_date DESC LIMIT 1`,[dto.vehicleId]);
    const previous=Number(last.rows[0]?.mileage??0),since=last.rows[0]?.created_at??'1970-01-01';
    const distance=await client.query(`SELECT coalesce(sum(coalesce(ft.distance_traveled,ft.quantity_liters)),0)::float AS distance
@@ -25,12 +27,13 @@ export class MileageService {
    const result=await client.query(`INSERT INTO mileage_reading(vehicle_id,reading_date,mileage,status,source,created_by,week_start,
      previous_mileage,expected_mileage,detected_distance,anomaly) VALUES($1,now(),$2,'PENDING','WEEKLY',$3,date_trunc('week',current_date)::date,$4,$5,$6,$7) RETURNING *`,
      [dto.vehicleId,dto.mileage,actor.sub,previous,expected,detected,anomaly]);
+   if(zin) await client.query(`UPDATE mileage_reading SET status='VALIDATED',source='MANUAL_ZIN',validated_by=$2,validated_at=now(),decision_reason=$3 WHERE id=$1`,[result.rows[0].id,actor.sub,dto.note??'Saisie directe Zin Finance']);
    if(anomaly) await client.query(`INSERT INTO anomaly(vehicle_id,anomaly_type,severity,status,description,assigned_to)
      VALUES($1,'MILEAGE_MISMATCH','HIGH','OPEN',$2,$3)`,[dto.vehicleId,`Kilométrage saisi ${dto.mileage}; kilométrage attendu ${expected} d’après ${detected} km détectés`,actor.sub]);
    await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
      SELECT id,$2,$3,$4,'mileage','mileage_reading',$5 FROM app_user WHERE active AND role::text=ANY($1::text[])`,
-     [['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'],anomaly?'Anomalie kilométrique à vérifier':'Nouveau relevé kilométrique',`${allowed.rows[0].registration_display} : ${dto.mileage} km${anomaly?` (attendu ${expected})`:''}`,anomaly?'HIGH':'INFO',result.rows[0].id]);
-   return {...result.rows[0],expectedMileage:expected,detectedDistance:detected,anomaly};
+     [zin?['DIRECTION_GENERAL','SUPER_ADMIN']:['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'],anomaly?'Anomalie kilométrique à vérifier':zin?'Kilométrage ajouté par Zin':'Nouveau relevé kilométrique',`${allowed.rows[0].registration_display} : ${dto.mileage} km${anomaly?` (attendu ${expected})`:''}`,anomaly?'HIGH':'INFO',result.rows[0].id]);
+   return {...result.rows[0],status:zin?'VALIDATED':'PENDING',expectedMileage:expected,detectedDistance:detected,anomaly};
  });}
  async decide(id:string,dto:{decision:'VALIDATED'|'REJECTED';reason?:string},actor:Actor){if(dto.decision==='REJECTED'&&!dto.reason?.trim())throw new BadRequestException('Le motif du refus est obligatoire');
   return this.db.transaction(async client=>{const current=await client.query(`SELECT mr.*,v.registration_display FROM mileage_reading mr JOIN vehicle v ON v.id=mr.vehicle_id WHERE mr.id=$1 AND mr.status='PENDING' FOR UPDATE OF mr`,[id]);

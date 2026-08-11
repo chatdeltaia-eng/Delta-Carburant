@@ -17,6 +17,7 @@ export class TransactionsService {
     ft.station,ft.product,ft.quantity_liters AS liters,ft.amount_incl_tax AS amount,tib.source_filename AS file,
     b.display_name AS beneficiary,v.registration_display AS vehicle,ft.corrected_at AS "correctedAt",
     fc.card_category AS "cardCategory",fc.monthly_limit AS "monthlyLimit",
+    obs.observation,obs.created_at AS "observationAt",obs.author AS "observationBy",
     coalesce(sum(ta.allocated_amount) FILTER(WHERE ta.workflow_status IN ('PENDING','APPROVED')),0) AS "allocatedAmount",
     ft.amount_incl_tax-coalesce(sum(ta.allocated_amount) FILTER(WHERE ta.workflow_status IN ('PENDING','APPROVED')),0) AS "remainingAmount",
     (array_agg(ta.id) FILTER(WHERE ta.workflow_status='PENDING'))[1] AS "pendingAllocationId",
@@ -34,8 +35,10 @@ export class TransactionsService {
     LEFT JOIN beneficiary b ON b.id=ft.beneficiary_id LEFT JOIN vehicle v ON v.id=ft.vehicle_id
     LEFT JOIN transaction_import_batch tib ON tib.id=ft.import_batch_id
     LEFT JOIN transaction_allocation ta ON ta.fuel_transaction_id=ft.id
+    LEFT JOIN LATERAL (SELECT tro.observation,tro.created_at,au.display_name AS author FROM transaction_observation tro
+      JOIN app_user au ON au.id=tro.author_id WHERE tro.fuel_transaction_id=ft.id ORDER BY tro.created_at DESC LIMIT 1) obs ON true
     WHERE ft.deleted_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2)
-    GROUP BY ft.id,fc.id,tib.source_filename,b.display_name,v.registration_display
+    GROUP BY ft.id,fc.id,tib.source_filename,b.display_name,v.registration_display,obs.observation,obs.created_at,obs.author
     ORDER BY ft.transaction_date DESC`, [actor.role==='NAJIB_ASSIGNER',actor.sub]);
     if (actor.role === 'NAJIB_ASSIGNER') {
       const pending = await this.db.query(`SELECT ('review:'||tr.id::text) AS id,tr.transaction_date AS date,
@@ -63,7 +66,19 @@ export class TransactionsService {
   }
   reviews() { return this.db.query(`SELECT id,issue_type AS "issueType",status,card_number AS "cardNumber",
     vehicle_registration AS vehicle,beneficiary_name AS beneficiary,transaction_date AS date,station,product,quantity_liters AS liters,
-    amount_incl_tax AS amount,created_at AS "createdAt" FROM transaction_review ORDER BY created_at DESC`); }
+    amount_incl_tax AS amount,created_at AS "createdAt" FROM transaction_review WHERE status='PENDING' ORDER BY created_at DESC`); }
+  async observe(id:string,observation:string,actor:{sub:string;email:string;role:string}){return this.db.transaction(async client=>{
+    const found=await client.query(`SELECT ft.id,fc.masked_card_number FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
+      WHERE ft.id=$1 AND ft.deleted_at IS NULL AND ($3<>'NAJIB_ASSIGNER' OR fc.responsible_user_id=$2)`,[id,actor.sub,actor.role]);
+    if(!found.rows[0])throw new NotFoundException('Transaction introuvable dans votre périmètre');
+    const created=await client.query(`INSERT INTO transaction_observation(fuel_transaction_id,author_id,observation) VALUES($1,$2,$3)
+      RETURNING id,created_at AS "createdAt"`,[id,actor.sub,observation.trim()]);
+    await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
+      SELECT id,'Observation sur une transaction',$1,'WARNING','transactions','fuel_transaction',$2 FROM app_user
+      WHERE active AND role IN('DIRECTION_GENERAL','SUPER_ADMIN')`,[`${found.rows[0].masked_card_number} — ${observation.trim()}`,id]);
+    await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'OBSERVATION','fuel_transaction',$2,$3)`,[actor.email,id,{observation}]);
+    return {...created.rows[0],observation:observation.trim()};
+  });}
   async import(dto:{filename:string;rows:ImportRow[]},actor:Actor) { return this.db.transaction(async client => {
     if (!dto.rows.length) throw new BadRequestException('Le fichier ne contient aucune transaction');
     const batch = await client.query(`INSERT INTO transaction_import_batch(source_filename,source_sha256,imported_by,total_rows)

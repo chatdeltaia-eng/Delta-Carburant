@@ -2,4 +2,5 @@ import { Body,Controller,Get,Post,Query,Req,UseGuards } from '@nestjs/common'; i
 class PriceDto{@IsUUID() companyId!:string;@IsString() product!:string;@IsNumber()@Min(0.001) newPrice!:number;@IsOptional()@IsDateString() effectiveDate?:string;}
 @UseGuards(AuthGuard('jwt'),RolesGuard) @Controller('fuel-prices') export class FuelPricesController{constructor(private readonly service:FuelPricesService){}
  @Get() @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE','NAJIB_ASSIGNER') list(@Query('companyId') companyId=''){return this.service.list(companyId);}
+ @Post('refresh-tunisia') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') refresh(@Req() req:{user:{sub:string;email:string}}){return this.service.refreshTunisia(req.user);}
  @Post() @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') create(@Body() dto:PriceDto,@Req() req:{user:{sub:string;email:string}}){return this.service.create(dto,req.user);}}

@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { DatabaseService } from '../database/database.service';
 type Actor = { sub: string; email: string };
 type Correction = { station?: string; liters?: number; amount?: number; reason: string };
@@ -20,6 +21,19 @@ export class TransactionsService {
     const normalized=value.toUpperCase().replace(/[^A-Z0-9]/g,'');
     const match=normalized.match(/^(\d+)TU(\d+)$/);
     return match?[normalized,`${match[2]}TU${match[1]}`]:[normalized];
+  }
+  private transactionFingerprint(row: ImportRow, cardKey: string) {
+    const normalized = [
+      cardKey,
+      new Date(row.date).toISOString(),
+      row.authorizationCode?.trim().toUpperCase() ?? '',
+      row.station.trim().toUpperCase().replace(/\s+/g, ' '),
+      row.product.trim().toUpperCase().replace(/\s+/g, ' '),
+      Number(row.liters).toFixed(3),
+      Number(row.amount).toFixed(3),
+      String(row.vehicle ?? '').trim().toUpperCase().replace(/\s+/g, ' '),
+    ].join('|');
+    return createHash('sha256').update(normalized).digest('hex');
   }
   async list(actor: { sub: string; role: string }) {
     const transactions = await this.db.query(`SELECT ft.id,ft.transaction_date AS date,fc.masked_card_number AS card,
@@ -104,7 +118,7 @@ export class TransactionsService {
       row.product=String(row.product??'').trim();
       if(!row.product) throw new BadRequestException(`Nom de produit absent à la ligne ${index+2}. Import annulé.`);
       if(!row.station) throw new BadRequestException(`Nom de la station absent à la ligne ${index+2}. Import annulé.`);
-      let card=await client.query(`SELECT id,company_id,official_registration,holder_name,card_category,reference_vehicle_id FROM fuel_card WHERE deleted_at IS NULL AND (
+      const card=await client.query(`SELECT id,company_id,official_registration,holder_name,card_category,reference_vehicle_id FROM fuel_card WHERE deleted_at IS NULL AND (
         total_payment_number=$1
         OR (length($1)>6 AND total_payment_number=right($1,6))
         OR regexp_replace(masked_card_number,'[^0-9]','','g')=$1
@@ -112,6 +126,20 @@ export class TransactionsService {
       ) ORDER BY CASE WHEN total_payment_number=$1 THEN 0
         WHEN length($1)>6 AND total_payment_number=right($1,6) THEN 1
         WHEN regexp_replace(masked_card_number,'[^0-9]','','g')=$1 THEN 2 ELSE 3 END LIMIT 1`,[cardKey]);
+      const fingerprint=this.transactionFingerprint(row,cardKey);
+      if(!card.rows[0]) {
+        const existingReview=await client.query(`SELECT id FROM transaction_review
+          WHERE status='PENDING' AND regexp_replace(card_number,'[^0-9]','','g')=$1 AND transaction_date=$2 AND upper(coalesce(station,''))=upper($3)
+          AND upper(coalesce(product,''))=upper($4) AND quantity_liters=$5 AND amount_incl_tax=$6 LIMIT 1`,
+        [cardKey,row.date,row.station,row.product,row.liters,row.amount]);
+        if(existingReview.rows[0]) { duplicates++; continue; }
+        await client.query(`INSERT INTO transaction_review(import_batch_id,source_row_number,issue_type,card_number,vehicle_registration,
+          beneficiary_name,transaction_date,station,product,quantity_liters,amount_incl_tax,previous_mileage,reported_mileage,authorization_code)
+          VALUES($1,$2,'UNKNOWN_CARD',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [batch.rows[0].id,index+1,row.cardNumber,row.vehicle??null,row.beneficiary??null,row.date,row.station,row.product,row.liters,row.amount,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]);
+        review++;
+        continue;
+      }
       const vehicleKey=(row.vehicle??'').toUpperCase().replace(/[^A-Z0-9]/g,'');
       const vehicleKeys=this.registrationKeys(vehicleKey);
       let vehicle=vehicleKey ? await client.query(`SELECT v.id,v.company_id,v.driver_name,d.full_name AS driver_full_name
@@ -153,11 +181,6 @@ export class TransactionsService {
           beneficiary_name,transaction_date,station,product,quantity_liters,amount_incl_tax,fuel_card_id,previous_mileage,reported_mileage,authorization_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
           [batch.rows[0].id,index+1,issue,row.cardNumber,row.vehicle??null,beneficiaryName||null,row.date,row.station??null,row.product??null,row.liters,row.amount,card.rows[0]?.id??null,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]); review++; continue;
       }
-      if(!card.rows[0]) {
-        card=await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,masked_card_number,monthly_limit,status,card_category)
-          VALUES($1,pgp_sym_encrypt($2,$3,'cipher-algo=aes256'),hmac($2,$4,'sha256'),$2,0,'ACTIVE','PERSONALIZED')
-          ON CONFLICT(card_number_hmac) DO UPDATE SET updated_at=now() RETURNING id,company_id`,[companyId,row.cardNumber,process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key']);
-      }
       const department=await client.query(`INSERT INTO department(company_id,name) VALUES($1,'Transactions importées') ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id`,[companyId]);
       const beneficiary=await client.query(`INSERT INTO beneficiary(company_id,department_id,display_name) VALUES($1,$2,$3)
         ON CONFLICT(company_id,display_name) DO UPDATE SET active=true RETURNING id`,[companyId,department.rows[0].id,beneficiaryName]);
@@ -170,7 +193,17 @@ export class TransactionsService {
         else await client.query(`INSERT INTO card_assignment(fuel_card_id,beneficiary_id,vehicle_id,workflow_status,requested_by,reviewed_by,reviewed_at)
           VALUES($1,$2,$3,'APPROVED_ZIN',$4,$4,now())`,[card.rows[0].id,beneficiary.rows[0].id,vehicle.rows[0]?.id??null,actor.sub]);
       }
-      const external=row.authorizationCode?.trim()?`TOTAL:${row.authorizationCode.trim()}`:`${dto.filename}:${index+1}:${cardKey}:${row.date}`;
+      const semanticDuplicate=await client.query(`SELECT id FROM fuel_transaction
+        WHERE fuel_card_id=$1 AND transaction_date=$2 AND upper(coalesce(station,''))=upper($3)
+          AND upper(coalesce(product,''))=upper($4) AND quantity_liters=$5 AND amount_incl_tax=$6
+          AND vehicle_id IS NOT DISTINCT FROM $7::uuid AND deleted_at IS NULL
+          AND ($8::text IS NULL OR authorization_code=$8) LIMIT 1`,
+      [card.rows[0].id,row.date,row.station,row.product,row.liters,row.amount,vehicle.rows[0]?.id??null,row.authorizationCode?.trim()||null]);
+      if(semanticDuplicate.rows[0]) { duplicates++; continue; }
+      // L'identifiant ne dépend jamais du nom du fichier ni du numéro de ligne.
+      // Réimporter le même export (ou un export qui chevauche une période déjà
+      // importée) retrouve donc exactement la même transaction.
+      const external=`TOTAL:FP:${fingerprint}`;
       const inserted=await client.query(`INSERT INTO fuel_transaction(external_transaction_id,fuel_card_id,beneficiary_id,vehicle_id,transaction_date,station,product,
         quantity_liters,amount_incl_tax,source,import_batch_id,source_row_number,previous_mileage,reported_mileage,authorization_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'TOTAL_EXCEL',$10,$11,$12,$13,$14)
         ON CONFLICT(external_transaction_id,source) DO UPDATE SET

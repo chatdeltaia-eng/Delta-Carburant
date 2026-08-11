@@ -3834,8 +3834,16 @@ function totalTransaction(
   const rawTime=totalValue(source,["heuredelatransaction","heuretransaction","heure"]);
   const excelDate=typeof rawDate==="number"?XLSX.SSF.parse_date_code(rawDate):null;
   const parsedDate=rawDate instanceof Date?new Date(rawDate):excelDate?new Date(Date.UTC(excelDate.y,excelDate.m-1,excelDate.d,excelDate.H,excelDate.M,Math.floor(excelDate.S))):new Date(String(rawDate));
+  const excelTime=typeof rawTime==="number"?XLSX.SSF.parse_date_code(rawTime):null;
   const timeMatch=String(rawTime??"").match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
-  if(!Number.isNaN(parsedDate.getTime())&&timeMatch) parsedDate.setHours(Number(timeMatch[1]),Number(timeMatch[2]),Number(timeMatch[3]??0),0);
+  const timeParts=rawTime instanceof Date
+    ? [rawTime.getHours(),rawTime.getMinutes(),rawTime.getSeconds()]
+    : excelTime
+      ? [excelTime.H,excelTime.M,Math.floor(excelTime.S)]
+      : timeMatch
+        ? [Number(timeMatch[1]),Number(timeMatch[2]),Number(timeMatch[3]??0)]
+        : null;
+  if(!Number.isNaN(parsedDate.getTime())&&timeParts) parsedDate.setHours(timeParts[0],timeParts[1],timeParts[2],0);
   return {
     id: `total-${filename}-${index}-${crypto.randomUUID()}`,
     date: displayDate(rawDate),

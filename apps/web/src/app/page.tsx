@@ -1842,6 +1842,9 @@ export default function Home() {
           <DirectionReports cards={cards} transactions={data.transactions} analytics={directionData} />
         ) : view === "settings" ? (
           <Settings
+            token={token}
+            user={user}
+            notify={notify}
             reset={() => {
               localStorage.removeItem("delta_app_data_v1");
               setCards(initialCards);
@@ -3645,9 +3648,35 @@ function Login({
     </main>
   );
 }
-function Settings({ reset }: { reset: () => void }) {
+type TotalMobilityStatus={customerNumber?:string;siteNumber?:string;enabled?:boolean;syncIntervalMinutes?:number;lastSuccessAt?:string;lastError?:string};
+type TotalMobilityRun={id:string;startedAt:string;status:string;fetchedRows:number;importedRows:number;duplicateRows:number};
+function Settings({ reset,token,user,notify }: { reset:()=>void;token:string|null;user:User;notify:(message:string)=>void }) {
+  const [total,setTotal]=useState<TotalMobilityStatus>({});
+  const [runs,setRuns]=useState<TotalMobilityRun[]>([]);
+  const [busy,setBusy]=useState(false);
+  const direction=isDirection(user.role);
+  async function loadTotal(){if(!token||!direction)return;try{const headers={Authorization:`Bearer ${token}`};const [a,b]=await Promise.all([fetch(`${API}/total-mobility/status`,{headers}),fetch(`${API}/total-mobility/runs`,{headers})]);if(a.ok)setTotal(await a.json());if(b.ok)setRuns(await b.json());}catch{/* Rechargement au prochain affichage. */}}
+  useEffect(()=>{
+    if(!token||!direction)return;
+    const headers={Authorization:`Bearer ${token}`};
+    void Promise.all([fetch(`${API}/total-mobility/status`,{headers}),fetch(`${API}/total-mobility/runs`,{headers})])
+      .then(async([statusResponse,runsResponse])=>{
+        if(statusResponse.ok)setTotal(await statusResponse.json());
+        if(runsResponse.ok)setRuns(await runsResponse.json());
+      }).catch(()=>undefined);
+  },[token,direction]);
+  async function connect(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!token)return;setBusy(true);try{const form=new FormData(event.currentTarget);const response=await fetch(`${API}/total-mobility/connect`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({customerId:String(form.get("customerId")??""),customerNumber:String(form.get("customerNumber")??""),siteNumber:String(form.get("siteNumber")??""),userId:String(form.get("totalUserId")??""),username:String(form.get("totalUsername")??""),refreshToken:String(form.get("refreshToken")??""),syncIntervalMinutes:Number(form.get("syncIntervalMinutes")??60)})});if(!response.ok)throw new Error(await response.text());event.currentTarget.reset();notify("Connexion Total Mobility vérifiée et chiffrée");await loadTotal();}catch(error){notify(error instanceof Error?error.message:"Connexion Total impossible");}finally{setBusy(false);}}
+  async function sync(){if(!token)return;setBusy(true);try{const response=await fetch(`${API}/total-mobility/sync`,{method:"POST",headers:{Authorization:`Bearer ${token}`}});if(!response.ok)throw new Error(await response.text());const result=await response.json();notify(`${result.imported??0} nouvelle(s) transaction(s) · ${result.duplicates??0} doublon(s) ignoré(s)`);await loadTotal();}catch(error){notify(error instanceof Error?error.message:"Synchronisation Total impossible");}finally{setBusy(false);}}
   return (
     <section className={styles.settings}>
+      {direction&&<article className={styles.totalConnector}>
+        <div className={styles.connectorHead}><div><small>INTÉGRATION SÉCURISÉE</small><h2>TotalEnergies Mobility</h2><p>Synchronisation automatique toutes les heures, sans enregistrer votre mot de passe.</p></div><span className={total.customerNumber&&total.enabled?styles.connectorOnline:styles.connectorOffline}>{total.customerNumber&&total.enabled?"● Connecté":"○ Non connecté"}</span></div>
+        {total.customerNumber&&<><div className={styles.connectorMetrics}><span><small>Client</small><b>{total.customerNumber}</b></span><span><small>Site</small><b>{total.siteNumber}</b></span><span><small>Fréquence</small><b>{total.syncIntervalMinutes} min</b></span><span><small>Dernier succès</small><b>{total.lastSuccessAt?new Date(total.lastSuccessAt).toLocaleString("fr-FR"):"Jamais"}</b></span></div>{total.lastError&&<div className={styles.connectorError}>⚠ {total.lastError}</div>}<button disabled={busy} onClick={sync}>{busy?"Synchronisation…":"Synchroniser maintenant"}</button></>}
+        <details className={styles.connectorConfig}><summary>{total.customerNumber?"Reconnecter ou modifier":"Configurer la connexion"}</summary><form onSubmit={connect} className={styles.connectorForm}>
+          <label>Customer ID<input name="customerId" autoComplete="off" required /></label><label>Numéro client<input name="customerNumber" required defaultValue={total.customerNumber??""} /></label><label>Numéro du site<input name="siteNumber" required defaultValue={total.siteNumber??"9051"} /></label><label>Identifiant utilisateur Total<input name="totalUserId" autoComplete="off" /></label><label>Nom technique Total<input name="totalUsername" autoComplete="off" /></label><label>Fréquence<select name="syncIntervalMinutes" defaultValue={total.syncIntervalMinutes??60}><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">1 heure</option><option value="120">2 heures</option></select></label><label className={styles.connectorSecret}>Refresh token Total<input name="refreshToken" type="password" autoComplete="new-password" required minLength={20} /><small>Testé puis chiffré ; jamais réaffiché ni enregistré dans ce navigateur.</small></label><button disabled={busy}>{busy?"Vérification…":"Vérifier et connecter"}</button>
+        </form></details>
+        {runs.length>0&&<details className={styles.connectorRuns}><summary>Journal des synchronisations</summary><div className={styles.tableWrap}><table><thead><tr><th>Date</th><th>État</th><th>Reçues</th><th>Nouvelles</th><th>Doublons</th></tr></thead><tbody>{runs.slice(0,10).map(run=><tr key={run.id}><td>{new Date(run.startedAt).toLocaleString("fr-FR")}</td><td><b>{run.status}</b></td><td>{run.fetchedRows}</td><td>{run.importedRows}</td><td>{run.duplicateRows}</td></tr>)}</tbody></table></div></details>}
+      </article>}
       <article>
         <h2>Règles des rôles</h2>
         <p>

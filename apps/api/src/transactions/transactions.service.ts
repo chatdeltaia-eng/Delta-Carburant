@@ -4,7 +4,7 @@ import { DatabaseService } from '../database/database.service';
 type Actor = { sub: string; email: string };
 type Correction = { station?: string; liters?: number; amount?: number; reason: string };
 type Allocation = { driverId: string; vehicleId: string; amount: number; mileage: number; liters?: number; note?: string };
-type ImportRow = { date:string; cardNumber:string; vehicle?:string; beneficiary?:string; station:string; product:string; liters:number; amount:number; previousMileage?:number; mileage?:number; authorizationCode?:string };
+type ImportRow = { date:string; cardNumber:string; vehicle?:string; beneficiary?:string; station:string; product:string; liters:number; amount:number; previousMileage?:number; mileage?:number; authorizationCode?:string; externalId?:string };
 @Injectable()
 export class TransactionsService {
   constructor(private readonly db: DatabaseService) {}
@@ -25,6 +25,7 @@ export class TransactionsService {
   private transactionFingerprint(row: ImportRow, cardKey: string) {
     const normalized = [
       cardKey,
+      row.externalId?.trim().toUpperCase() ?? '',
       new Date(row.date).toISOString(),
       row.authorizationCode?.trim().toUpperCase() ?? '',
       row.station.trim().toUpperCase().replace(/\s+/g, ' '),

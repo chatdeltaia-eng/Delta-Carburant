@@ -12,9 +12,23 @@ import { VehiclesModule } from './vehicles/vehicles.module';
 import { MileageModule } from './mileage/mileage.module';
 import { DriversModule } from './drivers/drivers.module';
 import { FuelPricesModule } from './fuel-prices/fuel-prices.module';
+import { TotalMobilityModule } from './total-mobility/total-mobility.module';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, DashboardModule, CardsModule, RequestsModule, TransactionsModule, NotificationsModule, VehiclesModule, MileageModule, DriversModule, FuelPricesModule],
+  imports: [
+    DatabaseModule,
+    AuthModule,
+    DashboardModule,
+    CardsModule,
+    RequestsModule,
+    TransactionsModule,
+    NotificationsModule,
+    VehiclesModule,
+    MileageModule,
+    DriversModule,
+    FuelPricesModule,
+    TotalMobilityModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })

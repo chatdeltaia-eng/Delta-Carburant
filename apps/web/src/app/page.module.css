@@ -1112,6 +1112,13 @@
 @keyframes billingAlert{0%,100%{box-shadow:inset 3px 0 #e54b50}50%{box-shadow:inset 6px 0 #c82432}}
 @media(prefers-reduced-motion:reduce){.tableWrap td.billingMismatch{animation:none}}
 
+/* Connecteur Total Mobility — visible uniquement pour la Direction. */
+.settings .totalConnector{grid-column:1/-1;background:linear-gradient(145deg,#071f1a,#0d392d);color:white;border-color:#235545;box-shadow:0 18px 50px #09271c35}
+.connectorHead{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}.connectorHead small{color:#5de0ae;font-weight:900;letter-spacing:.13em}.settings .connectorHead h2{font-size:23px;margin:6px 0}.settings .connectorHead p{color:#b9d3c9;margin:0}.connectorOnline,.connectorOffline{padding:8px 12px;border-radius:99px;font-size:11px;font-weight:900;white-space:nowrap}.connectorOnline{color:#8ff1ca;background:#0b533d}.connectorOffline{color:#ffd09c;background:#593c23}
+.connectorMetrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:22px 0}.connectorMetrics span{padding:13px;border:1px solid #ffffff1a;background:#ffffff0a;border-radius:11px}.connectorMetrics small,.connectorMetrics b{display:block}.connectorMetrics small{color:#8fb2a5;font-size:9px;text-transform:uppercase}.connectorMetrics b{margin-top:5px;font-size:12px}.connectorError{margin:12px 0;padding:12px;border-radius:9px;color:#ffd1c9;background:#7e282c66}
+.connectorConfig,.connectorRuns{margin-top:18px;border-top:1px solid #ffffff1c;padding-top:15px}.connectorConfig summary,.connectorRuns summary{cursor:pointer;color:#d8ede5;font-weight:800;font-size:12px}.connectorForm{display:grid;grid-template-columns:1fr 1fr;gap:13px;margin-top:16px}.connectorForm label{font-size:10px;color:#c5ddd4;font-weight:800}.connectorForm input,.connectorForm select{display:block;width:100%;margin-top:6px;padding:10px;border:1px solid #41685a;border-radius:8px;background:#f9fffc;color:#123a2b}.connectorSecret{grid-column:1/-1}.connectorSecret small{display:block;margin-top:6px;color:#91b6a8}.connectorForm button{align-self:end}.connectorRuns .tableWrap{margin-top:12px;max-height:280px;border-radius:9px}.connectorRuns table{min-width:650px}.connectorRuns th,.connectorRuns td{font-size:10px}.connectorRuns td{color:#173d2f}.connectorRuns td b{color:#14724a}
+@media(max-width:700px){.connectorHead{flex-direction:column}.connectorMetrics,.connectorForm{grid-template-columns:1fr}.connectorSecret{grid-column:auto}}
+
 /* Data cockpit — listes opérationnelles denses, stables et rapidement scannables. */
 .fullPanel{
   position:relative;

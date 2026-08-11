@@ -165,4 +165,22 @@ describe('RequestsService workflow', () => {
       ),
     ).toBe(true);
   });
+
+  it('archive une demande traitée sans supprimer son historique', async () => {
+    const client = {
+      query: jest.fn(async (sql: string) => {
+        if (sql.includes('UPDATE card_request SET archived_at=now()')) {
+          return { rows: [{ id: 'request-id', requestNumber: 'D-2026-1', archivedAt: new Date() }] };
+        }
+        return { rows: [] };
+      }),
+    };
+    const db = { transaction: jest.fn((work: (value: typeof client) => unknown) => work(client)) };
+    const service = new RequestsService(db as never, notification as never);
+
+    await expect(service.archive('request-id', { sub:'zin-id', email:'zin@delta.tn', role:'ZIN_FINANCE' }))
+      .resolves.toMatchObject({ id:'request-id', requestNumber:'D-2026-1' });
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes("'ARCHIVE','card_request'"))).toBe(true);
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes('DELETE FROM card_request'))).toBe(false);
+  });
 });

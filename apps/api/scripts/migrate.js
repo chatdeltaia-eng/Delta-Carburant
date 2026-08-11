@@ -40,6 +40,7 @@ const migrations = [
   '037_najib_nine_card_scope.sql',
   '038_rebuild_vehicle_card_reference.sql',
   '039_correct_haithem_melliti_reference.sql',
+  '040_request_archiving.sql',
 ];
 
 async function main() {

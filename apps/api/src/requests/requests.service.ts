@@ -10,10 +10,10 @@ export class RequestsService {
   list(actor: Actor) {
     const ownOnly = actor.role === 'NAJIB_ASSIGNER';
     return this.db.query(`SELECT cr.id,cr.request_number AS "requestNumber",CASE WHEN cr.request_type='REACTIVATION' THEN 'CARD_FUNDING' ELSE cr.request_type::text END AS "requestType",cr.status,cr.requested_limit AS "requestedLimit",
-      cr.reason,cr.decision_reason AS "decisionReason",cr.created_at AS "createdAt",cr.decision_date AS "decisionDate",cr.receipt_number AS "receiptNumber",cr.receipt_issued_at AS "receiptIssuedAt",
+      cr.reason,cr.decision_reason AS "decisionReason",cr.created_at AS "createdAt",cr.updated_at AS "updatedAt",cr.decision_date AS "decisionDate",cr.receipt_number AS "receiptNumber",cr.receipt_issued_at AS "receiptIssuedAt",
       b.display_name AS beneficiary,d.name AS department,v.registration_display AS vehicle,
       fc.masked_card_number AS "cardNumber",source.masked_card_number AS "sourceCardNumber",fc.monthly_limit AS "currentLimit", requester.role::text AS "requestedByRole",requester.display_name AS "requestedByName",
-      approver.role::text AS "decisionByRole",cr.requested_card_status AS "requestedCardStatus",
+      approver.role::text AS "decisionByRole",approver.display_name AS "decisionByName",cr.requested_card_status AS "requestedCardStatus",
       (cr.zin_approved_at IS NOT NULL) AS "zinApproved",(cr.dg_approved_at IS NOT NULL) AS "dgApproved", latest.action AS "cardAction",
       latest.new_values->>'status' AS "cardStatusAction",latest.created_at AS "cardActionAt",
       action_user.role::text AS "cardActionByRole"
@@ -27,7 +27,19 @@ export class RequestsService {
         WHERE al.entity_type='fuel_card' AND al.entity_id=cr.fuel_card_id::text
         ORDER BY al.created_at DESC LIMIT 1) latest ON true
       LEFT JOIN app_user action_user ON lower(action_user.email::text)=lower(latest.actor)
-      WHERE ($1::boolean=false OR cr.requested_by=$2) ORDER BY cr.created_at DESC`, [ownOnly, actor.sub]);
+      WHERE cr.archived_at IS NULL AND ($1::boolean=false OR cr.requested_by=$2) ORDER BY cr.created_at DESC`, [ownOnly, actor.sub]);
+  }
+  async archive(id: string, actor: Actor) {
+    const row = await this.db.transaction(async client => {
+      const result = await client.query(`UPDATE card_request SET archived_at=now(),archived_by=$2,updated_at=now()
+        WHERE id=$1 AND archived_at IS NULL AND status IN ('APPROVED','REJECTED','CANCELLED')
+        RETURNING id,request_number AS "requestNumber",archived_at AS "archivedAt"`, [id, actor.sub]);
+      if (!result.rows[0]) throw new BadRequestException('Seule une demande déjà traitée peut être archivée');
+      await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
+        VALUES($1,'ARCHIVE','card_request',$2,$3)`, [actor.email ?? actor.sub,id,{archivedAt:result.rows[0].archivedAt}]);
+      return result.rows[0];
+    });
+    return row;
   }
   async create(dto: CreateRequest, actor: Actor) {
     if (dto.requestType === 'LIMIT_CHANGE' && !dto.fuelCardId) throw new BadRequestException('La carte concernée est obligatoire');

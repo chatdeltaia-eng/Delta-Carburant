@@ -147,8 +147,13 @@ const toRequestRow = (row: Record<string, unknown>): Row => ({
   plafondActuel: Number(row.currentLimit ?? 0),
   carte: String(row.cardNumber ?? "—"),
   carteSource:String(row.sourceCardNumber??"—"),
+  dateDemande: row.createdAt ? new Date(String(row.createdAt)).toLocaleString("fr-FR", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit", second:"2-digit" }) : "—",
+  demandeur: String(row.requestedByName ?? "—"),
+  raison: String(row.reason ?? "—"),
   statut: requestStatus[String(row.status)] ?? String(row.status ?? "—"),
   motif: String(row.decisionReason ?? row.reason ?? "—"),
+  dateDecision: row.decisionDate ? new Date(String(row.decisionDate)).toLocaleString("fr-FR", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit", second:"2-digit" }) : "—",
+  decideur: String(row.decisionByName ?? "—"),
   suivi: requestTracking(row),
   recu: String(row.receiptNumber ?? "—"),
 });
@@ -1274,6 +1279,22 @@ export default function Home() {
     setNotifications(nextNotifications);
     notify("Demande annulée — Zin et la Direction ont été informés");
   }
+  async function archiveRequest(id: string) {
+    if (!user || user.role !== "ZIN_FINANCE") return notify("Archivage réservé à Zin Finance");
+    const request = data.requests.find((row) => row.id === id);
+    if (!request) return notify("Demande introuvable");
+    if (request.statut === "EN_ATTENTE_ZIN") return notify("Traitez la demande avant de l’archiver");
+    if (!window.confirm(`Archiver ${request.numero} ? Elle disparaîtra de la liste active, mais restera conservée dans l’historique et l’audit.`)) return;
+    if (!token) return notify("Session distante expirée : reconnectez-vous");
+    try {
+      const response = await fetch(`${API}/requests/${id}/archive`, { method:"PATCH", headers:{ Authorization:`Bearer ${token}` } });
+      if (!response.ok) throw new Error(await response.text());
+      setData((current) => ({ ...current, requests:current.requests.filter((row) => row.id !== id) }));
+      notify(`Demande ${request.numero} archivée`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Échec de l’archivage");
+    }
+  }
   async function deleteRow(
     section: "transactions" | "vehicles" | "beneficiaries",
     id?: string,
@@ -1672,6 +1693,7 @@ export default function Home() {
             decideAllocation={decideAllocation}
             decideRequest={decideRequest}
             cancelRequest={cancelRequest}
+            archiveRequest={archiveRequest}
           />
         )}
       </main>
@@ -2385,6 +2407,7 @@ function DataView({
   decideAllocation,
   decideRequest,
   cancelRequest,
+  archiveRequest,
 }: {
   view: View;
   cards: Card[];
@@ -2407,6 +2430,7 @@ function DataView({
   decideAllocation:(id:string,accepted:boolean)=>void;
   decideRequest: (id: string, accepted: boolean) => void;
   cancelRequest: (id: string) => void;
+  archiveRequest: (id: string) => void;
 }) {
   const [selectedCompany,setSelectedCompany]=useState("Toutes");
   const config: Record<
@@ -2459,6 +2483,8 @@ function DataView({
       modal: "request",
       cols: [
         "numero",
+        "dateDemande",
+        "demandeur",
         "type",
         "beneficiaire",
         "departement",
@@ -2466,8 +2492,11 @@ function DataView({
         "plafond",
         "carte",
         "carteSource",
+        "raison",
         "statut",
         "motif",
+        "dateDecision",
+        "decideur",
         "suivi",
         "recu",
       ],
@@ -2670,6 +2699,15 @@ function DataView({
                     >
                       Annuler la demande
                     </button>
+                  ) : view === "requests" && user.role === "ZIN_FINANCE" ? (
+                    <>
+                      {r.statut === "VALIDEE_ZIN" && r.recu !== "—" && (
+                        <><button className={styles.smallBtn} onClick={()=>printReceipt(r)}>Imprimer reçu PDF</button>{" "}</>
+                      )}
+                      <button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>archiveRequest(r.id)}>
+                        Archiver
+                      </button>
+                    </>
                   ) : view === "requests" && r.statut === "VALIDEE_ZIN" && r.recu !== "—" ? (
                     <button className={styles.smallBtn} onClick={()=>printReceipt(r)}>Imprimer reçu PDF</button>
                   ) : view === "anomalies" && r.statut === "À vérifier" ? (

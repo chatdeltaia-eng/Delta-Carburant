@@ -2,50 +2,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Client } = require('pg');
 
-const migrations = [
-  '001_extensions.sql',
-  '002_schema.sql',
-  '005_application_modules.sql',
-  '006_role_workflow.sql',
-  '007_total_transaction_import.sql',
-  '008_management_notifications.sql',
-  '009_card_lifecycle_reporting.sql',
-  '010_request_card_synchronization.sql',
-  '011_off_park_consumption_allocation.sql',
-  '012_user_email_domain.sql',
-  '013_user_password.sql',
-  '014_default_users.sql',
-  '015_default_company.sql',
-  '016_card_distribution_status.sql',
-  '017_transaction_review_workflow.sql',
-  '018_off_park_responsibles_vehicles.sql',
-  '019_mileage_funding_workflow.sql',
-  '020_totalenergies_transaction_details.sql',
-  '021_vehicle_registration_dates.sql',
-  '022_company_driver_fuel_receipts.sql',
-  '023_card_company_view.sql',
-  '024_transaction_beneficiary_linking.sql',
-  '025_total_card_reference.sql',
-  '026_reconcile_blocked_total_transactions.sql',
-  '027_complete_total_card_reference.sql',
-  '028_deduplicate_total_cards.sql',
-  '029_strict_total_card_reconciliation.sql',
-  '030_replace_card_reference_41.sql',
-  '031_correct_41_card_limits.sql',
-  '032_apply_card_safe_status.sql',
-  '033_single_dc_company_and_najib_fleet.sql',
-  '034_total_driver_reference.sql',
-  '035_card_custody_double_approval.sql',
-  '036_najib_exact_scope_and_allocation_tracking.sql',
-  '037_najib_nine_card_scope.sql',
-  '038_rebuild_vehicle_card_reference.sql',
-  '039_correct_haithem_melliti_reference.sql',
-  '040_request_archiving.sql',
-  '041_operational_controls.sql',
-  '042_transaction_billing_control.sql',
-  '043_total_excellium_product_price.sql',
-  '044_total_gasoil_excellium_product_price.sql',
-];
+const sqlDirectory = path.resolve(__dirname, '../../../sql');
+// 003/004 sont des scripts historiques d'import ponctuel, pas des migrations
+// rejouables. Toutes les autres migrations numérotées sont découvertes
+// automatiquement afin qu'une nouvelle migration ne puisse plus être oubliée
+// lors d'un déploiement Render.
+const excludedOneOffImports = new Set([
+  '003_import_najib.sql',
+  '004_finalize_najib_import.sql',
+]);
+const migrations = fs.readdirSync(sqlDirectory)
+  .filter((filename) => /^\d{3}_[a-z0-9_]+\.sql$/i.test(filename))
+  .filter((filename) => !excludedOneOffImports.has(filename))
+  .sort((left, right) => Number(left.slice(0, 3)) - Number(right.slice(0, 3)) || left.localeCompare(right));
 
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
@@ -71,7 +40,7 @@ async function main() {
         [filename],
       );
       if (applied.rowCount) continue;
-      const sqlPath = path.resolve(__dirname, '../../../sql', filename);
+      const sqlPath = path.join(sqlDirectory, filename);
       const sql = fs.readFileSync(sqlPath, 'utf8');
       if (['025_total_card_reference.sql', '027_complete_total_card_reference.sql', '030_replace_card_reference_41.sql'].includes(filename)) {
         // node-postgres cannot use the extended (parameterized) protocol for a

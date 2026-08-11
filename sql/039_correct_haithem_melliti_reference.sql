@@ -5,8 +5,8 @@ BEGIN;
 DO $$
 DECLARE
   dc_id uuid;
-  vehicle_id uuid;
-  beneficiary_id uuid;
+  v_vehicle_id uuid;
+  v_beneficiary_id uuid;
   department_id uuid;
 BEGIN
   SELECT id INTO dc_id FROM company WHERE code='DC' AND active LIMIT 1;
@@ -19,35 +19,37 @@ BEGIN
   INSERT INTO beneficiary(company_id,department_id,display_name)
     VALUES(dc_id,department_id,'HAITHEM MELLITI')
     ON CONFLICT(company_id,display_name) DO UPDATE SET active=true
-    RETURNING id INTO beneficiary_id;
+    RETURNING id INTO v_beneficiary_id;
 
-  SELECT id INTO vehicle_id FROM vehicle
+  SELECT id INTO v_vehicle_id FROM vehicle
   WHERE company_id=dc_id AND source_card_number='304'
   ORDER BY updated_at DESC LIMIT 1;
-  IF vehicle_id IS NULL THEN
+  IF v_vehicle_id IS NULL THEN
     RAISE EXCEPTION 'Véhicule de la carte 304 introuvable';
   END IF;
 
-  UPDATE vehicle SET driver_name='HAITHEM MELLITI',reference_beneficiary_id=beneficiary_id,
+  UPDATE vehicle SET driver_name='HAITHEM MELLITI',reference_beneficiary_id=v_beneficiary_id,
     active=true,deleted_at=NULL,deleted_by=NULL,updated_at=now()
-  WHERE id=vehicle_id;
+  WHERE id=v_vehicle_id;
 
-  UPDATE fuel_card SET holder_name='HAITHEM MELLITI',reference_vehicle_id=vehicle_id,
+  UPDATE fuel_card SET holder_name='HAITHEM MELLITI',reference_vehicle_id=v_vehicle_id,
     company_id=dc_id,updated_at=now()
   WHERE deleted_at IS NULL AND
     coalesce(nullif(ltrim(regexp_replace(coalesce(total_payment_number,masked_card_number),'[^0-9]','','g'),'0'),''),'0')='304';
 
-  UPDATE card_assignment SET beneficiary_id=beneficiary_id,vehicle_id=vehicle_id
+  UPDATE card_assignment ca
+  SET beneficiary_id=v_beneficiary_id,vehicle_id=v_vehicle_id
   WHERE fuel_card_id IN (
-    SELECT id FROM fuel_card WHERE deleted_at IS NULL AND reference_vehicle_id=vehicle_id
+    SELECT fc.id FROM fuel_card fc
+    WHERE fc.deleted_at IS NULL AND fc.reference_vehicle_id=v_vehicle_id
   ) AND ends_at IS NULL;
 
   UPDATE beneficiary SET active=false
   WHERE company_id=dc_id AND upper(display_name) IN ('HAITHEM MILITI','HAITEM MILITI')
-    AND id<>beneficiary_id;
+    AND id<>v_beneficiary_id;
 
   INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
-  VALUES('migration-039','RESTORE_AND_CORRECT','vehicle',vehicle_id,
+  VALUES('migration-039','RESTORE_AND_CORRECT','vehicle',v_vehicle_id,
     jsonb_build_object('beneficiary','HAITHEM MELLITI','card','304'));
 END $$;
 

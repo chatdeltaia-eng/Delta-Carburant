@@ -206,14 +206,7 @@ export class TransactionsService {
       const external=`TOTAL:FP:${fingerprint}`;
       const inserted=await client.query(`INSERT INTO fuel_transaction(external_transaction_id,fuel_card_id,beneficiary_id,vehicle_id,transaction_date,station,product,
         quantity_liters,amount_incl_tax,source,import_batch_id,source_row_number,previous_mileage,reported_mileage,authorization_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'TOTAL_EXCEL',$10,$11,$12,$13,$14)
-        ON CONFLICT(external_transaction_id,source) DO UPDATE SET
-          fuel_card_id=excluded.fuel_card_id,beneficiary_id=excluded.beneficiary_id,vehicle_id=excluded.vehicle_id,
-          transaction_date=excluded.transaction_date,station=excluded.station,product=excluded.product,
-          quantity_liters=excluded.quantity_liters,amount_incl_tax=excluded.amount_incl_tax,
-          import_batch_id=excluded.import_batch_id,source_row_number=excluded.source_row_number,
-          previous_mileage=excluded.previous_mileage,reported_mileage=excluded.reported_mileage,
-          authorization_code=excluded.authorization_code,deleted_at=null,deleted_by=null
-        WHERE fuel_transaction.deleted_at IS NOT NULL RETURNING id`,[external,card.rows[0].id,beneficiary.rows[0].id,vehicle.rows[0]?.id??null,row.date,row.station??null,row.product??null,row.liters,row.amount,batch.rows[0].id,index+1,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]);
+        ON CONFLICT DO NOTHING RETURNING id`,[external,card.rows[0].id,beneficiary.rows[0].id,vehicle.rows[0]?.id??null,row.date,row.station??null,row.product??null,row.liters,row.amount,batch.rows[0].id,index+1,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]);
       if(inserted.rowCount){
         imported++;
         const canonicalProduct=this.canonicalFuelProduct(row.product);

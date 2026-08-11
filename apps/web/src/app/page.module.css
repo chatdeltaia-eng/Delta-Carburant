@@ -818,6 +818,46 @@
   .modal{max-height:94vh;overflow:auto}.formGrid{padding:20px}.headerActions{gap:6px}.user{padding-right:7px}
 }
 
+/* Notifications toujours lisibles au-dessus du cockpit. */
+.content header{position:relative;z-index:200;overflow:visible}
+.headerActions,.notificationBox{position:relative;z-index:210}
+.notificationMenu{
+  z-index:9999;
+  width:min(410px,calc(100vw - 28px));
+  max-height:min(520px,calc(100vh - 130px));
+  padding:10px;
+  border:1px solid rgba(201,218,209,.95);
+  border-radius:18px;
+  background:rgba(255,255,255,.985);
+  box-shadow:0 28px 80px rgba(5,35,23,.24),0 0 0 1px rgba(255,255,255,.8) inset;
+  backdrop-filter:blur(20px);
+  animation:notificationArrival .24s cubic-bezier(.2,.8,.2,1) both;
+}
+.notificationMenu h3{position:sticky;top:-10px;z-index:2;margin:0 -1px 5px;padding:15px 13px 12px;background:rgba(255,255,255,.97);border-bottom:1px solid #e5eee9;font-size:14px;color:#153d2e}
+.notificationMenu>button{position:relative;margin:5px 0;padding:13px 14px 13px 17px;border:1px solid #e6eee9;border-radius:12px;background:#fff;transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
+.notificationMenu>button:before{content:"";position:absolute;left:6px;top:14px;bottom:14px;width:3px;border-radius:8px;background:#cbd9d2}
+.notificationMenu>button.unread:before{background:linear-gradient(#11ad99,#3370da)}
+.notificationMenu>button:hover{transform:translateX(-3px);border-color:#bcd9cc;box-shadow:0 9px 24px rgba(18,61,44,.09)}
+.notificationMenu b{font-size:12px;color:#173c2e}.notificationMenu span{font-size:11px;line-height:1.45}.notificationMenu small{font-size:9px;letter-spacing:.2px}
+.bell>span{animation:notificationSignal 1.9s ease-out infinite}
+
+/* Pagination commune aux référentiels, transactions et cartes. */
+.pagination{display:flex;align-items:center;justify-content:space-between;gap:18px;min-height:68px;padding:12px 20px;border-top:1px solid #e3ece7;background:linear-gradient(180deg,#fbfdfc,#f5f9f7)}
+.pageSizeControl,.pageButtons{display:flex;align-items:center;gap:9px}
+.pageSizeControl label{color:#64776e;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.55px}
+.pageSizeControl select{height:36px;min-width:66px;padding:0 10px;border:1px solid #ceddd5;border-radius:9px;background:#fff;color:#173d2e;font-weight:800;outline-color:#14937c}
+.pageSizeControl span{padding-left:4px;color:#718078;font-size:11px}.pageSizeControl span b{color:#173d2e}
+.pageButtons button{display:grid;place-items:center;width:35px;height:35px;padding:0;border:1px solid #d2dfd8;border-radius:9px;background:#fff;color:#205943;font-size:18px;cursor:pointer;transition:transform .16s ease,background .16s ease,box-shadow .16s ease}
+.pageButtons button:hover:not(:disabled){transform:translateY(-2px);background:#eaf7f1;box-shadow:0 7px 17px rgba(17,73,51,.12)}
+.pageButtons button:disabled{opacity:.35;cursor:not-allowed}.pageButtons strong{min-width:105px;text-align:center;color:#173d2e;font-size:11px}.pageButtons strong span{color:#829087;font-weight:600}
+.tableWrap tbody>tr{animation:rowArrival .28s cubic-bezier(.2,.8,.2,1) both}
+.tableWrap tbody>tr:nth-child(2){animation-delay:.025s}.tableWrap tbody>tr:nth-child(3){animation-delay:.05s}.tableWrap tbody>tr:nth-child(4){animation-delay:.075s}.tableWrap tbody>tr:nth-child(5){animation-delay:.1s}
+@keyframes notificationArrival{from{opacity:0;transform:translateY(-8px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes notificationSignal{0%{box-shadow:0 0 0 0 rgba(199,71,59,.4)}70%{box-shadow:0 0 0 7px rgba(199,71,59,0)}100%{box-shadow:0 0 0 0 rgba(199,71,59,0)}}
+@keyframes rowArrival{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+@media(max-width:700px){.notificationMenu{position:fixed;top:82px;right:14px;left:14px;width:auto}.pagination{align-items:stretch;flex-direction:column;padding:14px}.pageSizeControl,.pageButtons{justify-content:space-between}.pageSizeControl label{display:none}}
+@media(prefers-reduced-motion:reduce){.notificationMenu,.bell>span,.tableWrap tbody>tr{animation:none!important}.notificationMenu>button,.pageButtons button{transition:none}}
+
 /* Navigation de production : barre supérieure lisible, complète et responsive. */
 .sidebar{
   position:sticky;

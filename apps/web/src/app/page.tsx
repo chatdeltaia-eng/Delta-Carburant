@@ -2577,6 +2577,8 @@ function DataView({
   observeTransaction: (row: Row) => void;
 }) {
   const [selectedCompany,setSelectedCompany]=useState("Toutes");
+  const [page,setPage]=useState(1);
+  const [pageSize,setPageSize]=useState(10);
   const config: Record<
     string,
     { button: string; modal: Modal; cols: string[] }
@@ -2671,13 +2673,13 @@ function DataView({
       <section className={styles.fullPanel}>
         <Toolbar
           search={search}
-          setSearch={setSearch}
+          setSearch={(value)=>{setSearch(value);setPage(1)}}
           count={filtered.length}
           button={canCreate(user.role) ? c.button : ""}
           click={() => open("card")}
         />
         {canManage(user.role)&&<label className={styles.companyFilter}>Société <select value={selectedCompany} onChange={event=>setSelectedCompany(event.target.value)}><option>Toutes</option>{companyChoices.map(company=><option key={company}>{company}</option>)}</select></label>}
-        <CardTable cards={filtered} transactions={data.transactions} full user={user} edit={edit} />
+        <CardTable key={`${search}-${selectedCompany}`} cards={filtered} transactions={data.transactions} full user={user} edit={edit} />
       </section>
     );
   }
@@ -2731,6 +2733,9 @@ function DataView({
     (view!=="vehicles"||selectedCompany==="Toutes"||String(x.societe)===selectedCompany)&&
     Object.values(x).join(" ").toLowerCase().includes(search.toLowerCase()),
   );
+  const pageCount=Math.max(1,Math.ceil(rows.length/pageSize));
+  const currentPage=Math.min(page,pageCount);
+  const paginatedRows=rows.slice((currentPage-1)*pageSize,currentPage*pageSize);
   const button =
     view === "requests"
       ? user.role === "NAJIB_ASSIGNER"
@@ -2799,12 +2804,12 @@ function DataView({
       })()}
       <Toolbar
         search={search}
-        setSearch={setSearch}
+        setSearch={(value)=>{setSearch(value);setPage(1)}}
         count={rows.length}
         button={button}
         click={() => (c.modal ? open(c.modal) : download(rows, view))}
       />
-      {view==="vehicles"&&canManageFleet(user.role)&&<label className={styles.companyFilter}>Société <select value={selectedCompany} onChange={event=>setSelectedCompany(event.target.value)}><option>Toutes</option>{companyChoices.map(company=><option key={company}>{company}</option>)}</select></label>}
+      {view==="vehicles"&&canManageFleet(user.role)&&<label className={styles.companyFilter}>Société <select value={selectedCompany} onChange={event=>{setSelectedCompany(event.target.value);setPage(1)}}><option>Toutes</option>{companyChoices.map(company=><option key={company}>{company}</option>)}</select></label>}
       {view === "transactions" && canManage(user.role) && rows.length > 0 && (
         <div className={styles.bulkBar}>
           <span>{rows.length} transaction(s)</span>
@@ -2830,7 +2835,7 @@ function DataView({
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {paginatedRows.map((r) => (
               <tr key={r.id}>
                 {c.cols.map((k) => (
                   <td key={k} className={k === "controleFacturation" ? (String(r[k]).startsWith("✓") ? styles.billingOk : String(r[k]).startsWith("⚠") ? styles.billingMismatch : styles.billingUnpriced) : undefined}>{r[k] ?? "—"}</td>
@@ -2924,6 +2929,13 @@ function DataView({
           </tbody>
         </table>
       </div>
+      <Pagination
+        page={currentPage}
+        pageSize={pageSize}
+        total={rows.length}
+        onPage={setPage}
+        onPageSize={(size)=>{setPageSize(size);setPage(1)}}
+      />
     </section>
   );
 }
@@ -2964,6 +2976,30 @@ function Toolbar({
     </div>
   );
 }
+
+function Pagination({page,pageSize,total,onPage,onPageSize}:{
+  page:number;pageSize:number;total:number;onPage:(page:number)=>void;onPageSize:(size:number)=>void;
+}){
+  const pages=Math.max(1,Math.ceil(total/pageSize));
+  const first=total===0?0:(page-1)*pageSize+1;
+  const last=Math.min(total,page*pageSize);
+  return <nav className={styles.pagination} aria-label="Pagination du tableau">
+    <div className={styles.pageSizeControl}>
+      <label htmlFor={`page-size-${pageSize}-${total}`}>Lignes par page</label>
+      <select id={`page-size-${pageSize}-${total}`} value={pageSize} onChange={event=>onPageSize(Number(event.target.value))}>
+        {[5,10,20,30,50].map(size=><option key={size} value={size}>{size}</option>)}
+      </select>
+      <span>{first}–{last} sur <b>{total}</b></span>
+    </div>
+    <div className={styles.pageButtons}>
+      <button type="button" onClick={()=>onPage(1)} disabled={page<=1} aria-label="Première page">«</button>
+      <button type="button" onClick={()=>onPage(page-1)} disabled={page<=1} aria-label="Page précédente">‹</button>
+      <strong>Page {page} <span>sur {pages}</span></strong>
+      <button type="button" onClick={()=>onPage(page+1)} disabled={page>=pages} aria-label="Page suivante">›</button>
+      <button type="button" onClick={()=>onPage(pages)} disabled={page>=pages} aria-label="Dernière page">»</button>
+    </div>
+  </nav>;
+}
 function CardTable({
   cards,
   transactions,
@@ -2977,6 +3013,11 @@ function CardTable({
   edit: (c: Card) => void;
   full?: boolean;
 }) {
+  const [page,setPage]=useState(1);
+  const [pageSize,setPageSize]=useState(10);
+  const pages=Math.max(1,Math.ceil(cards.length/pageSize));
+  const currentPage=Math.min(page,pages);
+  const visibleCards=cards.slice((currentPage-1)*pageSize,currentPage*pageSize);
   const allocationDetails = (cardTransactions: Row[]) =>
     cardTransactions.flatMap((transaction) =>
       String(transaction.repartition ?? "")
@@ -3017,7 +3058,7 @@ function CardTable({
             </tr>
           </thead>
           <tbody>
-            {cards.map((c) => {
+            {visibleCards.map((c) => {
               const cardTransactions = transactions.filter(
                 (row) => String(row.carte) === c.masked_card_number,
               );
@@ -3152,6 +3193,7 @@ function CardTable({
           </tbody>
         </table>
       </div>
+      <Pagination page={currentPage} pageSize={pageSize} total={cards.length} onPage={setPage} onPageSize={(size)=>{setPageSize(size);setPage(1)}}/>
     </div>
   );
 }

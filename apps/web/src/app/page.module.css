@@ -817,3 +817,119 @@
   .sidebar{width:auto;padding:7px 8px}.sidebar:before{height:3px}.metrics{gap:10px}.metric{min-height:125px;padding:15px}.metric strong{font-size:20px}
   .modal{max-height:94vh;overflow:auto}.formGrid{padding:20px}.headerActions{gap:6px}.user{padding-right:7px}
 }
+
+/* Navigation de production : barre supérieure lisible, complète et responsive. */
+.sidebar{
+  position:sticky;
+  inset:0 0 auto;
+  width:100%;
+  min-height:0;
+  padding:0 28px;
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;
+  align-items:stretch;
+  gap:22px;
+  z-index:30;
+  border-right:0;
+  border-bottom:1px solid #ffffff17;
+  box-shadow:0 12px 34px #08261924;
+}
+.sidebar:before{height:3px}
+.brand{
+  min-height:76px;
+  height:76px;
+  width:136px;
+  margin:0;
+  padding:7px 0;
+  border:0;
+  justify-content:flex-start;
+}
+.brand img{width:118px;height:62px;object-fit:contain}
+.sidebar nav{
+  min-width:0;
+  display:flex;
+  align-items:center;
+  gap:4px;
+  overflow-x:auto;
+  overflow-y:hidden;
+  padding:10px 2px 8px;
+  scrollbar-width:thin;
+  scrollbar-color:#ffffff36 transparent;
+}
+.sidebar nav button,.sideBottom button{
+  flex:0 0 auto;
+  min-height:48px;
+  padding:9px 11px;
+  gap:8px;
+  white-space:nowrap;
+  justify-content:center;
+}
+.sidebar nav button span,.sideBottom button span{display:inline}
+.sidebar a:hover,.sidebar nav button:hover{transform:translateY(-1px)}
+.sidebar .active:before{
+  inset:auto 10px 3px;
+  width:auto;
+  height:3px;
+}
+.sideBottom{
+  margin:0;
+  padding:10px 0 8px 14px;
+  display:flex;
+  align-items:center;
+  border-top:0;
+  border-left:1px solid #ffffff13;
+}
+.sideBottom button{padding-inline:10px}
+.sideBottom button span{display:none}
+.content{
+  width:100%;
+  max-width:1700px;
+  margin:0 auto;
+  padding:30px 42px 60px;
+}
+
+@media(max-width:1180px){
+  .sidebar{grid-template-columns:auto minmax(0,1fr) auto;padding-inline:20px;gap:12px}
+  .brand{width:108px}.brand img{width:98px}
+  .sidebar nav button{padding-inline:10px}
+  .sidebar nav button span{display:none}
+  .sideBottom{padding-left:8px}
+  .content{margin:0 auto;padding:28px}
+}
+
+@media(max-width:720px){
+  .sidebar{
+    position:sticky;
+    inset:0 0 auto;
+    width:100%;
+    height:auto;
+    padding:0 12px 8px;
+    grid-template-columns:1fr auto;
+    gap:0 8px;
+  }
+  .brand{display:flex;height:61px;min-height:61px;width:104px;padding:4px 0}
+  .brand img{width:96px;height:52px}
+  .sideBottom{display:flex;grid-column:2;grid-row:1;padding:6px 0;border:0}
+  .sideBottom button{min-height:44px;padding:8px 10px}
+  .sidebar nav{
+    grid-column:1/-1;
+    grid-row:2;
+    width:100%;
+    justify-content:flex-start;
+    padding:2px 0 4px;
+  }
+  .sidebar nav button:nth-child(n){display:flex}
+  .sidebar nav button{min-height:42px;padding:7px 11px}
+  .sidebar nav button span{display:inline;font-size:11px}
+  .content{margin:0;padding:20px 14px 48px}
+  .content header{align-items:flex-start}
+  .workflowSteps{display:flex;overflow-x:auto;scroll-snap-type:x proximity;padding:8px}
+  .workflowSteps button{flex:0 0 min(84vw,360px);scroll-snap-align:start}
+}
+
+@media(max-width:420px){
+  .sidebar nav button span{display:none}
+  .sidebar nav button{min-width:44px}
+  .content header{flex-direction:column}
+  .headerActions{align-self:flex-end;margin-top:-50px}
+}

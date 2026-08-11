@@ -5,13 +5,26 @@ type Actor = { sub:string; email:string; role:string; companyId?:string };
 @Injectable()
 export class VehiclesService {
   constructor(private readonly db:DatabaseService) {}
-  list(companyId:string,actor:{sub:string;role:string}){ const own=actor.role==='NAJIB_ASSIGNER'; return this.db.query(`SELECT v.id,v.registration_display AS registration,v.brand,v.model,v.active,v.company_id AS "companyId",
-    v.fleet_number AS "fleetNumber",v.vehicle_type AS "vehicleType",v.first_registration_date AS "firstRegistrationDate",v.driver_name AS driver,v.notes,c.code AS company,
+  list(companyId:string,actor:{sub:string;role:string}){ const own=actor.role==='NAJIB_ASSIGNER'; return this.db.query(`SELECT v.id,v.registration_display AS registration,v.registration_missing AS "registrationMissing",
+    v.brand,v.model,v.active,v.company_id AS "companyId",
+    v.fleet_number AS "fleetNumber",v.vehicle_type AS "vehicleType",v.first_registration_date AS "firstRegistrationDate",
+    coalesce(rb.display_name,v.driver_name) AS driver,v.notes,c.code AS company,
+    fc.id AS "cardId",fc.masked_card_number AS "cardNumber",fc.status AS "cardStatus",fc.holder_name AS "cardHolder",
+    CASE WHEN fc.status='SAFE' THEN 'IN_SAFE' ELSE 'DISTRIBUTED' END AS custody,
     coalesce((SELECT max(mr.mileage) FROM mileage_reading mr WHERE mr.vehicle_id=v.id AND mr.status IN ('PENDING','VALIDATED')),0)::float AS "lastMileage",
-    v.updated_at AS "updatedAt" FROM vehicle v JOIN company c ON c.id=v.company_id WHERE v.deleted_at IS NULL
+    v.updated_at AS "updatedAt" FROM vehicle v JOIN company c ON c.id=v.company_id
+    LEFT JOIN beneficiary rb ON rb.id=v.reference_beneficiary_id
+    LEFT JOIN fuel_card fc ON fc.reference_vehicle_id=v.id AND fc.deleted_at IS NULL
+    WHERE v.deleted_at IS NULL AND v.active=true AND c.code='DC'
     AND ($1::boolean=false OR v.managed_by=$2 OR EXISTS(SELECT 1 FROM transaction_allocation ta WHERE ta.vehicle_id=v.id AND ta.allocated_by=$2))
-    AND ($3='' OR v.company_id=$3::uuid) ORDER BY c.code,v.registration_display`,[own,actor.sub,companyId]); }
-  async create(dto:Vehicle,actor:Actor){ const companyId=dto.companyId??actor.companyId;if(!companyId) throw new BadRequestException('Société obligatoire');this.assertCompanyScope(companyId,actor); const [row]=await this.db.query(`INSERT INTO vehicle(company_id,registration_normalized,registration_display,brand,model,active,managed_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,company_id AS "companyId",registration_display AS registration,brand,model,active`,[companyId,this.normalize(dto.registration),dto.registration.trim(),dto.brand??null,dto.model??null,dto.active??true,actor.role==='NAJIB_ASSIGNER'?actor.sub:null]);const reconciliation=await this.reconcileTotalCards(row.id,companyId,dto.registration,actor.sub);await this.audit(actor.email,'CREATE',row.id,{...row,reconciliation});return {...row,reconciliation}; }
+    AND ($3='' OR v.company_id=$3::uuid) ORDER BY c.code,coalesce(v.source_card_number,''),v.registration_display`,[own,actor.sub,companyId]); }
+  async create(dto:Vehicle,actor:Actor){ const companyId=dto.companyId??actor.companyId;if(!companyId) throw new BadRequestException('Société obligatoire');this.assertCompanyScope(companyId,actor); const [row]=await this.db.query(`INSERT INTO vehicle(company_id,registration_normalized,registration_display,brand,model,active,managed_by,deleted_at,deleted_by)
+    VALUES($1,$2,$3,$4,$5,$6,$7,NULL,NULL)
+    ON CONFLICT(company_id,registration_normalized) DO UPDATE SET
+      registration_display=excluded.registration_display,brand=excluded.brand,model=excluded.model,
+      active=excluded.active,managed_by=coalesce(excluded.managed_by,vehicle.managed_by),
+      deleted_at=NULL,deleted_by=NULL,updated_at=now()
+    RETURNING id,company_id AS "companyId",registration_display AS registration,brand,model,active`,[companyId,this.normalize(dto.registration),dto.registration.trim(),dto.brand??null,dto.model??null,dto.active??true,actor.role==='NAJIB_ASSIGNER'?actor.sub:null]);const reconciliation=await this.reconcileTotalCards(row.id,companyId,dto.registration,actor.sub);await this.audit(actor.email,'CREATE_OR_RESTORE',row.id,{...row,reconciliation});return {...row,reconciliation}; }
   async update(id:string,dto:Vehicle,actor:Actor){
     const [current]=await this.db.query<{company_id:string}>('SELECT company_id FROM vehicle WHERE id=$1 AND deleted_at IS NULL',[id]);
     if(!current) throw new NotFoundException('Véhicule introuvable');

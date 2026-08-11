@@ -38,10 +38,19 @@ const migrations = [
   '035_card_custody_double_approval.sql',
   '036_najib_exact_scope_and_allocation_tracking.sql',
   '037_najib_nine_card_scope.sql',
+  '038_rebuild_vehicle_card_reference.sql',
+  '039_correct_haithem_melliti_reference.sql',
 ];
 
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
+  if (process.env.NODE_ENV === 'production') {
+    const required = ['CARD_ENCRYPTION_KEY', 'CARD_HMAC_KEY', 'PIN_ENCRYPTION_KEY'];
+    const missing = required.filter((name) => !process.env[name]?.trim());
+    if (missing.length) {
+      throw new Error(`Missing production secrets: ${missing.join(', ')}`);
+    }
+  }
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {

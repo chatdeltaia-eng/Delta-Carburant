@@ -2,8 +2,10 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { assertProductionEnvironment } from './config/production-env';
 
 async function bootstrap() {
+  assertProductionEnvironment();
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api/v1');
   app.enableCors({ origin: process.env.WEB_ORIGIN ?? 'http://localhost:3000' });

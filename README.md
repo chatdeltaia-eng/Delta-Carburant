@@ -30,6 +30,26 @@ psql -v ON_ERROR_STOP=1 -f sql/002_schema.sql
 psql -v ON_ERROR_STOP=1 -f sql/005_application_modules.sql
 ```
 
+Pour une installation complète et reproductible, utiliser plutôt le moteur de
+migration de l'application, qui applique dans l'ordre toutes les migrations
+manquantes et mémorise celles déjà exécutées :
+
+```bash
+set -a; . ./.env; set +a
+node apps/api/scripts/migrate.js
+```
+
+Ne pas lancer uniquement les trois fichiers SQL ci-dessus pour une mise en
+production : les modules de workflow, notifications, import Total et double
+validation sont ajoutés par les migrations suivantes.
+
+La migration `038_rebuild_vehicle_card_reference.sql` installe le référentiel
+métier validé de 41 véhicules/cartes : 10 cartes en coffre, véhicules
+personnalisés sans matricule, lien de référence indépendant de la garde, et
+carte 2300 rattachée à Najib D-Max (5102 TU 217). Elle clôture sans suppression
+physique les anciennes transactions, anomalies et répartitions afin de préparer
+un nouvel import Total. Les chauffeurs ne sont pas modifiés.
+
 ## Import initial
 
 ```bash
@@ -85,5 +105,6 @@ npm run dev
 L'interface est disponible sur `http://localhost:3000`, l'API sur
 `http://localhost:3001/api/v1` et Swagger sur `http://localhost:3001/docs`.
 
-Les commandes de vérification sont `npm test` et `npm run build` dans l'API,
-puis `npm run build` dans l'application web.
+Les commandes de vérification sont `npm test`, `npm run test:e2e` et
+`npm run build` dans l'API, puis `npm run lint` et `npm run build` dans
+l'application web.

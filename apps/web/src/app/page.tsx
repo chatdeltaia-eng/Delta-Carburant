@@ -155,7 +155,11 @@ const toRequestRow = (row: Record<string, unknown>): Row => ({
 const initialCards: Card[] = [];
 const seeds: Record<string, Row[]> = {
   beneficiaries: [],
-  vehicles: `
+  /* Le parc vient exclusivement de PostgreSQL. Ne jamais remettre ici
+     l'ancienne liste statique : elle réapparaîtrait dès qu'une requête API
+     échoue et serait alors confondue avec le référentiel actif. */
+  vehicles: [],
+  /*
 1|945TU144|CRAFTER|DC|03/04/2010|DC|R.A.S|DCD|VOLKSWAGEN 2EH1B5|RAMZI SOLTANI
 2|5626TU155|PARTNER|DC|07/12/2011|DC|R.A.S|DC|PEUGEOT GBWJYB1P|AYOUB
 3|5629TU155|PARTNER|DC|07/12/2011|DC|R.A.S|DCD|PEUGEOT GBWJYB1P|RIDHA BEN KHLIFA
@@ -224,7 +228,7 @@ const seeds: Record<string, Row[]> = {
         conducteur,
         statut: immatriculation === "À COMPLÉTER" ? "À compléter" : conducteur.includes("EN PANNE") ? "En panne" : "Actif",
       };
-    }),
+    }), */
   transactions: [],
   requests: [],
   mileage: [],
@@ -444,7 +448,9 @@ export default function Home() {
       setData({
         ...seeds,
         ...savedData,
-        vehicles: Array.isArray(savedData.vehicles) ? savedData.vehicles : seeds.vehicles,
+        // Le référentiel véhicules est toujours relu depuis PostgreSQL.
+        // Une copie locale obsolète ne doit jamais réapparaître à l'écran.
+        vehicles: [],
       });
       setNotifications(x.notifications ?? []);
     }
@@ -499,7 +505,7 @@ export default function Home() {
           requests: (requestPayload.items ?? requestPayload).map(toRequestRow),
           transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => {const allocations=Array.isArray(row.allocations)?row.allocations as Record<string,unknown>[]:[];return { id:String(row.id),reviewId:String(row.reviewId??""),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),repartition:allocations.map(item=>`${String(item.beneficiary)} — ${String(item.vehicle)} — ${Number(item.amount).toFixed(3)} DT${item.mileage?` — ${Number(item.mileage)} km`:""}`).join(" | "),statut:row.reviewStatus==="PENDING"?(row.reviewIssue==="MISSING_BENEFICIARY"?"Bénéficiaire à identifier":"Véhicule inconnu à valider"):"Importée Total",fichier:String(row.file??"—") }}),
           anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.issueType)==="MISSING_BENEFICIARY"?"Bénéficiaire manquant":"Véhicule inconnu",carte:String(row.cardNumber),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),gravite:"Haute",statut:String(row.status)==="PENDING"?"À vérifier":String(row.status)==="ACCEPTED"?"Acceptée":"Refusée" })),
-          vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),companyId:String(row.companyId??""),numero:Number(row.fleetNumber??0),immatriculation:String(row.registration),type:String(row.vehicleType??row.model??"—"),societe:String(row.company??"—"),mise_en_circulation:row.firstRegistrationDate?new Date(String(row.firstRegistrationDate)).toLocaleDateString("fr-FR"):"À compléter",reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
+          vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>,index:number)=>({id:String(row.id),companyId:String(row.companyId??""),numero:Number(row.fleetNumber??0)||index+1,immatriculation:Boolean(row.registrationMissing)?"Sans matricule":String(row.registration),sansMatricule:Boolean(row.registrationMissing),type:String(row.vehicleType??row.model??"À compléter"),societe:String(row.company??"—"),mise_en_circulation:row.firstRegistrationDate?new Date(String(row.firstRegistrationDate)).toLocaleDateString("fr-FR"):"À compléter",reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??row.cardHolder??"—"),titulaire:String(row.cardHolder??row.driver??"—"),carte:String(row.cardNumber??"—"),garde:String(row.custody)==="IN_SAFE"?"En coffre · non distribuée":"Distribuée / active",observation:String(row.notes??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
           mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:String(row.week??"—"),vehicule:String(row.vehicle),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),attendu:Number(row.expectedMileage??0),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—")})),
           drivers:(driversPayload.items??driversPayload).map((row:Record<string,unknown>)=>({id:String(row.id),companyId:String(row.companyId??""),nomComplet:String(row.fullName??"—"),numeroClient:String(row.customerNumber??"—"),nomClient:String(row.customerName??"—"),numeroChauffeur:String(row.driverNumber??"—"),prenom:String(row.firstName??"—"),nom:String(row.lastName??row.fullName??"—"),codeChauffeur:String(row.driverCode??"—"),vehicules:Array.isArray(row.vehicles)?(row.vehicles as {registration:string}[]).map(item=>item.registration).join(", "):"—",statut:Boolean(row.active)?"Actif":"Inactif"})),
           fuelPrices:(fuelPricesPayload.items??fuelPricesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),societe:String(row.company),produit:String(row.product),ancienPrix:Number(row.oldPrice),nouveauPrix:Number(row.newPrice),variation:`${Number(row.variationPercent).toFixed(2)} %`,date:new Date(String(row.effectiveDate)).toLocaleDateString("fr-FR"),auteur:String(row.createdBy??"—")})),
@@ -1537,15 +1543,17 @@ export default function Home() {
     unread = userNotifications.filter((n) => !n.read).length;
   return (
     <div className={styles.app}>
-      <aside className={styles.sidebar}>
+      <aside className={styles.sidebar} aria-label="Navigation principale">
         <div className={styles.brand}>
           <Image src="/brand/delta-logo.png" alt="Delta Carburant" width={148} height={148} priority />
         </div>
-        <nav>
+        <nav aria-label="Modules de l’application">
           {nav.map((n) => (
             <button
               key={n[0]}
               className={view === n[0] ? styles.active : ""}
+              title={n[2]}
+              aria-current={view === n[0] ? "page" : undefined}
               onClick={() => {
                 setView(n[0]);
                 setSearch("");
@@ -1556,10 +1564,15 @@ export default function Home() {
           ))}
         </nav>
         <div className={styles.sideBottom}>
-          <button onClick={() => setView("settings")}>
+          <button
+            className={view === "settings" ? styles.active : ""}
+            aria-current={view === "settings" ? "page" : undefined}
+            title="Paramètres"
+            onClick={() => { setView("settings"); setSearch(""); }}
+          >
             ⚙ <span>Paramètres</span>
           </button>
-          <button onClick={logout}>
+          <button onClick={logout} title="Déconnexion">
             ↪ <span>Déconnexion</span>
           </button>
         </div>
@@ -2413,14 +2426,10 @@ function DataView({
         "numero",
         "immatriculation",
         "type",
-        "societe",
-        "mise_en_circulation",
         "titulaire",
-        "echeance_credit",
-        "affectation",
-        "reference",
-        "conducteur",
         "carte",
+        "garde",
+        "observation",
         "statut",
       ],
     },
@@ -2508,11 +2517,9 @@ function DataView({
       return rows;
     }, new Map<string, Row>()).values(),
   );
-  const fleetRegistrations = new Set(
-    data.vehicles.map((row) => String(row.immatriculation).toLowerCase()),
-  );
-  const vehicleRows: Row[] = [
-    ...data.vehicles.map((row) => {
+  // La vue Véhicules est le référentiel actif renvoyé par /vehicles. Une carte
+  // historique ne doit jamais recréer implicitement une ligne de véhicule.
+  const vehicleRows: Row[] = data.vehicles.map((row) => {
       const linkedCard = cards.find(
         (card) =>
           String(card.registration).toLowerCase() ===
@@ -2520,36 +2527,14 @@ function DataView({
       );
       return {
         ...row,
-        carte: linkedCard?.masked_card_number ?? "—",
+        carte: row.carte ?? linkedCard?.masked_card_number ?? "—",
         statut: linkedCard
           ? linkedCard.status === "ACTIVE"
             ? "Actif · carte liée"
             : `${row.statut} · ${status(linkedCard.status)}`
           : row.statut,
       };
-    }),
-    ...cards
-      .filter(
-        (card) =>
-          card.registration &&
-          !fleetRegistrations.has(String(card.registration).toLowerCase()),
-      )
-      .map((card, index) => ({
-        id: `vehicle-card-${card.id}`,
-        numero: `AUTO-${index + 1}`,
-        immatriculation: String(card.registration),
-        type: String(card.vehicle_model ?? "À compléter"),
-        societe: card.company_code,
-        mise_en_circulation: "À compléter",
-        titulaire: "À compléter",
-        echeance_credit: "À compléter",
-        affectation: card.company_code,
-        reference: String(card.vehicle_model ?? "À compléter"),
-        conducteur: String(card.beneficiary ?? "Non affecté"),
-        carte: card.masked_card_number,
-        statut: card.status === "ACTIVE" ? "Actif · carte liée" : status(card.status),
-      })),
-  ];
+    });
   const transactionRows: Row[] = data.transactions.map((row) => {
     const card = cards.find((item) => item.masked_card_number === String(row.carte));
     const allocated = parseNumeric(row.montantReparti);
@@ -2610,12 +2595,23 @@ function DataView({
           <b>{view === "vehicles" ? "Référentiel du parc automobile" : view==="drivers"?"Chauffeurs par société":"Module alimenté automatiquement"}</b>
           <span>{view === "vehicles"
             ? canManageFleet(user.role)
-              ? "Vous pouvez ajouter, corriger et archiver les véhicules. Les cartes liées restent synchronisées par matricule."
-              : "Consultation uniquement. Les véhicules sont gérés par Zin Finance et la Direction Générale."
+              ? "Une ligne = un véhicule de référence + sa carte. “Sans matricule” désigne un véhicule personnalisé. La garde et la répartition des transactions restent deux opérations séparées."
+              : "Référentiel officiel : véhicule, titulaire, carte et état de garde. Les chauffeurs restent gérés dans leur module dédié."
             : view==="drivers"?"Najib peut créer et gérer les chauffeurs DC afin de préparer les affectations aux véhicules."
             : "Les données proviennent des cartes confirmées et de leurs affectations. Aucun ajout manuel n’est nécessaire."}</span>
         </div>
       )}
+      {view === "vehicles" && (() => {
+        const safe = vehicleRows.filter(row => String(row.garde).startsWith("En coffre")).length;
+        const distributed = vehicleRows.length-safe;
+        const missing = vehicleRows.filter(row => Boolean(row.sansMatricule)).length;
+        return <div className={styles.transactionTracker}>
+          <article><span>01</span><div><small>Référentiel véhicules</small><strong>{vehicleRows.length}</strong></div></article>
+          <article><span>02</span><div><small>Cartes distribuées</small><strong>{distributed}</strong></div></article>
+          <article><span>03</span><div><small>Cartes en coffre</small><strong>{safe}</strong></div></article>
+          <article><span>04</span><div><small>Sans matricule</small><strong>{missing}</strong></div></article>
+        </div>;
+      })()}
       <Toolbar
         search={search}
         setSearch={setSearch}
@@ -2950,16 +2946,12 @@ function ModalForm({
   const selectableVehicles = vehicles.filter(
     (row) => String(row.immatriculation ?? "").trim() && String(row.immatriculation) !== "À COMPLÉTER",
   );
-  const [selectedRegistration, setSelectedRegistration] = useState("");
   const [requestType, setRequestType] = useState<"NEW_CARD" | "LIMIT_CHANGE" | "CARD_FUNDING" | "CUSTODY_CHANGE">("NEW_CARD");
   const [custodyTarget,setCustodyTarget]=useState<"SAFE"|"DISTRIBUTED">("DISTRIBUTED");
   const [requestCardId, setRequestCardId] = useState("");
   const requestCards = cards.filter((item) => requestType==="CUSTODY_CHANGE" ? (custodyTarget==="SAFE" ? item.status!=="SAFE" : item.status==="SAFE") : ["ACTIVE","TO_ASSIGN"].includes(item.status));
   const requestCard = requestCards.find((item) => item.id === requestCardId);
   const eligibleFundingSources=requestCards.filter(item=>item.status==="ACTIVE"&&item.id!==requestCardId&&Number(item.monthly_limit)>0&&Number(item.consumption_rate??0)>=60);
-  const selectedVehicle = selectableVehicles.find(
-    (row) => String(row.immatriculation) === selectedRegistration,
-  );
   const [action, setAction] = useState(
     card && canAssign(user.role) && card.status === "TO_ASSIGN"
       ? "assign"
@@ -3564,11 +3556,6 @@ function totalTransaction(
     fichier: filename,
     source: "TOTAL_EXCEL",
   };
-}
-function transactionKey(row: Row) {
-  return [row.date, row.carte, row.station, row.litres, row.montant]
-    .join("|")
-    .toLowerCase();
 }
 function parseNumeric(value: unknown) {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;

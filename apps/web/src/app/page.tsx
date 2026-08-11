@@ -1075,6 +1075,9 @@ export default function Home() {
         const normalized = sourceRows.map((source, index) =>
           totalTransaction(source, file.name, index),
         );
+        const invalidDateRow = normalized.findIndex((row) => !String(row.dateApi));
+        if (invalidDateRow >= 0)
+          return notify(`Date ou heure de transaction invalide à la ligne ${invalidDateRow + 2}. Import annulé pour empêcher tout doublon.`);
         const missingCardRow = normalized.findIndex(
           (row) => !String(row.carte).replace(/\D/g, ""),
         );
@@ -3833,7 +3836,14 @@ function totalTransaction(
   const rawDate=totalValue(source, ["datetransaction", "dateoperation", "date"]);
   const rawTime=totalValue(source,["heuredelatransaction","heuretransaction","heure"]);
   const excelDate=typeof rawDate==="number"?XLSX.SSF.parse_date_code(rawDate):null;
-  const parsedDate=rawDate instanceof Date?new Date(rawDate):excelDate?new Date(Date.UTC(excelDate.y,excelDate.m-1,excelDate.d,excelDate.H,excelDate.M,Math.floor(excelDate.S))):new Date(String(rawDate));
+  const frenchDate=String(rawDate??"").trim().match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})(?:[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  const parsedDate=rawDate instanceof Date
+    ? new Date(rawDate)
+    : excelDate
+      ? new Date(excelDate.y,excelDate.m-1,excelDate.d,excelDate.H,excelDate.M,Math.floor(excelDate.S))
+      : frenchDate
+        ? new Date(Number(frenchDate[3]),Number(frenchDate[2])-1,Number(frenchDate[1]),Number(frenchDate[4]??0),Number(frenchDate[5]??0),Number(frenchDate[6]??0))
+        : new Date(String(rawDate));
   const excelTime=typeof rawTime==="number"?XLSX.SSF.parse_date_code(rawTime):null;
   const timeMatch=String(rawTime??"").match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
   const timeParts=rawTime instanceof Date
@@ -3847,7 +3857,9 @@ function totalTransaction(
   return {
     id: `total-${filename}-${index}-${crypto.randomUUID()}`,
     date: displayDate(rawDate),
-    dateApi: Number.isNaN(parsedDate.getTime()) ? new Date().toISOString() : parsedDate.toISOString(),
+    // Une date invalide ne doit jamais être remplacée par « maintenant » :
+    // deux imports identiques deviendraient artificiellement deux mouvements.
+    dateApi: Number.isNaN(parsedDate.getTime()) ? "" : parsedDate.toISOString(),
     carte: digits || rawCard,
     station: String(
       totalValue(source, [

@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
-import { IsArray, IsIn, IsNumber, IsOptional, IsString, IsUUID, Min, MinLength, ValidateNested } from 'class-validator';
+import { IsArray, IsDateString, IsIn, IsNumber, IsOptional, IsString, IsUUID, Min, MinLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { AuthGuard } from '@nestjs/passport';
 import { Roles } from '../common/roles';
@@ -20,7 +20,7 @@ class AllocateTransactionDto {
   @IsOptional() @IsString() note?: string;
 }
 class ImportRowDto {
-  @IsString() date!: string;
+  @IsDateString() date!: string;
   @IsString() cardNumber!: string;
   @IsOptional() @IsString() vehicle?: string;
   @IsOptional() @IsString() beneficiary?: string;

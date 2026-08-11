@@ -43,6 +43,7 @@ const migrations = [
   '040_request_archiving.sql',
   '041_operational_controls.sql',
   '042_transaction_billing_control.sql',
+  '043_total_excellium_product_price.sql',
 ];
 
 async function main() {

@@ -933,3 +933,73 @@
   .content header{flex-direction:column}
   .headerActions{align-self:flex-end;margin-top:-50px}
 }
+
+/* Direction artistique 2026 — profondeur sobre, contraste métier et lecture rapide. */
+.app{
+  position:relative;
+  isolation:isolate;
+  background:
+    radial-gradient(circle at 7% 10%,rgba(18,184,166,.11),transparent 27rem),
+    radial-gradient(circle at 92% 5%,rgba(73,105,218,.10),transparent 30rem),
+    linear-gradient(145deg,#f2f7f5 0%,#f7f8fc 46%,#eef4f2 100%);
+}
+.app:before{
+  content:"";
+  position:fixed;
+  inset:76px 0 0;
+  z-index:-1;
+  pointer-events:none;
+  opacity:.34;
+  background-image:linear-gradient(#163d2c08 1px,transparent 1px),linear-gradient(90deg,#163d2c08 1px,transparent 1px);
+  background-size:40px 40px;
+  mask-image:linear-gradient(to bottom,#000,transparent 76%);
+}
+.content{font-size:15px}
+.content header{
+  padding:22px 24px;
+  border:1px solid rgba(214,226,220,.88);
+  border-radius:20px;
+  background:rgba(255,255,255,.72);
+  box-shadow:0 14px 45px rgba(20,58,43,.08);
+  backdrop-filter:blur(16px);
+}
+.workflowGuide,.panel,.fullPanel,.overviewPanel,.settings article,.metric{
+  background:rgba(255,255,255,.92);
+  backdrop-filter:blur(14px);
+}
+.metric{min-height:130px;align-items:center;padding:24px}
+.metric p{font-size:13px;font-weight:700;color:#60736a;letter-spacing:.1px}
+.metric strong{font-size:29px;line-height:1.15;letter-spacing:-.9px}
+.metric small{display:block;margin-top:7px;font-size:11px;line-height:1.4;color:#7b8b83}
+.metricIcon{flex:0 0 52px;width:52px;height:52px;font-size:15px}
+.metric_violet{
+  color:#fff;
+  border-color:transparent;
+  background:
+    radial-gradient(circle at 90% 10%,rgba(255,255,255,.22),transparent 9rem),
+    linear-gradient(135deg,#51258f 0%,#7040bc 50%,#2867c9 100%);
+  box-shadow:0 18px 42px rgba(78,43,145,.25);
+}
+.metric_violet:after{height:4px;background:linear-gradient(90deg,#8ef0df,#fff1a8,#ffb95c);opacity:1}
+.metric_violet .metricIcon{background:rgba(255,255,255,.17);color:#fff;border:1px solid rgba(255,255,255,.2)}
+.metric_violet p,.metric_violet small{color:rgba(255,255,255,.78)}
+.metric_violet strong{color:#fff;font-size:33px;text-shadow:0 2px 14px rgba(25,8,57,.25)}
+.alert{
+  position:relative;
+  margin-bottom:18px;
+  padding:14px 18px 14px 48px;
+  border:1px solid #e8d59a;
+  border-radius:14px;
+  background:linear-gradient(120deg,#fffaf0,#fffdf8);
+  color:#7b5510;
+  box-shadow:0 10px 28px rgba(114,75,10,.09);
+  font-size:13px;
+  font-weight:650;
+}
+.alert:before{content:"!";position:absolute;left:16px;top:50%;translate:0 -50%;display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:#e9a91c;color:#fff;font-weight:900}
+
+@media(max-width:720px){
+  .content header{padding:17px 16px;border-radius:16px}
+  .metric{min-height:138px;padding:18px}
+  .metric strong{font-size:24px}.metric_violet strong{font-size:28px}
+}

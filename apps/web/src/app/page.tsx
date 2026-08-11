@@ -463,8 +463,11 @@ export default function Home() {
   /* eslint-enable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!token || !user) return;
-    const headers = { Authorization: `Bearer ${token}` };
-    const refreshRemote = () => Promise.all([
+    let cancelled = false;
+    let activeAccessToken = token;
+    const loadRemote = (accessToken: string) => {
+      const headers = { Authorization: `Bearer ${accessToken}` };
+      return Promise.all([
       fetch(`${API}/cards`, { headers, cache: "no-store" }),
       fetch(`${API}/requests`, { headers, cache: "no-store" }),
       fetch(`${API}/notifications`, { headers, cache: "no-store" }),
@@ -478,8 +481,35 @@ export default function Home() {
       canManage(user.role)?fetch(`${API}/cards/responsibles`,{headers,cache:"no-store"}):Promise.resolve(null),
       fetch(`${API}/cards/companies`,{headers,cache:"no-store"}),
       user.role==="NAJIB_ASSIGNER"?fetch(`${API}/cards/safe-inventory`,{headers,cache:"no-store"}):Promise.resolve(null),
-    ])
+      ]);
+    };
+    const renewSession = async () => {
+      const refreshToken = sessionStorage.getItem("delta_refresh");
+      if (!refreshToken) throw new Error("session expirée");
+      const response = await fetch(`${API}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken }),
+      });
+      if (!response.ok) throw new Error("session expirée");
+      const payload = await response.json();
+      activeAccessToken = String(payload.accessToken);
+      sessionStorage.setItem("delta_access", activeAccessToken);
+      sessionStorage.setItem("delta_refresh", String(payload.refreshToken));
+      if (!cancelled) setToken(activeAccessToken);
+      return activeAccessToken;
+    };
+    const refreshRemote = async () => {
+      let responses = await loadRemote(activeAccessToken);
+      if (responses.some((response) => response?.status === 401)) {
+        const renewedToken = await renewSession();
+        responses = await loadRemote(renewedToken);
+      }
+      return responses;
+    };
+    refreshRemote()
       .then(async ([cardResponse, requestResponse, notificationResponse,transactionResponse,summaryResponse,reviewsResponse,vehiclesResponse,mileageResponse,driversResponse,fuelPricesResponse,responsiblesResponse,companiesResponse,safeResponse]) => {
+        if (cancelled) return;
         // Management reference data must remain usable even if an unrelated
         // dashboard endpoint is temporarily unavailable.
         if(responsiblesResponse?.ok)setResponsibles(await responsiblesResponse.json());
@@ -516,11 +546,22 @@ export default function Home() {
           fuelPrices:(fuelPricesPayload.items??fuelPricesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),societe:String(row.company),produit:String(row.product),ancienPrix:Number(row.oldPrice),nouveauPrix:Number(row.newPrice),variation:`${Number(row.variationPercent).toFixed(2)} %`,date:new Date(String(row.effectiveDate)).toLocaleDateString("fr-FR"),auteur:String(row.createdBy??"—"),source:String(row.source)==="OFFICIAL_TUNISIA"?"Ministère tunisien":"Saisie manuelle"})),
         }));
         setDatabaseSummary(summaryPayload);
+        setError("");
       })
-      .catch((reason) => setError(`Synchronisation API impossible${reason instanceof Error ? ` : ${reason.message}` : ""}. Vérifiez le déploiement API; aucune donnée locale ne sera enregistrée.`));
-    refreshRemote();
-    const timer = window.setInterval(refreshRemote, 10000);
-    return () => window.clearInterval(timer);
+      .catch((reason) => {
+        if (cancelled) return;
+        const sessionExpired = reason instanceof Error && reason.message === "session expirée";
+        if (sessionExpired) {
+          sessionStorage.clear();
+          setToken(null);
+          setUser(null);
+          setError("Votre session a expiré. Reconnectez-vous pour continuer en toute sécurité.");
+          return;
+        }
+        setError(`Synchronisation API momentanément indisponible${reason instanceof Error ? ` : ${reason.message}` : ""}. Nouvelle tentative automatique en cours.`);
+      });
+    const timer = window.setInterval(() => setRefreshTick((current) => current + 1), 30000);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, [token, user, refreshTick]);
   const persist = (
     nextCards = cards,
@@ -3424,7 +3465,7 @@ function Metric({
   note: string;
 }) {
   return (
-    <article className={styles.metric}>
+    <article className={`${styles.metric} ${styles[`metric_${color}`] ?? ""}`}>
       <div className={`${styles.metricIcon} ${styles[color]}`}>{icon}</div>
       <div>
         <p>{label}</p>

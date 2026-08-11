@@ -42,6 +42,7 @@ const migrations = [
   '039_correct_haithem_melliti_reference.sql',
   '040_request_archiving.sql',
   '041_operational_controls.sql',
+  '042_transaction_billing_control.sql',
 ];
 
 async function main() {

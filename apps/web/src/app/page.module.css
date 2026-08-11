@@ -1057,3 +1057,10 @@
 
 @media(max-width:720px){.consumptionCell{min-width:270px}.limitWarningBadge{width:100%;border-radius:10px}}
 @media(prefers-reduced-motion:reduce){.consumptionWarning,.limitWarningBadge i,.content>section,.content>div{animation:none!important}.consumptionTrack>span{transition:none}.smallBtn,.actions button,.sidebar nav button{transition:none}}
+
+.tableWrap td.billingOk,.tableWrap td.billingMismatch,.tableWrap td.billingUnpriced{font-weight:800}
+.tableWrap td.billingOk{color:#14724a;background:#edf9f2}
+.tableWrap td.billingMismatch{color:#b32935;background:#fff0ee;animation:billingAlert 2.4s ease-in-out infinite}
+.tableWrap td.billingUnpriced{color:#9a670d;background:#fff8e8}
+@keyframes billingAlert{0%,100%{box-shadow:inset 3px 0 #e54b50}50%{box-shadow:inset 6px 0 #c82432}}
+@media(prefers-reduced-motion:reduce){.tableWrap td.billingMismatch{animation:none}}

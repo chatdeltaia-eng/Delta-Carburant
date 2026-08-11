@@ -558,7 +558,7 @@ export default function Home() {
         setData((current) => ({
           ...current,
           requests: (requestPayload.items ?? requestPayload).map(toRequestRow),
-          transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => {const allocations=Array.isArray(row.allocations)?row.allocations as Record<string,unknown>[]:[];return { id:String(row.id),reviewId:String(row.reviewId??""),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),repartition:allocations.map(item=>`${String(item.beneficiary)} — ${String(item.vehicle)} — ${Number(item.amount).toFixed(3)} DT${item.mileage?` — ${Number(item.mileage)} km`:""}`).join(" | "),observation:row.observation?`${String(row.observation)} — ${String(row.observationBy??"—")}`:"—",statut:row.reviewStatus==="PENDING"?(row.reviewIssue==="MISSING_BENEFICIARY"?"Bénéficiaire à identifier":"Véhicule inconnu à valider"):"Importée Total",fichier:String(row.file??"—") }}),
+          transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => {const allocations=Array.isArray(row.allocations)?row.allocations as Record<string,unknown>[]:[];return { id:String(row.id),reviewId:String(row.reviewId??""),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),prixApplique:row.appliedPrice==null?"—":Number(row.appliedPrice),montantTheorique:row.expectedAmount==null?"—":Number(row.expectedAmount),ecartFacturation:row.billingDifference==null?"—":Number(row.billingDifference),controleFacturation:String(row.billingStatus??"PRICE_UNAVAILABLE"),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),repartition:allocations.map(item=>`${String(item.beneficiary)} — ${String(item.vehicle)} — ${Number(item.amount).toFixed(3)} DT${item.mileage?` — ${Number(item.mileage)} km`:""}`).join(" | "),observation:row.observation?`${String(row.observation)} — ${String(row.observationBy??"—")}`:"—",statut:row.reviewStatus==="PENDING"?(row.reviewIssue==="MISSING_BENEFICIARY"?"Bénéficiaire à identifier":"Véhicule inconnu à valider"):"Importée Total",fichier:String(row.file??"—") }}),
           anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.issueType)==="MISSING_BENEFICIARY"?"Bénéficiaire manquant":"Véhicule inconnu",carte:String(row.cardNumber),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),gravite:"Haute",statut:String(row.status)==="PENDING"?"À vérifier":String(row.status)==="ACCEPTED"?"Acceptée":"Refusée" })),
           vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>,index:number)=>({id:String(row.id),companyId:String(row.companyId??""),numero:Number(row.fleetNumber??0)||index+1,immatriculation:Boolean(row.registrationMissing)?"Sans matricule":String(row.registration),sansMatricule:Boolean(row.registrationMissing),type:String(row.vehicleType??row.model??"À compléter"),societe:String(row.company??"—"),mise_en_circulation:row.firstRegistrationDate?new Date(String(row.firstRegistrationDate)).toLocaleDateString("fr-FR"):"À compléter",reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??row.cardHolder??"—"),titulaire:String(row.cardHolder??row.driver??"—"),carte:String(row.cardNumber??"—"),garde:String(row.custody)==="IN_SAFE"?"En coffre · non distribuée":"Distribuée / active",observation:String(row.notes??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
           mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:String(row.week??"—"),vehicule:String(row.vehicle),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),attendu:Number(row.expectedMileage??0),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—")})),
@@ -1095,7 +1095,7 @@ export default function Home() {
         const result=await response.json();
         setRefreshTick(value=>value+1);
         setView("dashboard");
-        notify(`${result.imported} transaction(s) importée(s) avec produit et station · ${result.products ?? 0} produit(s) · ${result.stations ?? 0} station(s) · ${result.duplicates} doublon(s) · ${result.pendingReview} ligne(s) non rapprochée(s)`);
+        notify(`${result.imported} transaction(s) · ${result.verified ?? 0} facture(s) correcte(s) · ${result.mismatches ?? 0} écart(s) · ${result.unpriced ?? 0} tarif(s) manquant(s) · ${result.duplicates} doublon(s)`);
       } catch (error) {
         const raw=error instanceof Error?error.message:"";
         try { const parsed=JSON.parse(raw); return notify(String(parsed.message??raw)); }
@@ -2612,6 +2612,10 @@ function DataView({
         "nomProduit",
         "litres",
         "montant",
+        "prixApplique",
+        "montantTheorique",
+        "ecartFacturation",
+        "controleFacturation",
         "typeCarte",
         "reparti",
         "detailRepartition",
@@ -2709,7 +2713,13 @@ function DataView({
   const transactionRows: Row[] = data.transactions.map((row) => {
     const card = cards.find((item) => item.masked_card_number === String(row.carte));
     const allocated = parseNumeric(row.montantReparti);
-    return { ...row, nomStation: row.station || "—", nomProduit: row.produit || "—", typeCarte: card?.card_category === "OFF_PARK" ? "Hors parc" : "Personnalisée", reparti: `${allocated.toFixed(3)} DT`, detailRepartition: row.repartition || "Non répartie" };
+    const billingStatus=String(row.controleFacturation??"PRICE_UNAVAILABLE");
+    return { ...row, nomStation: row.station || "—", nomProduit: row.produit || "—",
+      prixApplique:typeof row.prixApplique==="number"?`${Number(row.prixApplique).toFixed(3)} TND/L`:"—",
+      montantTheorique:typeof row.montantTheorique==="number"?`${Number(row.montantTheorique).toFixed(3)} TND`:"—",
+      ecartFacturation:typeof row.ecartFacturation==="number"?`${Number(row.ecartFacturation).toFixed(3)} TND`:"—",
+      controleFacturation:billingStatus==="BILLING_OK"?"✓ Facture correcte":billingStatus==="BILLING_MISMATCH"?"⚠ Écart détecté":"Tarif à renseigner",
+      typeCarte: card?.card_category === "OFF_PARK" ? "Hors parc" : "Personnalisée", reparti: `${allocated.toFixed(3)} DT`, detailRepartition: row.repartition || "Non répartie" };
   });
   const sourceRows = view === "beneficiaries" ? beneficiaryRows : view === "vehicles" ? vehicleRows : view === "transactions" ? transactionRows : (data[view] ?? []);
   const companyChoices=[...new Set((view==="vehicles"?vehicleRows:cards.map(card=>({societe:card.company_code}))).map(row=>String(row.societe??"")).filter(Boolean))];
@@ -2809,7 +2819,7 @@ function DataView({
           <thead>
             <tr>
               {c.cols.map((x) => (
-                <th key={x}>{x === "nomStation" ? "NOM DE LA STATION / RÉGION" : x === "nomProduit" ? "NOM DE PRODUIT" : x.toUpperCase()}</th>
+                <th key={x}>{x === "nomStation" ? "NOM DE LA STATION / RÉGION" : x === "nomProduit" ? "NOM DE PRODUIT" : x === "prixApplique" ? "PRIX APPLIQUÉ / L" : x === "montantTheorique" ? "MONTANT THÉORIQUE" : x === "ecartFacturation" ? "ÉCART FACTURATION" : x === "controleFacturation" ? "CONTRÔLE FACTURE" : x.toUpperCase()}</th>
               ))}
               <th>ACTION</th>
             </tr>
@@ -2818,7 +2828,7 @@ function DataView({
             {rows.map((r) => (
               <tr key={r.id}>
                 {c.cols.map((k) => (
-                  <td key={k}>{r[k] ?? "—"}</td>
+                  <td key={k} className={k === "controleFacturation" ? (String(r[k]).startsWith("✓") ? styles.billingOk : String(r[k]).startsWith("⚠") ? styles.billingMismatch : styles.billingUnpriced) : undefined}>{r[k] ?? "—"}</td>
                 ))}
                 <td>
                   {view === "requests" &&

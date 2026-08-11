@@ -7,6 +7,15 @@ type ImportRow = { date:string; cardNumber:string; vehicle?:string; beneficiary?
 @Injectable()
 export class TransactionsService {
   constructor(private readonly db: DatabaseService) {}
+  private canonicalFuelProduct(value:string) {
+    const key=value.toUpperCase().replace(/[^A-Z0-9]/g,'');
+    if(['GASOIL','GO','DIESEL'].includes(key)) return 'GASOIL ORDINAIRE';
+    if(['GASOILSS','GASOIL50','GOSSO'].includes(key)) return 'GASOIL SANS SOUFRE (GASOIL 50)';
+    if(['SUPERSP','SSP','ESSENCE','ESSENCESANSPLOMB'].includes(key)) return 'ESSENCE SANS PLOMB';
+    if(['GASEXC','GASSEXC','GASOILEXC','GOSSEXC','GASOILPOWER'].includes(key)) return 'GASOIL PREMIUM / POWER';
+    if(['SSPEXC','SUPEREXC','ESSENCEEXC','ESSENCEPOWER'].includes(key)) return 'ESSENCE PREMIUM / POWER';
+    return value.trim().toUpperCase();
+  }
   private registrationKeys(value:string) {
     const normalized=value.toUpperCase().replace(/[^A-Z0-9]/g,'');
     const match=normalized.match(/^(\d+)TU(\d+)$/);
@@ -14,7 +23,9 @@ export class TransactionsService {
   }
   async list(actor: { sub: string; role: string }) {
     const transactions = await this.db.query(`SELECT ft.id,ft.transaction_date AS date,fc.masked_card_number AS card,
-    ft.station,ft.product,ft.quantity_liters AS liters,ft.amount_incl_tax AS amount,tib.source_filename AS file,
+    ft.station,ft.product,ft.quantity_liters AS liters,ft.amount_incl_tax AS amount,ft.unit_price AS "appliedPrice",
+    ft.expected_amount AS "expectedAmount",ft.billing_difference AS "billingDifference",ft.validation_status AS "billingStatus",
+    ft.billing_checked_at AS "billingCheckedAt",tib.source_filename AS file,
     b.display_name AS beneficiary,v.registration_display AS vehicle,ft.corrected_at AS "correctedAt",
     fc.card_category AS "cardCategory",fc.monthly_limit AS "monthlyLimit",
     obs.observation,obs.created_at AS "observationAt",obs.author AS "observationBy",
@@ -83,7 +94,7 @@ export class TransactionsService {
     if (!dto.rows.length) throw new BadRequestException('Le fichier ne contient aucune transaction');
     const batch = await client.query(`INSERT INTO transaction_import_batch(source_filename,source_sha256,imported_by,total_rows)
       VALUES($1,encode(digest($2 || clock_timestamp()::text,'sha256'),'hex'),$3,$4) RETURNING id`,[dto.filename,dto.filename,actor.sub,dto.rows.length]);
-    let imported=0,review=0,duplicates=0;
+    let imported=0,review=0,duplicates=0,verified=0,mismatches=0,unpriced=0;
     for (let index=0;index<dto.rows.length;index++) {
       const row=dto.rows[index], cardKey=row.cardNumber.replace(/\D/g,'');
       if (!cardKey) throw new BadRequestException(
@@ -172,6 +183,32 @@ export class TransactionsService {
         WHERE fuel_transaction.deleted_at IS NOT NULL RETURNING id`,[external,card.rows[0].id,beneficiary.rows[0].id,vehicle.rows[0]?.id??null,row.date,row.station??null,row.product??null,row.liters,row.amount,batch.rows[0].id,index+1,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]);
       if(inserted.rowCount){
         imported++;
+        const canonicalProduct=this.canonicalFuelProduct(row.product);
+        const applicablePrice=await client.query(`SELECT new_price,effective_date FROM fuel_price
+          WHERE company_id=$1 AND upper(product)=upper($2) AND effective_date<=$3::date
+          ORDER BY effective_date DESC,created_at DESC LIMIT 1`,[companyId,canonicalProduct,row.date]);
+        if(applicablePrice.rows[0]){
+          const unitPrice=Number(applicablePrice.rows[0].new_price);
+          const expected=Math.round(Number(row.liters)*unitPrice*1000)/1000;
+          const difference=Math.round((Number(row.amount)-expected)*1000)/1000;
+          const tolerance=Math.max(.05,expected*.005);
+          const billingStatus=Math.abs(difference)<=tolerance?'BILLING_OK':'BILLING_MISMATCH';
+          await client.query(`UPDATE fuel_transaction SET unit_price=$2,expected_amount=$3,billing_difference=$4,
+            validation_status=$5,billing_checked_at=now() WHERE id=$1`,[inserted.rows[0].id,unitPrice,expected,difference,billingStatus]);
+          if(billingStatus==='BILLING_OK') verified++;
+          else {
+            mismatches++;
+            const anomaly=await client.query(`INSERT INTO anomaly(fuel_transaction_id,fuel_card_id,vehicle_id,anomaly_type,severity,status,description,assigned_to)
+              VALUES($1,$2,$3,'FUEL_BILLING_MISMATCH','HIGH','OPEN',$4,$5) RETURNING id`,[inserted.rows[0].id,card.rows[0].id,vehicle.rows[0]?.id??null,
+              `Facturation Total incohérente : ${Number(row.liters).toFixed(3)} L × ${unitPrice.toFixed(3)} TND = ${expected.toFixed(3)} TND, montant facturé ${Number(row.amount).toFixed(3)} TND (écart ${difference.toFixed(3)} TND)`,actor.sub]);
+            await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
+              SELECT id,'Écart de facturation carburant',$1,'CRITICAL','anomalies','anomaly',$2 FROM app_user
+              WHERE active AND role IN('ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN')`,[`${row.product} · carte ${row.cardNumber} · écart ${difference.toFixed(3)} TND`,anomaly.rows[0].id]);
+          }
+        } else {
+          unpriced++;
+          await client.query(`UPDATE fuel_transaction SET validation_status='PRICE_UNAVAILABLE',billing_checked_at=now() WHERE id=$1`,[inserted.rows[0].id]);
+        }
         const monthUsage=await client.query(`SELECT coalesce(sum(amount_incl_tax),0)::float AS consumed FROM fuel_transaction
           WHERE fuel_card_id=$1 AND deleted_at IS NULL AND transaction_date>=date_trunc('month',$2::timestamptz)
           AND transaction_date<date_trunc('month',$2::timestamptz)+interval '1 month'`,[card.rows[0].id,row.date]);
@@ -201,7 +238,7 @@ export class TransactionsService {
     if(review) await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
       SELECT id,'Transactions inconnues détectées',$2,'WARNING','anomalies','transaction_import_batch',$3 FROM app_user
       WHERE active AND role::text=ANY($1::text[])`,[['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'],`${review} transaction(s) nécessitent la vérification d’une carte ou d’un véhicule`,batch.rows[0].id]);
-    return {batchId:batch.rows[0].id,imported,duplicates,pendingReview:review,
+    return {batchId:batch.rows[0].id,imported,duplicates,pendingReview:review,verified,mismatches,unpriced,
       products:new Set(dto.rows.map(row=>row.product.toUpperCase())).size,
       stations:new Set(dto.rows.map(row=>row.station.toUpperCase())).size};
   }); }

@@ -3,13 +3,14 @@ import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { createHash, randomUUID } from 'crypto';
 import { DatabaseService } from '../database/database.service';
+import { LoginAlertService } from './login-alert.service';
 
 type UserRow = { id: string; email: string; display_name: string; password_hash: string; role: string; company_id: string | null; active: boolean };
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly db: DatabaseService, private readonly jwt: JwtService) {}
-  async login(email: string, password: string) {
+  constructor(private readonly db: DatabaseService, private readonly jwt: JwtService, private readonly loginAlert: LoginAlertService) {}
+  async login(email: string, password: string, context: { ip: string; userAgent: string }) {
     const [user] = await this.db.query<UserRow>('SELECT * FROM app_user WHERE email = $1', [email]);
     if (!user?.active || !(await argon2.verify(user.password_hash, password))) throw new UnauthorizedException('Identifiants invalides');
     const payload = { sub: user.id, email: user.email, role: user.role, companyId: user.company_id };
@@ -18,6 +19,9 @@ export class AuthService {
     const tokenHash = createHash('sha256').update(refreshToken).digest('hex');
     await this.db.query('INSERT INTO refresh_token(user_id, token_hash, expires_at) VALUES ($1,$2,now()+interval \'30 days\')', [user.id, tokenHash]);
     await this.db.query('UPDATE app_user SET last_login_at=now(), failed_login_attempts=0 WHERE id=$1', [user.id]);
+    await this.db.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
+      VALUES($1,'LOGIN','user_session',$2,$3)`, [user.email, user.id, { role: user.role, ip: context.ip, userAgent: context.userAgent }]);
+    await this.loginAlert.send({ name: user.display_name, email: user.email, role: user.role, ip: context.ip, userAgent: context.userAgent, occurredAt: new Date() });
     return { accessToken, refreshToken, user: { id: user.id, email: user.email, name: user.display_name, role: user.role } };
   }
   async refresh(token: string) {

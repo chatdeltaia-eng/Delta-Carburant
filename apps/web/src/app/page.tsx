@@ -431,7 +431,9 @@ export default function Home() {
     [toast, setToast] = useState(""),
     [error, setError] = useState(""),
     [refreshTick,setRefreshTick]=useState(0),
-    [loading, setLoading] = useState(false);
+    [loading, setLoading] = useState(false),
+    [sessionSeconds, setSessionSeconds] = useState<number | null>(null),
+    [extendingSession, setExtendingSession] = useState(false);
   // Hydrate the browser-only demo session after the client mounts.
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -461,6 +463,24 @@ export default function Home() {
     }
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (!token || !user) return;
+    const expiresAt = (() => {
+      try { return Number(JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).exp) * 1000; }
+      catch { return 0; }
+    })();
+    if (!expiresAt) return;
+    const check = () => {
+      const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+      setSessionSeconds(remaining <= 120 ? remaining : null);
+      if (remaining === 0) void logout("expired");
+    };
+    check();
+    const timer = window.setInterval(check, 1000);
+    return () => window.clearInterval(timer);
+  // Le minuteur doit être recréé uniquement lorsque le JWT ou son utilisateur change.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, user]);
   useEffect(() => {
     if (!token || !user) return;
     let cancelled = false;
@@ -606,7 +626,23 @@ export default function Home() {
       setLoading(false);
     }
   }
-  async function logout() {
+  async function continueSession() {
+    const refreshToken = sessionStorage.getItem("delta_refresh");
+    if (!refreshToken) return logout("expired");
+    setExtendingSession(true);
+    try {
+      const response = await fetch(`${API}/auth/refresh`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({refreshToken}) });
+      if (!response.ok) throw new Error();
+      const payload = await response.json();
+      sessionStorage.setItem("delta_access", String(payload.accessToken));
+      sessionStorage.setItem("delta_refresh", String(payload.refreshToken));
+      setToken(String(payload.accessToken));
+      setSessionSeconds(null);
+      notify("Session prolongée en toute sécurité");
+    } catch { await logout("expired"); }
+    finally { setExtendingSession(false); }
+  }
+  async function logout(reason?: "expired") {
     const refreshToken = sessionStorage.getItem("delta_refresh");
     if (token !== "demo" && refreshToken)
       await fetch(`${API}/auth/logout`, {
@@ -617,6 +653,8 @@ export default function Home() {
     sessionStorage.clear();
     setToken(null);
     setUser(null);
+    setSessionSeconds(null);
+    if (reason === "expired") setError("Votre session sécurisée a expiré. Veuillez vous reconnecter.");
   }
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -1623,6 +1661,25 @@ export default function Home() {
     unread = userNotifications.filter((n) => !n.read).length;
   return (
     <div className={styles.app}>
+      {sessionSeconds !== null && (
+        <div className={styles.sessionOverlay} role="dialog" aria-modal="true" aria-labelledby="session-title">
+          <section className={styles.sessionDialog}>
+            <div className={styles.sessionShield}>✓</div>
+            <p className={styles.sessionEyebrow}>SÉCURITÉ DE LA SESSION</p>
+            <h2 id="session-title">Votre session arrive à expiration</h2>
+            <p>Pour protéger les données de Delta Carburant, vous serez automatiquement déconnecté si vous ne confirmez pas votre présence.</p>
+            <div className={styles.sessionCountdown} aria-live="polite">
+              <strong>{String(Math.floor(sessionSeconds / 60)).padStart(2,"0")}:{String(sessionSeconds % 60).padStart(2,"0")}</strong>
+              <span>temps restant</span>
+            </div>
+            <div className={styles.sessionIdentity}><span>{user.name.charAt(0)}</span><div><b>{user.name}</b><small>{roleLabel(user.role)} · session JWT sécurisée</small></div></div>
+            <div className={styles.sessionActions}>
+              <button type="button" onClick={() => logout()}>Quitter maintenant</button>
+              <button type="button" onClick={continueSession} disabled={extendingSession}>{extendingSession ? "Prolongation…" : "Continuer ma session"}</button>
+            </div>
+          </section>
+        </div>
+      )}
       <aside className={styles.sidebar} aria-label="Navigation principale">
         <div className={styles.brand}>
           <Image src="/brand/delta-logo.png" alt="Delta Carburant" width={148} height={148} priority />
@@ -1652,7 +1709,7 @@ export default function Home() {
           >
             ⚙ <span>Paramètres</span>
           </button>
-          <button onClick={logout} title="Déconnexion">
+          <button onClick={() => logout()} title="Déconnexion">
             ↪ <span>Déconnexion</span>
           </button>
         </div>

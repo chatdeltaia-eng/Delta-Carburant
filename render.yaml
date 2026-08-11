@@ -24,6 +24,12 @@ services:
         generateValue: true
       - key: WEB_ORIGIN
         sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: LOGIN_ALERT_FROM
+        sync: false
+      - key: LOGIN_ALERT_TO
+        value: Khaled.sfaxi@deltacuisine.com
 
   - type: web
     name: delta-carburant-web

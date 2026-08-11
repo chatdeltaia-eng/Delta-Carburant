@@ -1003,3 +1003,22 @@
   .metric{min-height:138px;padding:18px}
   .metric strong{font-size:24px}.metric_violet strong{font-size:28px}
 }
+
+.sessionOverlay{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:20px;background:rgba(4,20,14,.72);backdrop-filter:blur(14px) saturate(.8)}
+.sessionDialog{position:relative;width:min(500px,100%);padding:38px;border:1px solid rgba(255,255,255,.72);border-radius:28px;background:linear-gradient(145deg,rgba(255,255,255,.98),rgba(241,248,245,.97));box-shadow:0 35px 110px rgba(2,19,12,.52);text-align:center;overflow:hidden}
+.sessionDialog:before{content:"";position:absolute;inset:0 0 auto;height:5px;background:linear-gradient(90deg,#10b8a8,#2d74d8 52%,#7441bd)}
+.sessionShield{width:62px;height:62px;margin:0 auto 17px;display:grid;place-items:center;border-radius:20px;background:linear-gradient(145deg,#0d8f73,#145eac);color:white;font-size:27px;font-weight:900;box-shadow:0 13px 30px rgba(15,117,99,.24)}
+.sessionEyebrow{margin:0 0 8px!important;color:#16816b!important;font-size:11px!important;font-weight:850!important;letter-spacing:1.5px}
+.sessionDialog h2{margin:0;color:#0c2f21;font-size:25px;letter-spacing:-.5px}
+.sessionDialog>p:not(.sessionEyebrow){max-width:400px;margin:12px auto 21px;color:#61766c;font-size:13px;line-height:1.65}
+.sessionCountdown{display:flex;flex-direction:column;align-items:center;width:174px;margin:0 auto 22px;padding:16px;border:1px solid #d8e8e1;border-radius:17px;background:#fff;box-shadow:0 10px 28px rgba(20,63,46,.07)}
+.sessionCountdown strong{color:#174d38;font-size:32px;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:1px}
+.sessionCountdown span{margin-top:6px;color:#819188;font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.7px}
+.sessionIdentity{display:flex;align-items:center;gap:11px;padding:12px 14px;border:1px solid #dfebe6;border-radius:14px;background:rgba(255,255,255,.72);text-align:left}
+.sessionIdentity>span{display:grid;place-items:center;flex:0 0 40px;height:40px;border-radius:12px;background:#173d2f;color:white;font-weight:800}
+.sessionIdentity div{display:flex;min-width:0;flex-direction:column}.sessionIdentity b{color:#173d2f;font-size:13px}.sessionIdentity small{margin-top:3px;color:#788b82;font-size:10px}
+.sessionActions{display:grid;grid-template-columns:1fr 1.25fr;gap:10px;margin-top:22px}
+.sessionActions button{min-height:46px;padding:10px 14px;border:1px solid #cfddd7;border-radius:12px;background:white;color:#395248;font-weight:780;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease}
+.sessionActions button:last-child{border-color:transparent;background:linear-gradient(110deg,#0c9277,#256dcc);color:white;box-shadow:0 11px 25px rgba(31,102,133,.22)}
+.sessionActions button:hover:not(:disabled){transform:translateY(-2px)}.sessionActions button:disabled{opacity:.6;cursor:wait}
+@media(max-width:520px){.sessionDialog{padding:30px 20px;border-radius:22px}.sessionActions{grid-template-columns:1fr}.sessionDialog h2{font-size:22px}}

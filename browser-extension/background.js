@@ -21,23 +21,25 @@ function notifyApp(message) {
 }
 
 async function finishIfReady() {
-  if (!pending?.accessToken || !pending?.refreshToken || pending.finishing) return;
+  if (!pending?.accessToken || (!pending?.refreshToken && !pending?.totalAccessToken) || pending.finishing) return;
   pending.finishing = true;
   try {
     if (pending.totalTabId) {
       try { await chrome.debugger.detach({ tabId: pending.totalTabId }); } catch {}
     }
     notifyApp({ type: "STATUS", message: "Session détectée. Connexion et extraction en cours…" });
-    const response = await fetch(`${API}/total-mobility/reconnect`, {
+    if (pending.refreshToken) {
+      const response = await fetch(`${API}/total-mobility/reconnect`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${pending.accessToken}` },
+        body: JSON.stringify({ refreshToken: pending.refreshToken })
+      });
+      if (!response.ok) throw new Error((await response.json().catch(() => null))?.message || "Connexion Total refusée");
+    }
+    const sync = await fetch(`${API}/total-mobility/${pending.totalAccessToken ? "sync-session" : "sync"}`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${pending.accessToken}` },
-      body: JSON.stringify({ refreshToken: pending.refreshToken })
-    });
-    if (!response.ok) throw new Error((await response.json().catch(() => null))?.message || "Connexion Total refusée");
-    const sync = await fetch(`${API}/total-mobility/sync`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${pending.accessToken}` },
-      body: JSON.stringify({ fromDate: "2026-08-01" })
+      body: JSON.stringify({ fromDate: "2026-08-01", accessToken: pending.totalAccessToken })
     });
     if (!sync.ok) throw new Error("La connexion a réussi, mais l’extraction n’a pas pu démarrer.");
     const result = await sync.json();
@@ -60,7 +62,17 @@ async function watchTotalAuthentication(tabId) {
 }
 
 chrome.debugger.onEvent.addListener(async (source, method, params) => {
-  if (!pending || source.tabId !== pending.totalTabId || method !== "Network.responseReceived") return;
+  if (!pending || source.tabId !== pending.totalTabId) return;
+  if (method === "Network.requestWillBeSent" || method === "Network.requestWillBeSentExtraInfo") {
+    const headers = params?.request?.headers || params?.headers || {};
+    const authorization = Object.entries(headers).find(([name]) => name.toLowerCase() === "authorization")?.[1];
+    if (typeof authorization === "string" && authorization.replace(/^Bearer\s+/i, "").length > 100) {
+      pending.totalAccessToken = authorization.replace(/^Bearer\s+/i, "");
+      void finishIfReady();
+    }
+    return;
+  }
+  if (method !== "Network.responseReceived") return;
   const response = params?.response;
   if (!response || !/(?:oauth|connect|token|login)/i.test(response.url || "")) return;
   try {

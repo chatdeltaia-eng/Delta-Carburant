@@ -40,6 +40,10 @@ class SyncTotalMobilityDto {
 class ReconnectTotalMobilityDto {
   @IsString() @MinLength(20) refreshToken!: string;
 }
+class SyncTotalMobilitySessionDto {
+  @IsString() @MinLength(20) accessToken!: string;
+  @IsOptional() @IsDateString() fromDate?: string;
+}
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Roles('SUPER_ADMIN', 'DIRECTION_GENERAL')
@@ -75,5 +79,11 @@ export class TotalMobilityController {
     @Req() req: { user: { sub: string; email: string } },
   ) {
     return this.total.syncNow(req.user, dto.fromDate);
+  }
+  @Post('sync-session') syncSession(
+    @Body() dto: SyncTotalMobilitySessionDto,
+    @Req() req: { user: { sub: string; email: string } },
+  ) {
+    return this.total.syncWithAccessToken(req.user, dto.accessToken, dto.fromDate);
   }
 }

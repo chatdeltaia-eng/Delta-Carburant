@@ -215,7 +215,12 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         );
       }
   }
-  async syncNow(actor: Actor, requestedFromDate?: string) {
+  async syncWithAccessToken(actor: Actor, accessToken: string, requestedFromDate?: string) {
+    const token = accessToken.trim().replace(/^Bearer\s+/i, '');
+    if (token.length < 20) throw new BadRequestException('Session Total absente ou incomplète');
+    return this.syncNow(actor, requestedFromDate, token);
+  }
+  async syncNow(actor: Actor, requestedFromDate?: string, sessionAccessToken?: string) {
     const lock = await this.db.query<{ locked: boolean }>(
       `SELECT pg_try_advisory_lock(hashtext('delta-total-mobility-sync')) AS locked`,
     );
@@ -245,7 +250,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         `UPDATE total_mobility_connection SET last_sync_at=now(),updated_at=now() WHERE id=$1`,
         [config.id],
       );
-      const token = await this.refreshAccessToken(
+      const token = sessionAccessToken ?? await this.refreshAccessToken(
         this.decrypt(config.refresh_token_ciphertext),
       );
       // Chaque passage est un instantané complet. L'ancien état de la période
@@ -273,7 +278,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           result.duplicates,
           result.pendingReview,
           {
-            source: 'TOTAL_MOBILITY_API',
+            source: sessionAccessToken ? 'TOTAL_MOBILITY_BROWSER_SESSION' : 'TOTAL_MOBILITY_API',
             dateFrom: fromDate,
             dateTo: new Date().toISOString(),
           },

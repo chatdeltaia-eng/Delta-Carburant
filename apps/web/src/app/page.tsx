@@ -2093,7 +2093,8 @@ function Dashboard({
   const activeMonthlyLimit = activeCards.reduce((sum, card) => sum + Number(card.monthly_limit ?? 0), 0);
   const safeCardsLimit = safeCards.reduce((sum, card) => sum + Number(card.monthly_limit ?? 0), 0);
   const totalMonthlyLimit = activeMonthlyLimit + safeCardsLimit;
-  const activeMonthlyConsumed = activeCards.reduce((sum, card) => sum + Number(card.consumed_amount ?? 0), 0);
+  const officialMonthlyConsumed = Number(summary.officialMonthAmount ??
+    activeCards.reduce((sum, card) => sum + Number(card.consumed_amount ?? 0), 0));
   return (
     <>
       <section className={styles.metrics}>
@@ -2121,9 +2122,9 @@ function Dashboard({
         <Metric
           icon="⛽"
           color="violet"
-          label="Consommation mensuelle active"
-          value={`${activeMonthlyConsumed.toLocaleString("fr-FR")} TND`}
-          note={`Sur un plafond de ${activeMonthlyLimit.toLocaleString("fr-FR")} TND`}
+          label="Consommation mensuelle Total"
+          value={`${officialMonthlyConsumed.toLocaleString("fr-FR",{maximumFractionDigits:3})} TND`}
+          note={`Source Total · toutes les transactions du mois`}
         />
       </section>
       <section className={styles.overviewPanel}>

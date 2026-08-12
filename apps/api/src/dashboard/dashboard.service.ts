@@ -25,6 +25,21 @@ export class DashboardService {
         WHERE ft.deleted_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2)) AS liters,
       (SELECT coalesce(sum(ft.amount_incl_tax),0)::float FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
         WHERE ft.deleted_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2)) AS amount,
+      (SELECT coalesce(sum(source.amount),0)::float FROM (
+        SELECT ft.amount_incl_tax AS amount
+        FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
+        WHERE ft.deleted_at IS NULL
+          AND ft.transaction_date>=date_trunc('month',current_date)
+          AND ft.transaction_date<date_trunc('month',current_date)+interval '1 month'
+          AND ($1::boolean=false OR fc.responsible_user_id=$2)
+        UNION ALL
+        SELECT tr.amount_incl_tax AS amount
+        FROM transaction_review tr LEFT JOIN fuel_card fc ON fc.id=tr.fuel_card_id
+        WHERE tr.status='PENDING'
+          AND tr.transaction_date>=date_trunc('month',current_date)
+          AND tr.transaction_date<date_trunc('month',current_date)+interval '1 month'
+          AND ($1::boolean=false OR fc.responsible_user_id=$2)
+      ) source) AS "officialMonthAmount",
       (SELECT count(*)::int FROM card_request cr WHERE cr.status NOT IN ('CLOSED','REJECTED','CANCELLED')
         AND ($1::boolean=false OR cr.requested_by=$2)) AS "openRequests"`, [ownCards, actor.sub]);
     const statuses = await this.db.query(`SELECT status, count(*)::int AS count FROM fuel_card

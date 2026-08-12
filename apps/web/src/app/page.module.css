@@ -823,6 +823,45 @@
   .modal{max-height:94vh;overflow:auto}.formGrid{padding:20px}.headerActions{gap:6px}.user{padding-right:7px}
 }
 
+/* Executive cockpit 2026 — finition production et mouvement fonctionnel. */
+.appIcon{display:block;flex:none;transform-origin:center;transition:transform .28s cubic-bezier(.2,.8,.2,1),filter .28s ease}
+.sidebar{background:linear-gradient(110deg,#061c14 0%,#0a2d20 48%,#071d29 100%);box-shadow:0 14px 45px rgba(4,27,19,.28)}
+.brand{position:relative;overflow:visible}
+.brand:after{content:"";position:absolute;inset:17px 10px;border-radius:50%;z-index:-1;background:radial-gradient(circle,rgba(49,202,167,.24),transparent 68%);filter:blur(8px);animation:brandAura 4s ease-in-out infinite}
+.brand img{transition:transform .45s cubic-bezier(.2,.8,.2,1),filter .45s ease;animation:brandFloat 5s ease-in-out infinite}
+.brand:hover img{transform:scale(1.06) rotate(-1deg);filter:drop-shadow(0 14px 27px rgba(41,208,172,.28))}
+.sidebar nav button{position:relative;overflow:hidden;font-weight:650;letter-spacing:-.1px}
+.sidebar nav button:after{content:"";position:absolute;inset:0;translate:-130% 0;background:linear-gradient(105deg,transparent,rgba(255,255,255,.11),transparent);transition:translate .55s ease}
+.sidebar nav button:hover:after{translate:130% 0}.sidebar nav button:hover .appIcon{transform:translateY(-2px) scale(1.12);filter:drop-shadow(0 4px 7px rgba(105,231,199,.35))}
+.sidebar .active .appIcon{color:#65e5c2;filter:drop-shadow(0 3px 7px rgba(59,221,180,.42))}
+.content header{overflow:hidden!important}.content header:before{content:"";position:absolute;right:-90px;top:-130px;width:300px;height:300px;border-radius:50%;background:radial-gradient(circle,rgba(42,112,217,.10),transparent 68%);pointer-events:none}
+.eyebrow{display:flex;align-items:center;gap:8px}.liveDot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#16b886;box-shadow:0 0 0 0 rgba(22,184,134,.45);animation:livePulse 2s ease-out infinite}
+.bell{display:grid;place-items:center;color:#24483a}.bell:hover .appIcon{transform:rotate(12deg) scale(1.1)}.bell:active .appIcon{transform:rotate(-9deg) scale(.95)}
+.metric{isolation:isolate}.metric:before{content:"";position:absolute;right:-38px;top:-42px;width:120px;height:120px;border-radius:50%;background:currentColor;opacity:.035;transition:transform .45s ease}.metric:hover:before{transform:scale(1.35)}
+.metric:hover .metricIcon .appIcon{transform:translateY(-3px) rotate(-4deg) scale(1.1)}
+.metricIcon{box-shadow:inset 0 0 0 1px rgba(255,255,255,.55),0 9px 20px rgba(20,60,44,.09)}
+.metric strong{font-variant-numeric:tabular-nums}.metrics .metric:nth-child(1){animation-delay:.03s}.metrics .metric:nth-child(2){animation-delay:.08s}.metrics .metric:nth-child(3){animation-delay:.13s}.metrics .metric:nth-child(4){animation-delay:.18s}
+.monthlyGauge{background:radial-gradient(circle at 82% 8%,rgba(73,130,230,.13),transparent 29%),radial-gradient(circle at 7% 100%,rgba(18,184,166,.11),transparent 32%),rgba(255,255,255,.95);box-shadow:0 22px 60px rgba(12,52,37,.10)}
+.monthlyGauge:before{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 35%,rgba(255,255,255,.68) 49%,transparent 63%);translate:-110% 0;animation:gaugeSheen 6s ease-in-out infinite;pointer-events:none}
+.gaugeValue{stroke:url(#gaugeGradient);animation:gaugeReveal 1.1s cubic-bezier(.2,.8,.2,1) both}.gaugeRate strong{background:linear-gradient(110deg,#0e806c,#2869cf,#6c35ac);background-clip:text;color:transparent}
+.gaugeHeading>span{position:relative;padding-left:24px}.gaugeHeading>span:before{content:"";position:absolute;left:10px;top:50%;width:6px;height:6px;translate:0 -50%;border-radius:50%;background:#15b68b;animation:livePulse 2s infinite}
+.alert{overflow:hidden;animation:alertEntrance .42s cubic-bezier(.2,.8,.2,1) both}.alert:after{content:"";position:absolute;inset:0;border-radius:inherit;box-shadow:inset 0 0 0 1px rgba(232,169,28,.08);animation:alertGlow 2.6s ease-in-out infinite;pointer-events:none}
+.notificationMenu>button.unread{background:linear-gradient(110deg,#f0fbf7,#f4f7ff)}.notificationMenu>button.unread b:after{content:"Nouveau";margin-left:8px;padding:3px 6px;border-radius:99px;background:#dff7ee;color:#108064;font-size:7px;letter-spacing:.5px;text-transform:uppercase;vertical-align:1px}
+.actions button{border:1px solid transparent}.actions button:hover{border-color:#d9e8e1;background:linear-gradient(130deg,#f8fcfa,#f3f7fb)}.actions button:hover i .appIcon{transform:scale(1.12) rotate(-5deg)}
+.actions i{box-shadow:inset 0 0 0 1px #d9ebe2,0 7px 18px rgba(18,93,65,.09)}
+.toast{padding-left:48px;animation:toastArrival .4s cubic-bezier(.16,1,.3,1) both}.toast:before{content:"✓";position:absolute;left:16px;top:50%;translate:0 -50%;display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:#53d6aa;color:#073023;font-weight:900}
+.loginLogoMark:before{content:"";position:absolute;inset:7%;border-radius:50%;background:radial-gradient(circle,rgba(39,112,218,.3),rgba(15,187,167,.12) 42%,transparent 70%);filter:blur(9px);animation:brandAura 4s ease-in-out infinite}.loginLogoMark img{position:relative;animation:brandFloat 5s ease-in-out infinite}
+.login form>button{position:relative;overflow:hidden}.login form>button:after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 25%,rgba(255,255,255,.28) 50%,transparent 75%);translate:-130% 0}.login form>button:hover:after{translate:130% 0;transition:translate .7s ease}
+@keyframes brandFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+@keyframes brandAura{0%,100%{opacity:.45;transform:scale(.92)}50%{opacity:1;transform:scale(1.08)}}
+@keyframes livePulse{0%{box-shadow:0 0 0 0 rgba(22,184,134,.48)}70%{box-shadow:0 0 0 7px rgba(22,184,134,0)}100%{box-shadow:0 0 0 0 rgba(22,184,134,0)}}
+@keyframes gaugeSheen{0%,55%{translate:-110% 0}80%,100%{translate:110% 0}}
+@keyframes gaugeReveal{from{stroke-dasharray:0 100;opacity:.25}to{opacity:1}}
+@keyframes alertEntrance{from{opacity:0;transform:translateY(-7px) scale(.99)}to{opacity:1;transform:none}}
+@keyframes alertGlow{0%,100%{opacity:.3}50%{opacity:1}}
+@keyframes toastArrival{from{opacity:0;transform:translateX(25px) scale(.96)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.brand img,.brand:after,.liveDot,.monthlyGauge:before,.gaugeValue,.gaugeHeading>span:before,.alert,.alert:after,.loginLogoMark img,.loginLogoMark:before,.toast{animation:none!important}.appIcon{transition:none}}
+
 /* Notifications toujours lisibles au-dessus du cockpit. */
 .content header{position:relative;z-index:200;overflow:visible}
 .headerActions,.notificationBox{position:relative;z-index:210}

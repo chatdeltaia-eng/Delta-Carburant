@@ -99,6 +99,20 @@ type WorkflowStep = {
   description: string;
 };
 
+type IconName = "dashboard"|"reports"|"cards"|"users"|"vehicle"|"driver"|"transactions"|"requests"|"mileage"|"fuel"|"alert"|"settings"|"logout"|"bell"|"sum"|"safe"|"active"|"plus"|"check"|"transfer";
+function AppIcon({name,size=20}:{name:IconName;size?:number}) {
+  const paths:Record<IconName,React.ReactNode>={
+    dashboard:<><path d="M3 13h8V3H3v10Zm0 8h8v-5H3v5Zm11 0h7V11h-7v10Zm0-18v5h7V3h-7Z"/></>, reports:<><path d="M4 20V10m5 10V4m6 16v-7m5 7H2"/></>,
+    cards:<><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M3 9h18M7 15h4"/></>, users:<><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm13 10v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></>,
+    vehicle:<><path d="m5 17-2-1v-5l2-5h14l2 5v5l-2 1M5 17h14M6 11h12M7 20v1M17 20v1"/><circle cx="7" cy="15" r="1"/><circle cx="17" cy="15" r="1"/></>, driver:<><circle cx="12" cy="7" r="4"/><path d="M5.5 21a6.5 6.5 0 0 1 13 0M9 17l3 3 3-3"/></>,
+    transactions:<><path d="M7 7h13l-3-3m3 3-3 3M17 17H4l3 3m-3-3 3-3"/></>, requests:<><path d="M6 3h12v18H6zM9 8h6M9 12h6M9 16h4"/></>, mileage:<><circle cx="12" cy="13" r="8"/><path d="m12 13 4-4M7 3h10M12 5V3"/></>,
+    fuel:<><path d="M5 21V4a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v17M3 21h15M8 6h5v5H8zM16 7h2l3 3v7a2 2 0 0 1-4 0v-4"/></>, alert:<><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v5m0 3h.01"/></>,
+    settings:<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a7.8 7.8 0 0 0 .1-6l2-2.3-4.2-4.2-2.3 2a7.8 7.8 0 0 0-6 0l-2.3-2L2.5 6.7l2 2.3a7.8 7.8 0 0 0 0 6l-2 2.3 4.2 4.2 2.3-2a7.8 7.8 0 0 0 6 0l2.3 2 4.2-4.2-2.1-2.3Z"/></>, logout:<><path d="M10 17l5-5-5-5M15 12H3M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/></>,
+    bell:<><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></>, sum:<><path d="M18 4H6l6 8-6 8h12"/></>, safe:<><rect x="4" y="7" width="16" height="14" rx="2"/><path d="M8 7V5a4 4 0 0 1 8 0v2M12 12v4"/></>, active:<><path d="M20 6 9 17l-5-5"/></>, plus:<><path d="M12 5v14M5 12h14"/></>, check:<><path d="m5 12 4 4L19 6"/></>, transfer:<><path d="M7 7h13l-3-3m3 3-3 3M17 17H4l3 3m-3-3 3-3"/></>,
+  };
+  return <svg className={styles.appIcon} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
+}
+
 // Browser requests stay on the same origin. Next.js proxies this path to the
 // API service, so the API hostname does not need to be exposed to clients.
 const API = "/api/v1";
@@ -1692,18 +1706,13 @@ export default function Home() {
     ),
   };
   const summary = databaseSummary ? { ...localSummary, ...databaseSummary, liters:Number(databaseSummary.liters??0), amount:Number(databaseSummary.amount??0), pending: Number(databaseSummary.openRequests??0), opposed:Number(databaseSummary.blockedCards??0) } : localSummary;
-  const allNav: [View, string, string][] = [
-    ["dashboard", "⌂", "Vue d’ensemble"],
-    ["reports", "▥", "Rapports Direction"],
-    ["cards", "▣", "Cartes carburant"],
-    ["beneficiaries", "♙", "Bénéficiaires"],
-    ["vehicles", "◇", "Véhicules"],
-    ["drivers", "♙", "Chauffeurs"],
-    ["transactions", "↗", "Transactions"],
-    ["requests", "☷", "Demandes"],
-    ["mileage", "⌁", "Kilométrage"],
-    ["fuelPrices", "⛽", "Prix carburants"],
-    ["anomalies", "△", "Anomalies"],
+  const allNav: [View, IconName, string][] = [
+    ["dashboard", "dashboard", "Vue d’ensemble"], ["reports", "reports", "Rapports Direction"],
+    ["cards", "cards", "Cartes carburant"], ["beneficiaries", "users", "Bénéficiaires"],
+    ["vehicles", "vehicle", "Véhicules"], ["drivers", "driver", "Chauffeurs"],
+    ["transactions", "transactions", "Transactions"], ["requests", "requests", "Demandes"],
+    ["mileage", "mileage", "Kilométrage"], ["fuelPrices", "fuel", "Prix carburants"],
+    ["anomalies", "alert", "Anomalies"],
   ];
   const nav =
     user.role === "NAJIB_ASSIGNER"
@@ -1752,7 +1761,7 @@ export default function Home() {
                 setSearch("");
               }}
             >
-              {n[1]} <span>{n[2]}</span>
+              <AppIcon name={n[1]} /> <span>{n[2]}</span>
             </button>
           ))}
         </nav>
@@ -1763,10 +1772,10 @@ export default function Home() {
             title="Paramètres"
             onClick={() => { setView("settings"); setSearch(""); }}
           >
-            ⚙ <span>Paramètres</span>
+            <AppIcon name="settings" /> <span>Paramètres</span>
           </button>
           <button onClick={() => logout()} title="Déconnexion">
-            ↪ <span>Déconnexion</span>
+            <AppIcon name="logout" /> <span>Déconnexion</span>
           </button>
         </div>
       </aside>
@@ -1774,7 +1783,7 @@ export default function Home() {
         <header>
           <div>
             <p className={styles.eyebrow}>
-              ESPACE {roleLabel(user.role).toUpperCase()} · DONNÉES SYNCHRONISÉES
+              <i className={styles.liveDot} /> ESPACE {roleLabel(user.role).toUpperCase()} · DONNÉES SYNCHRONISÉES
             </p>
             <h1>{viewMeta[view][0]}</h1>
             <p>{viewMeta[view][1]}</p>
@@ -1785,7 +1794,7 @@ export default function Home() {
                 className={styles.bell}
                 onClick={() => setShowNotifications(!showNotifications)}
               >
-                🔔{unread > 0 && <span>{unread}</span>}
+                <AppIcon name="bell" size={19}/>{unread > 0 && <span>{unread}</span>}
               </button>
               {showNotifications && (
                 <div className={styles.notificationMenu}>
@@ -2099,28 +2108,28 @@ function Dashboard({
     <>
       <section className={styles.metrics}>
         <Metric
-          icon="Σ"
+          icon="sum"
           color="blue"
           label="Plafond mensuel total"
           value={`${totalMonthlyLimit.toLocaleString("fr-FR")} TND`}
           note={`${cards.length} cartes au total`}
         />
         <Metric
-          icon="▣"
+          icon="safe"
           color="orange"
           label="Plafond en coffre — Oui"
           value={`${safeCardsLimit.toLocaleString("fr-FR")} TND`}
           note={`${safeCards.length} carte(s) non distribuée(s)`}
         />
         <Metric
-          icon="▣"
+          icon="active"
           color="green"
           label="Plafond distribué — Coffre Non"
           value={`${activeMonthlyLimit.toLocaleString("fr-FR")} TND`}
           note={`${activeCards.length} carte(s) distribuée(s)`}
         />
         <Metric
-          icon="⛽"
+          icon="fuel"
           color="violet"
           label="Consommation mensuelle Total"
           value={`${officialMonthlyConsumed.toLocaleString("fr-FR",{maximumFractionDigits:3})} TND`}
@@ -2156,7 +2165,7 @@ function Dashboard({
           <div className={styles.actions}>
             {canCreate(user.role) && (
               <Action
-                icon="＋"
+                icon="plus"
                 title="Nouvelle carte"
                 sub="Créer une carte"
                 onClick={() => open("card")}
@@ -2164,7 +2173,7 @@ function Dashboard({
             )}
             {canConfirm(user.role) && (
               <Action
-                icon="✓"
+                icon="check"
                 title="Validations finance"
                 sub={`${summary.pending} carte(s) à confirmer`}
                 onClick={() => go("cards")}
@@ -2172,14 +2181,14 @@ function Dashboard({
             )}
             {canAssign(user.role) && (
               <Action
-                icon="⇄"
+                icon="transfer"
                 title="Affecter une carte"
                 sub="Choisir une carte disponible"
                 onClick={() => go("cards")}
               />
             )}
             <Action
-              icon="⛽"
+              icon="fuel"
               title="Suivre les consommations"
               sub="Transactions TotalEnergies"
               onClick={() => go("transactions")}
@@ -3743,6 +3752,7 @@ function MonthlyConsumptionGauge({consumed,creditLine}:{consumed:number;creditLi
     </div>
     <div className={styles.gaugeVisual}>
       <svg viewBox="0 0 240 132" role="img" aria-hidden="true">
+        <defs><linearGradient id="gaugeGradient" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#11b6a3"/><stop offset=".58" stopColor="#286bd3"/><stop offset="1" stopColor="#7439b2"/></linearGradient></defs>
         <path className={styles.gaugeTrack} pathLength="100" d="M 24 116 A 96 96 0 0 1 216 116" />
         <path className={styles.gaugeValue} pathLength="100" strokeDasharray={`${rate} 100`} d="M 24 116 A 96 96 0 0 1 216 116" />
       </svg>
@@ -3764,7 +3774,7 @@ function Metric({
   value,
   note,
 }: {
-  icon: string;
+  icon: IconName;
   color: string;
   label: string;
   value: string | number;
@@ -3772,7 +3782,7 @@ function Metric({
 }) {
   return (
     <article className={`${styles.metric} ${styles[`metric_${color}`] ?? ""}`}>
-      <div className={`${styles.metricIcon} ${styles[color]}`}>{icon}</div>
+      <div className={`${styles.metricIcon} ${styles[color]}`}><AppIcon name={icon} size={23}/></div>
       <div>
         <p>{label}</p>
         <strong>{value}</strong>
@@ -3787,14 +3797,14 @@ function Action({
   sub,
   onClick,
 }: {
-  icon: string;
+  icon: IconName;
   title: string;
   sub: string;
   onClick: () => void;
 }) {
   return (
     <button onClick={onClick}>
-      <i>{icon}</i>
+      <i><AppIcon name={icon} size={20}/></i>
       <span>
         <b>{title}</b>
         <small>{sub}</small>

@@ -2285,16 +2285,34 @@ function DirectionReports({
     }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 7);
+  const totalAmount = filteredTx.reduce(
+    (sum, row) => sum + parseNumeric(row.montant),
+    0,
+  );
+  const activeFilters = Number(company !== "Toutes") + Number(beneficiary !== "Tous");
   return (
     <section className={styles.reportShell}>
       <div className={styles.reportTitle}>
-        <span>Δ DeltaCarburant</span>
-        <h2>
-          {scenario === "migration"
-            ? "SCÉNARIO 1 — PILOTAGE MIGRATION CARTES CARBURANT"
-            : "SCÉNARIO 2 — SUIVI DES NOUVELLES CARTES"}
-        </h2>
-        <b>Direction Générale</b>
+        <div className={styles.reportBrand}>
+          <span>Δ</span>
+          <div><b>DeltaCarburant</b><small>Centre de pilotage exécutif</small></div>
+        </div>
+        <div className={styles.reportHeading}>
+          <small>{scenario === "migration" ? "SCÉNARIO 01" : "SCÉNARIO 02"}</small>
+          <h2>
+            {scenario === "migration"
+              ? "Pilotage migration des cartes"
+              : "Suivi des nouvelles cartes"}
+          </h2>
+        </div>
+        <div className={styles.reportLive}><i /> Données Total synchronisées</div>
+      </div>
+      <div className={styles.reportContext}>
+        <span className={styles.contextPrimary}>Direction Générale</span>
+        <span>Période · Mois en cours</span>
+        <span>{filteredTx.length} transactions analysées</span>
+        <span>{filteredCards.length} cartes dans le périmètre</span>
+        <strong>{totalAmount.toLocaleString("fr-FR", { maximumFractionDigits: 3 })} TND analysés</strong>
       </div>
       <div className={styles.reportTabs}>
         <button
@@ -2313,10 +2331,10 @@ function DirectionReports({
       <div className={styles.reportLayout}>
         <div>
           {analytics&&<div className={styles.executiveStrip}>
-            <ReportKpi label="DÉPENSE DU MOIS" value={`${Number(analytics.monthAmount??0).toLocaleString("fr-FR")} TND`}/>
-            <ReportKpi label="VOLUME DU MOIS" value={`${Number(analytics.monthLiters??0).toLocaleString("fr-FR")} L`}/>
-            <ReportKpi label="ÉCARTS FACTURATION" value={Number(analytics.billingMismatches??0)}/>
-            <ReportKpi label="ANOMALIES OUVERTES" value={Number(analytics.openAnomalies??0)}/>
+            <ReportKpi label="DÉPENSE DU MOIS" value={`${Number(analytics.monthAmount??0).toLocaleString("fr-FR")} TND`} meta="Montant officiel Total" tone="money"/>
+            <ReportKpi label="VOLUME DU MOIS" value={`${Number(analytics.monthLiters??0).toLocaleString("fr-FR")} L`} meta="Carburant consommé" tone="volume"/>
+            <ReportKpi label="ÉCARTS FACTURATION" value={Number(analytics.billingMismatches??0)} meta="Contrôle de conformité" tone={Number(analytics.billingMismatches??0) ? "danger" : "good"}/>
+            <ReportKpi label="ANOMALIES OUVERTES" value={Number(analytics.openAnomalies??0)} meta="Actions à traiter" tone={Number(analytics.openAnomalies??0) ? "warning" : "good"}/>
           </div>}
           <div className={styles.reportKpis}>
             {scenario === "migration" ? (
@@ -2369,7 +2387,7 @@ function DirectionReports({
           </section>}
         </div>
         <aside className={styles.reportFilters}>
-          <h3>⚱ Filtres</h3>
+          <div className={styles.filterHeading}><span>⌁</span><div><h3>Filtres d’analyse</h3><small>{activeFilters ? `${activeFilters} filtre(s) actif(s)` : "Périmètre global"}</small></div></div>
           <label>
             Société
             <select
@@ -2428,14 +2446,22 @@ function DirectionReports({
 function ReportKpi({
   label,
   value,
+  meta,
+  tone = "default",
 }: {
   label: string;
   value: string | number;
+  meta?: string;
+  tone?: "default" | "money" | "volume" | "good" | "warning" | "danger";
 }) {
   return (
-    <article>
+    <article className={`${styles.reportKpiCard} ${styles[`reportKpi_${tone}`]}`}>
+      <span className={styles.reportKpiIcon} aria-hidden="true">
+        {tone === "money" ? "↗" : tone === "volume" ? "◒" : tone === "good" ? "✓" : tone === "danger" ? "!" : tone === "warning" ? "⚠" : "◆"}
+      </span>
       <small>{label}</small>
       <strong>{value}</strong>
+      {meta && <em>{meta}</em>}
     </article>
   );
 }
@@ -2559,6 +2585,15 @@ function NewCardsReport({
   transactions: Row[];
   bars: { name: string; value: number }[];
 }) {
+  const daily = [...transactions.reduce((map, transaction) => {
+    const rawDate = String(transaction.date ?? "");
+    const key = rawDate.slice(0, 10) || "—";
+    map.set(key, (map.get(key) ?? 0) + parseNumeric(transaction.litres));
+    return map;
+  }, new Map<string, number>()).entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-14);
+  const dailyMax = Math.max(1, ...daily.map(([, value]) => value));
   return (
     <div className={styles.reportGrid}>
       <article>
@@ -2568,14 +2603,13 @@ function NewCardsReport({
       <article>
         <h3>CONSOMMATION QUOTIDIENNE</h3>
         <div className={styles.dailyChart}>
-          {transactions.slice(0, 18).map((t, i) => (
-            <i
-              key={t.id}
-              style={{
-                height: `${25 + ((parseNumeric(t.litres) + i * 9) % 100)}px`,
-              }}
-            />
-          ))}
+          {daily.length ? daily.map(([date, value]) => (
+            <div className={styles.dailyBar} key={date} title={`${date} · ${value.toFixed(2)} L`}>
+              <strong>{value.toFixed(0)} L</strong>
+              <i style={{ height: `${Math.max(8, (value / dailyMax) * 100)}%` }} />
+              <span>{date === "—" ? date : new Date(`${date}T12:00:00`).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" })}</span>
+            </div>
+          )) : <p className={styles.chartEmpty}>Aucune consommation sur la période</p>}
         </div>
       </article>
       <article>

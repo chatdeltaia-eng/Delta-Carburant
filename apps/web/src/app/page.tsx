@@ -3543,48 +3543,73 @@ function Login({
   error: string;
 }) {
   const [email, setEmail] = useState("");
+  const [showPassword,setShowPassword]=useState(false);
+  useEffect(()=>{
+    if(window.location.search) window.history.replaceState({},"",window.location.pathname);
+  },[]);
   return (
     <main className={styles.login}>
-      <section>
-        <div className={styles.loginBrand}>
-          <Image src="/brand/delta-logo.png" alt="Delta Carburant" width={184} height={184} priority />
+      <section className={styles.loginAccessPanel}>
+        <div className={styles.loginAccessInner}>
+        <div className={styles.loginBrandRow}>
+          <div className={styles.loginBrand}>
+            <Image src="/brand/delta-logo.png" alt="Delta Carburant" width={184} height={184} priority />
+          </div>
+          <span className={styles.loginSecureBadge}><i/> Accès sécurisé</span>
         </div>
-        <h1>Bienvenue</h1>
-        <p>Connectez-vous avec vos identifiants professionnels.</p>
+        <div className={styles.loginHeading}>
+          <small>PLATEFORME DE PILOTAGE DU PARC</small>
+          <h1>Bienvenue sur votre espace</h1>
+          <p>Connectez-vous pour accéder au suivi consolidé des cartes, véhicules et consommations.</p>
+        </div>
         <form onSubmit={onSubmit}>
           <label>
-            Adresse e-mail
-            <input
+            <span>Adresse e-mail professionnelle</span>
+            <div className={styles.loginInputWrap}><AppIcon name="users" size={18}/><input
               name="email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              placeholder="nom@entreprise.com"
+              autoComplete="username"
               required
-            />
+            /></div>
           </label>
           <label>
-            Mot de passe
-            <input
+            <span>Mot de passe</span>
+            <div className={styles.loginInputWrap}><AppIcon name="safe" size={18}/><input
               name="password"
-              type="password"
+              type={showPassword?"text":"password"}
               autoComplete="current-password"
+              placeholder="Votre mot de passe"
               required
-            />
+            /><button type="button" className={styles.passwordToggle} onClick={()=>setShowPassword(value=>!value)} aria-label={showPassword?"Masquer le mot de passe":"Afficher le mot de passe"}>{showPassword?"Masquer":"Afficher"}</button></div>
           </label>
           {error && <div className={styles.loginError}>{error}</div>}
           <button disabled={loading}>
-            {loading ? "Connexion…" : "Se connecter"}
+            <span>{loading ? "Connexion sécurisée…" : "Accéder à la plateforme"}</span><AppIcon name="transfer" size={18}/>
           </button>
         </form>
+        <div className={styles.loginTrust}><span><AppIcon name="check" size={14}/> Connexion chiffrée</span><span><AppIcon name="check" size={14}/> Accès par rôle</span><span><AppIcon name="check" size={14}/> Données centralisées</span></div>
+        <small className={styles.loginFoot}>DeltaCarburant · Environnement professionnel sécurisé</small>
+        </div>
       </section>
-      <aside>
-        <div className={styles.loginLogoMark}><Image src="/brand/delta-logo.png" alt="Delta Carburant" width={230} height={230} priority /></div>
-        <h2>
-          Un workflow clair.
-          <br />
-          Une responsabilité par rôle.
-        </h2>
-        <p>Gérez les cartes carburant et suivez les opérations en toute sécurité.</p>
+      <aside className={styles.loginShowcase}>
+        <div className={styles.loginShowcaseGlow}/>
+        <div className={styles.loginShowcaseTop}><span><i/> DONNÉES OPÉRATIONNELLES SYNCHRONISÉES</span><b>DeltaCarburant 2026</b></div>
+        <div className={styles.loginShowcaseContent}>
+          <div className={styles.loginLogoMark}><Image src="/brand/delta-logo.png" alt="Delta Carburant" width={230} height={230} priority /></div>
+          <span className={styles.loginEyebrow}>COCKPIT DE GESTION CARBURANT</span>
+          <h2>Une vision complète.<br/><em>Des décisions plus rapides.</em></h2>
+          <p>Pilotez les cartes, les plafonds, les véhicules, les transactions et les anomalies depuis une interface unique.</p>
+          <div className={styles.loginFeatureGrid}>
+            <article><span><AppIcon name="cards" size={19}/></span><div><b>Cartes & plafonds</b><small>Suivi instantané de l’utilisation</small></div></article>
+            <article><span><AppIcon name="vehicle" size={19}/></span><div><b>Parc automobile</b><small>Véhicules et affectations</small></div></article>
+            <article><span><AppIcon name="transactions" size={19}/></span><div><b>Transactions Total</b><small>Extraction et contrôle automatisés</small></div></article>
+            <article><span><AppIcon name="alert" size={19}/></span><div><b>Alertes intelligentes</b><small>Risques et anomalies centralisés</small></div></article>
+          </div>
+        </div>
+        <div className={styles.loginShowcaseFoot}><span>Direction Générale</span><span>Zin Finance</span><span>Gestionnaire Parc</span></div>
       </aside>
     </main>
   );

@@ -5,7 +5,13 @@ import {
   Logger,
   OnModuleDestroy,
 } from '@nestjs/common';
-import { chromium as playwright, type Browser, type Page } from 'playwright';
+import {
+  chromium as playwright,
+  type Browser,
+  type Frame,
+  type Locator,
+  type Page,
+} from 'playwright';
 import { TotalMobilityService } from './total-mobility.service';
 
 type Actor = { sub: string; email: string };
@@ -74,14 +80,14 @@ export class TotalLoginAgentService implements OnModuleDestroy {
       throw new BadRequestException(
         'Le code doit contenir entre 4 et 8 chiffres',
       );
-    const inputs = this.page.locator(
-      'input[autocomplete="one-time-code"], input[name*="otp" i], input[id*="otp" i], input[name*="code" i], input[id*="code" i]',
+    const inputs = await this.findVisible(
+      this.page,
+      this.otpSelectors(),
+      2_000,
     );
+    if (!inputs)
+      throw new BadRequestException('Le champ du code Total n’a pas été trouvé');
     const count = await inputs.count();
-    if (!count)
-      throw new BadRequestException(
-        'Le champ du code Total n’a pas été trouvé',
-      );
     if (count === 1) await inputs.first().fill(code);
     else {
       for (let index = 0; index < Math.min(count, code.length); index++)
@@ -104,13 +110,22 @@ export class TotalLoginAgentService implements OnModuleDestroy {
       waitUntil: 'domcontentloaded',
       timeout: 60_000,
     });
+    // Le portail est une SPA : l'écran Gigya peut apparaître après le
+    // chargement initial, dans la page ou dans une iframe.
+    await this.clickLoginEntryIfPresent(this.page);
     await this.fillFirst(
       this.page,
       [
         'input[type="email"]',
         'input[name="username"]',
         'input[name="loginID"]',
+        'input[name*="email" i]',
+        'input[id*="email" i]',
+        'input[id*="login" i]',
         'input[autocomplete="username"]',
+        'input[placeholder*="email" i]',
+        'input[placeholder*="e-mail" i]',
+        'input[placeholder*="identifiant" i]',
       ],
       username,
     );
@@ -162,16 +177,8 @@ export class TotalLoginAgentService implements OnModuleDestroy {
         throw new Error(
           'Total demande un CAPTCHA. La connexion automatique ne peut pas le valider.',
         );
-      const otp = page.locator(
-        'input[autocomplete="one-time-code"], input[name*="otp" i], input[id*="otp" i], input[name*="code" i], input[id*="code" i]',
-      );
-      if (
-        (await otp.count()) > 0 &&
-        (await otp
-          .first()
-          .isVisible()
-          .catch(() => false))
-      ) {
+      const otp = await this.findVisible(page, this.otpSelectors(), 100);
+      if (otp) {
         this.setStatus(
           'CODE_REQUIRED',
           'Total demande un code de vérification',
@@ -219,32 +226,107 @@ export class TotalLoginAgentService implements OnModuleDestroy {
   }
 
   private async fillFirst(page: Page, selectors: string[], value: string) {
-    if (await this.tryFillFirst(page, selectors, value)) return;
+    if (await this.tryFillFirst(page, selectors, value, 30_000)) return;
     throw new Error(
       'Le formulaire de connexion Total a changé (champ introuvable)',
     );
   }
 
-  private async tryFillFirst(page: Page, selectors: string[], value: string) {
-    for (const selector of selectors) {
-      const input = page.locator(selector).first();
-      if (await input.isVisible().catch(() => false)) {
-        await input.fill(value);
-        return true;
-      }
+  private async tryFillFirst(
+    page: Page,
+    selectors: string[],
+    value: string,
+    timeout = 8_000,
+  ) {
+    const input = await this.findVisible(page, selectors, timeout);
+    if (input) {
+      await input.fill(value);
+      return true;
     }
     return false;
   }
 
   private async clickSubmit(page: Page) {
-    const button = page
-      .locator(
-        'button[type="submit"], input[type="submit"], button:has-text("Connexion"), button:has-text("Se connecter"), button:has-text("Continuer"), button:has-text("Valider"), button:has-text("Vérifier"), button:has-text("Verify")',
-      )
-      .first();
-    if (!(await button.isVisible().catch(() => false)))
+    const button = await this.findVisible(
+      page,
+      [
+        'button[type="submit"]',
+        'input[type="submit"]',
+        'button:has-text("Connexion")',
+        'button:has-text("Se connecter")',
+        'button:has-text("Continuer")',
+        'button:has-text("Suivant")',
+        'button:has-text("Valider")',
+        'button:has-text("Vérifier")',
+        'button:has-text("Verify")',
+      ],
+      10_000,
+    );
+    if (!button)
       throw new Error('Le bouton de connexion Total est introuvable');
     await button.click();
+  }
+
+  private async clickLoginEntryIfPresent(page: Page) {
+    const username = await this.findVisible(
+      page,
+      ['input[type="email"]', 'input[name="loginID"]', 'input[autocomplete="username"]'],
+      3_000,
+    );
+    if (username) return;
+    const entry = await this.findVisible(
+      page,
+      [
+        'a:has-text("Connexion")',
+        'button:has-text("Connexion")',
+        'a:has-text("Se connecter")',
+        'button:has-text("Se connecter")',
+        '[data-testid*="login" i]',
+      ],
+      5_000,
+    );
+    if (entry) {
+      await entry.click();
+      await page.waitForTimeout(500);
+    }
+  }
+
+  private async findVisible(
+    page: Page,
+    selectors: string[],
+    timeout: number,
+  ): Promise<Locator | undefined> {
+    const deadline = Date.now() + timeout;
+    do {
+      for (const frame of page.frames()) {
+        const found = await this.findVisibleInFrame(frame, selectors);
+        if (found) return found;
+      }
+      await page.waitForTimeout(200);
+    } while (Date.now() < deadline);
+    return undefined;
+  }
+
+  private async findVisibleInFrame(frame: Frame, selectors: string[]) {
+    for (const selector of selectors) {
+      const candidates = frame.locator(selector);
+      const count = Math.min(await candidates.count().catch(() => 0), 10);
+      for (let index = 0; index < count; index++) {
+        const candidate = candidates.nth(index);
+        if (await candidate.isVisible().catch(() => false)) return candidate;
+      }
+    }
+    return undefined;
+  }
+
+  private otpSelectors() {
+    return [
+      'input[autocomplete="one-time-code"]',
+      'input[name*="otp" i]',
+      'input[id*="otp" i]',
+      'input[name*="code" i]',
+      'input[id*="code" i]',
+    ];
   }
 
   private fail(error: unknown) {

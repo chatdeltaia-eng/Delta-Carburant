@@ -121,7 +121,7 @@ export class TotalLoginAgentService implements OnModuleDestroy {
         'input[name="loginID"]',
         'input[name*="email" i]',
         'input[id*="email" i]',
-        'input[id*="login" i]',
+        'input[id*="login" i]:not([type="submit"]):not([type="button"]):not([type="hidden"])',
         'input[autocomplete="username"]',
         'input[placeholder*="email" i]',
         'input[placeholder*="e-mail" i]',
@@ -240,6 +240,8 @@ export class TotalLoginAgentService implements OnModuleDestroy {
   ) {
     const input = await this.findVisible(page, selectors, timeout);
     if (input) {
+      const editable = await input.isEditable().catch(() => false);
+      if (!editable) return false;
       await input.fill(value);
       return true;
     }

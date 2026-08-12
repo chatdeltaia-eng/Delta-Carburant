@@ -53,7 +53,8 @@ export class DashboardService {
       coalesce(sum(ft.quantity_liters) FILTER (WHERE fc.old_card_id IS NOT NULL),0)::float AS "newCardLiters",
       count(DISTINCT fc.id) FILTER (WHERE fc.old_card_id IS NOT NULL)::int AS "migratedCards",
       count(DISTINCT fc.id) FILTER (WHERE fc.status='ACTIVE')::int AS "activeCards",
-      coalesce(sum(fc.monthly_limit) FILTER (WHERE fc.status='ACTIVE'),0)::float AS "totalLimit"
+      (SELECT coalesce(sum(monthly_limit),0)::float FROM fuel_card
+        WHERE deleted_at IS NULL AND status='ACTIVE') AS "totalLimit"
       FROM fuel_card fc LEFT JOIN fuel_transaction ft ON ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL`);
     const migrations = await this.db.query('SELECT * FROM v_direction_card_reporting ORDER BY lifecycle_liters DESC');
     const companies = await this.db.query(`SELECT c.code AS company,coalesce(sum(ft.quantity_liters),0)::float AS liters

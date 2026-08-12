@@ -1849,7 +1849,7 @@ export default function Home() {
             analytics={directionData}
           />
         ) : view === "reports" ? (
-          <DirectionReports cards={cards} transactions={data.transactions} analytics={directionData} />
+          <DirectionReports cards={cards} transactions={data.transactions} analytics={directionData} operationalData={data} />
         ) : view === "settings" ? (
           <Settings
             token={token}
@@ -2258,10 +2258,12 @@ function DirectionReports({
   cards,
   transactions,
   analytics,
+  operationalData,
 }: {
   cards: Card[];
   transactions: Row[];
   analytics: Record<string,unknown>|null;
+  operationalData: Record<string, Row[]>;
 }) {
   const [company, setCompany] = useState("Toutes"),
     [beneficiary, setBeneficiary] = useState("Tous"),
@@ -2282,7 +2284,7 @@ function DirectionReports({
   const active = filteredCards.filter((c) => c.status === "ACTIVE").length,
     limit = filteredCards
       .filter((c) => c.status === "ACTIVE")
-      .reduce((n, c) => n + c.monthly_limit, 0);
+      .reduce((n, c) => n + Number(c.monthly_limit ?? 0), 0);
   const utilization = limit
     ? Math.min(
         100,
@@ -2318,6 +2320,20 @@ function DirectionReports({
   const departments=[...new Set(cards.map(card=>card.department??"Non renseigné"))].sort();
   const statusOptions=[...new Set(cards.map(card=>card.status))];
   const activeFilters = Number(company !== "Toutes") + Number(beneficiary !== "Tous")+Number(department!=="Tous")+Number(cardStatus!=="Tous");
+  const monthAmount=filteredTx.reduce((sum,row)=>sum+parseNumeric(row.montant),0);
+  const monthLiters=filteredTx.reduce((sum,row)=>sum+parseNumeric(row.litres),0);
+  const vehicles=operationalData.vehicles??[];
+  const activeVehicles=vehicles.filter(row=>String(row.statut)==="Actif").length;
+  const outOfServiceVehicles=vehicles.length-activeVehicles;
+  const assignedVehicles=new Set(filteredCards.map(card=>card.registration).filter(Boolean)).size;
+  const safeCardsCount=filteredCards.filter(card=>card.status==="SAFE").length;
+  const blockedCardsCount=filteredCards.filter(card=>["SUSPENDED","LOST","STOLEN","OPPOSED"].includes(card.status)).length;
+  const pendingRequests=(operationalData.requests??[]).filter(row=>!["VALIDEE_ZIN","REFUSEE_ZIN","ANNULEE_NAJIB"].includes(String(row.statut))).length;
+  const billingMismatches=filteredTx.filter(row=>String(row.controleFacturation)==="BILLING_MISMATCH").length;
+  const billingExposure=filteredTx.reduce((sum,row)=>sum+(String(row.controleFacturation)==="BILLING_MISMATCH"?Math.abs(parseNumeric(row.ecartFacturation)):0),0);
+  const reviewedAnomalies=(operationalData.anomalies??[]).filter(row=>String(row.statut)==="À vérifier").length;
+  const averageTransaction=filteredTx.length?monthAmount/filteredTx.length:0;
+  const averageLiters=filteredTx.length?monthLiters/filteredTx.length:0;
   return (
     <section className={styles.reportShell}>
       <div className={styles.reportTitle}>
@@ -2341,10 +2357,10 @@ function DirectionReports({
       <div className={styles.reportLayout}>
         <div>
           <div className={styles.executiveStrip}>
-            <ReportKpi label="CONSOMMATION DU MOIS" value={`${Number(analytics?.monthAmount??consumed).toLocaleString("fr-FR")} TND`} meta="Montant officiel Total" tone="money"/>
+            <ReportKpi label="CONSOMMATION DU MOIS" value={`${monthAmount.toLocaleString("fr-FR",{maximumFractionDigits:3})} TND`} meta="Transactions Total du périmètre" tone="money"/>
             <ReportKpi label="PLAFOND DISTRIBUÉ" value={`${limit.toLocaleString("fr-FR")} TND`} meta={`${active} cartes actives`} tone="volume"/>
             <ReportKpi label="SOLDE DISPONIBLE" value={`${available.toLocaleString("fr-FR")} TND`} meta={`${utilization} % du plafond utilisé`} tone={utilization>=90?"danger":utilization>=75?"warning":"good"}/>
-            <ReportKpi label="VOLUME DU MOIS" value={`${Number(analytics?.monthLiters??0).toLocaleString("fr-FR")} L`} meta={`${filteredTx.length} transactions`} tone="default"/>
+            <ReportKpi label="VOLUME DU MOIS" value={`${monthLiters.toLocaleString("fr-FR",{maximumFractionDigits:3})} L`} meta={`${filteredTx.length} transactions`} tone="default"/>
           </div>
           <div className={styles.reportKpis}>
             <ReportKpi label="PLAFOND DÉPASSÉ" value={overLimit.length} meta="Cartes nécessitant une action" tone={overLimit.length?"danger":"good"}/>
@@ -2352,6 +2368,19 @@ function DirectionReports({
             <ReportKpi label="FAIBLE UTILISATION" value={unusedCards.length} meta="Moins de 10 % consommé" tone="default"/>
             <ReportKpi label="ANOMALIES OUVERTES" value={Number(analytics?.openAnomalies??0)} meta="Actions de contrôle" tone={Number(analytics?.openAnomalies??0)?"danger":"good"}/>
           </div>
+          <section className={styles.flowKpiSection}>
+            <div className={styles.flowKpiHeading}><div><small>COUVERTURE COMPLÈTE DE LA PLATEFORME</small><h3>Indicateurs de tous les flux opérationnels</h3></div><span>Données réelles · mois en cours</span></div>
+            <div className={styles.flowKpiGrid}>
+              <ReportKpi label="VÉHICULES DU PARC" value={vehicles.length} meta={`${activeVehicles} actifs · ${outOfServiceVehicles} hors service`} tone="default"/>
+              <ReportKpi label="VÉHICULES AFFECTÉS" value={assignedVehicles} meta="Reliés aux cartes du périmètre" tone="good"/>
+              <ReportKpi label="CARTES ACTIVES" value={active} meta={`${safeCardsCount} en coffre · ${blockedCardsCount} bloquées`} tone="volume"/>
+              <ReportKpi label="TRANSACTIONS TOTAL" value={filteredTx.length} meta={`${averageTransaction.toLocaleString("fr-FR",{maximumFractionDigits:3})} TND en moyenne`} tone="money"/>
+              <ReportKpi label="CARBURANT MOYEN / PLEIN" value={`${averageLiters.toLocaleString("fr-FR",{maximumFractionDigits:2})} L`} meta={`${monthLiters.toLocaleString("fr-FR",{maximumFractionDigits:2})} L consommés`} tone="default"/>
+              <ReportKpi label="TAUX D’UTILISATION" value={`${utilization} %`} meta={`${available.toLocaleString("fr-FR",{maximumFractionDigits:3})} TND disponibles`} tone={utilization>=90?"danger":utilization>=75?"warning":"good"}/>
+              <ReportKpi label="CONTRÔLE FACTURATION" value={billingMismatches} meta={`${billingExposure.toLocaleString("fr-FR",{maximumFractionDigits:3})} TND d’écart`} tone={billingMismatches?"danger":"good"}/>
+              <ReportKpi label="WORKFLOWS À TRAITER" value={pendingRequests+reviewedAnomalies} meta={`${pendingRequests} demandes · ${reviewedAnomalies} contrôles`} tone={pendingRequests+reviewedAnomalies?"warning":"good"}/>
+            </div>
+          </section>
           <section className={styles.dgControlGrid}>
             <article><h3>Utilisation par carte</h3><div className={styles.dgCardTable}>
               <div className={styles.dgCardTableHead}><span>Carte / bénéficiaire</span><span>Consommé</span><span>Plafond</span><span>Utilisation</span><span>Solde</span></div>

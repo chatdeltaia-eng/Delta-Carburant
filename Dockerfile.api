@@ -2,6 +2,11 @@ FROM node:24-bookworm
 
 WORKDIR /app
 
+# Keep the browser in a deterministic, system-wide path.  Defining this before
+# installation is important: Playwright must use the same path at build time
+# and at runtime, regardless of the HOME selected by the hosting platform.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 COPY apps/api/package.json apps/api/package-lock.json ./apps/api/
 RUN npm ci --include=dev --prefix apps/api \
     && cd apps/api \
@@ -14,6 +19,5 @@ RUN npm run build --prefix apps/api \
     && npm prune --omit=dev --prefix apps/api
 
 ENV NODE_ENV=production
-ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
 
 CMD ["sh", "-c", "node apps/api/scripts/migrate.js && npm run start:prod --prefix apps/api"]

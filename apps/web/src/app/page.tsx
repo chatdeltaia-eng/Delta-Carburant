@@ -2167,6 +2167,7 @@ function Dashboard({
         consumed={officialMonthlyConsumed}
         creditLine={activeMonthlyLimit}
       />}
+      {isDirection(user.role)&&<DailyConsumptionHistogram transactions={transactions}/>}
       {isDirection(user.role)&&<CardPortfolioOverview cards={cards} go={go}/>}
       <section className={styles.overviewPanel}>
         <div className={styles.overviewToolbar}>
@@ -2368,6 +2369,7 @@ function DirectionReports({
             <ReportKpi label="FAIBLE UTILISATION" value={unusedCards.length} meta="Moins de 10 % consommé" tone="default"/>
             <ReportKpi label="ANOMALIES OUVERTES" value={Number(analytics?.openAnomalies??0)} meta="Actions de contrôle" tone={Number(analytics?.openAnomalies??0)?"danger":"good"}/>
           </div>
+          <DailyConsumptionHistogram transactions={filteredTx}/>
           <section className={styles.flowKpiSection}>
             <div className={styles.flowKpiHeading}><div><small>COUVERTURE COMPLÈTE DE LA PLATEFORME</small><h3>Indicateurs de tous les flux opérationnels</h3></div><span>Données réelles · mois en cours</span></div>
             <div className={styles.flowKpiGrid}>
@@ -2445,6 +2447,47 @@ function DirectionReports({
       </div>
     </section>
   );
+}
+function transactionDay(value:unknown){
+  const raw=String(value??"").trim();
+  const french=raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(french)return `${french[3]}-${french[2].padStart(2,"0")}-${french[1].padStart(2,"0")}`;
+  const parsed=new Date(raw);
+  if(Number.isNaN(parsed.getTime()))return null;
+  return `${parsed.getFullYear()}-${String(parsed.getMonth()+1).padStart(2,"0")}-${String(parsed.getDate()).padStart(2,"0")}`;
+}
+function DailyConsumptionHistogram({transactions}:{transactions:Row[]}){
+  const daily=Object.values(transactions.reduce<Record<string,{key:string;liters:number;amount:number;count:number}>>((days,row)=>{
+    const key=transactionDay(row.date); if(!key)return days;
+    const item=days[key]??{key,liters:0,amount:0,count:0};
+    item.liters+=parseNumeric(row.litres); item.amount+=parseNumeric(row.montant); item.count+=1; days[key]=item;
+    return days;
+  },{})).sort((a,b)=>a.key.localeCompare(b.key));
+  const maxLiters=Math.max(1,...daily.map(item=>item.liters));
+  const maxAmount=Math.max(1,...daily.map(item=>item.amount));
+  const totalLiters=daily.reduce((sum,item)=>sum+item.liters,0);
+  const totalAmount=daily.reduce((sum,item)=>sum+item.amount,0);
+  const formatDay=(key:string)=>new Date(`${key}T12:00:00`).toLocaleDateString("fr-FR",{day:"2-digit",month:"short"}).replace(".","");
+  return <section className={styles.dailyConsumptionPanel}>
+    <div className={styles.dailyConsumptionHead}>
+      <div><small>RYTHME DE CONSOMMATION</small><h3>Consommation quotidienne</h3><p>Litres et montant facturé par jour · données Total Mobility</p></div>
+      <div className={styles.dailyTotals}>
+        <span><i className={styles.litersDot}/><small>Volume</small><b>{totalLiters.toLocaleString("fr-FR",{maximumFractionDigits:3})} L</b></span>
+        <span><i className={styles.amountDot}/><small>Montant</small><b>{totalAmount.toLocaleString("fr-FR",{maximumFractionDigits:3})} TND</b></span>
+      </div>
+    </div>
+    {daily.length?<div className={styles.dailyHistogram} role="img" aria-label="Histogramme de la consommation quotidienne en litres et en dinars">
+      <div className={styles.dailyGridLines}><i/><i/><i/><i/></div>
+      <div className={styles.dailyColumns}>{daily.map(item=><div className={styles.dailyColumn} key={item.key} title={`${formatDay(item.key)} · ${item.liters.toFixed(3)} L · ${item.amount.toFixed(3)} TND · ${item.count} transaction(s)`}>
+        <div className={styles.dailyValues}><span>{item.liters.toLocaleString("fr-FR",{maximumFractionDigits:1})} L</span><span>{item.amount.toLocaleString("fr-FR",{maximumFractionDigits:1})} DT</span></div>
+        <div className={styles.dailyBarPair}>
+          <i className={styles.dailyLitersBar} style={{height:`${Math.max(3,item.liters/maxLiters*100)}%`}}/>
+          <i className={styles.dailyAmountBar} style={{height:`${Math.max(3,item.amount/maxAmount*100)}%`}}/>
+        </div>
+        <b>{formatDay(item.key)}</b><small>{item.count} trx</small>
+      </div>)}</div>
+    </div>:<div className={styles.dailyHistogramEmpty}><AppIcon name="transactions" size={25}/><b>Aucune consommation quotidienne disponible</b><span>Le graphique apparaîtra après la prochaine extraction Total.</span></div>}
+  </section>;
 }
 function ReportKpi({
   label,

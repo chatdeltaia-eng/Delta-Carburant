@@ -2,10 +2,9 @@ FROM node:24-bookworm
 
 WORKDIR /app
 
-# Keep the browser in a deterministic, system-wide path.  Defining this before
-# installation is important: Playwright must use the same path at build time
-# and at runtime, regardless of the HOME selected by the hosting platform.
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# Bundle Chromium with the application instead of placing it in an ephemeral
+# build cache. This works for both Docker and Render's native Node runtime.
+ENV PLAYWRIGHT_BROWSERS_PATH=0
 
 COPY apps/api/package.json apps/api/package-lock.json ./apps/api/
 RUN npm ci --include=dev --prefix apps/api \

@@ -121,7 +121,15 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
     FROM total_mobility_sync_run ORDER BY started_at DESC LIMIT 50`);
   }
   async connect(dto: ConfigDto, actor: Actor) {
-    await this.refreshAccessToken(dto.refreshToken.trim());
+    const refreshToken = this.normalizeRefreshToken(dto.refreshToken);
+    try {
+      await this.refreshAccessToken(refreshToken);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new BadRequestException(
+        `Connexion Total refusée : ${message}. Reconnectez-vous à Total Mobility puis copiez de nouveau la valeur refresh_token depuis Application → Local Storage.`,
+      );
+    }
     await this.db.query(
       `INSERT INTO total_mobility_connection(customer_id,customer_number,site_number,user_id,username,refresh_token_ciphertext,
       sync_interval_minutes,connected_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
@@ -134,7 +142,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         dto.siteNumber.trim(),
         dto.userId?.trim() || null,
         dto.username?.trim() || null,
-        this.encrypt(dto.refreshToken.trim()),
+        this.encrypt(refreshToken),
         dto.syncIntervalMinutes ?? 60,
         actor.sub,
       ],
@@ -269,22 +277,57 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
     }
   }
   private async refreshAccessToken(refreshToken: string) {
+    if (!refreshToken || refreshToken.length < 20)
+      throw new Error('le refresh_token est absent ou incomplet');
     const body = new URLSearchParams({
       grant_type: 'refresh_token',
       client_id: this.clientId,
       refresh_token: refreshToken,
     });
-    const response = await fetch(this.tokenEndpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body,
-    });
-    if (!response.ok)
-      throw new Error(`session Total expirée (${response.status})`);
+    let response: Response;
+    try {
+      response = await fetch(this.tokenEndpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body,
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch {
+      throw new Error('le service d’authentification Total est momentanément inaccessible');
+    }
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string;
+        error_description?: string;
+      } | null;
+      const reason = payload?.error_description || payload?.error;
+      throw new Error(
+        reason
+          ? `session Total invalide ou expirée (${reason})`
+          : `session Total invalide ou expirée (HTTP ${response.status})`,
+      );
+    }
     const json = (await response.json()) as { access_token?: string };
     if (!json.access_token)
       throw new Error('Total n’a pas retourné de jeton d’accès');
     return json.access_token;
+  }
+  private normalizeRefreshToken(value: string) {
+    let token = value.trim();
+    // Chrome peut copier la valeur JSON avec ses guillemets, ou la paire clé/valeur.
+    const assignment = token.match(/^(?:["']?refresh_token["']?\s*[:=]\s*)([\s\S]+)$/i);
+    if (assignment) token = assignment[1].trim();
+    if (
+      (token.startsWith('"') && token.endsWith('"')) ||
+      (token.startsWith("'") && token.endsWith("'"))
+    ) {
+      try {
+        token = JSON.parse(token) as string;
+      } catch {
+        token = token.slice(1, -1);
+      }
+    }
+    return token.trim();
   }
   private signature(payload: string, nonce: string, token: string) {
     const secret = token.trim().slice(0, 16) + token.trim().slice(-16);

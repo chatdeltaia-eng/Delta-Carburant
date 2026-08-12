@@ -510,7 +510,7 @@ export default function Home() {
       fetch(`${API}/notifications`, { headers, cache: "no-store" }),
       fetch(`${API}/transactions`, { headers, cache: "no-store" }),
       fetch(`${API}/dashboard/summary`, { headers, cache: "no-store" }),
-      canManage(user.role) ? fetch(`${API}/transactions/reviews`, { headers, cache: "no-store" }) : Promise.resolve(null),
+      canManage(user.role) ? fetch(`${API}/dashboard/anomalies`, { headers, cache: "no-store" }) : Promise.resolve(null),
       fetch(`${API}/vehicles`, { headers, cache: "no-store" }),
       fetch(`${API}/mileage`, { headers, cache: "no-store" }),
       fetch(`${API}/drivers`, { headers, cache: "no-store" }),
@@ -576,7 +576,7 @@ export default function Home() {
           ...current,
           requests: (requestPayload.items ?? requestPayload).map(toRequestRow),
           transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => {const allocations=Array.isArray(row.allocations)?row.allocations as Record<string,unknown>[]:[];return { id:String(row.id),reviewId:String(row.reviewId??""),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),prixApplique:row.appliedPrice==null?"—":Number(row.appliedPrice),montantTheorique:row.expectedAmount==null?"—":Number(row.expectedAmount),ecartFacturation:row.billingDifference==null?"—":Number(row.billingDifference),controleFacturation:String(row.billingStatus??"PRICE_UNAVAILABLE"),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),repartition:allocations.map(item=>`${String(item.beneficiary)} — ${String(item.vehicle)} — ${Number(item.amount).toFixed(3)} DT${item.mileage?` — ${Number(item.mileage)} km`:""}`).join(" | "),observation:row.observation?`${String(row.observation)} — ${String(row.observationBy??"—")}`:"—",statut:row.reviewStatus==="PENDING"?(row.reviewIssue==="MISSING_BENEFICIARY"?"Bénéficiaire à identifier":"Véhicule inconnu à valider"):"Importée Total",fichier:String(row.file??"—") }}),
-          anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.issueType)==="MISSING_BENEFICIARY"?"Bénéficiaire manquant":"Véhicule inconnu",carte:String(row.cardNumber),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),gravite:"Haute",statut:String(row.status)==="PENDING"?"À vérifier":String(row.status)==="ACCEPTED"?"Acceptée":"Refusée" })),
+          anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),kind:String(row.kind??"REVIEW"),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.kind)==="REVIEW"?(String(row.type)==="MISSING_BENEFICIARY"?"Bénéficiaire manquant":"Véhicule inconnu"):String(row.description??row.type),carte:String(row.card??"—"),beneficiaire:"—",vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters??0),montant:Number(row.amount??0),gravite:String(row.severity)==="CRITICAL"?"Critique":String(row.severity)==="WARNING"?"Moyenne":String(row.severity)==="INFO"?"Information":"Haute",statut:String(row.kind)==="REVIEW"?"À vérifier":String(row.status)==="IN_REVIEW"?"En cours":"Ouverte" })),
           vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>,index:number)=>({id:String(row.id),companyId:String(row.companyId??""),numero:Number(row.fleetNumber??0)||index+1,immatriculation:Boolean(row.registrationMissing)?"Sans matricule":String(row.registration),sansMatricule:Boolean(row.registrationMissing),type:String(row.vehicleType??row.model??"À compléter"),societe:String(row.company??"—"),mise_en_circulation:row.firstRegistrationDate?new Date(String(row.firstRegistrationDate)).toLocaleDateString("fr-FR"):"À compléter",reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??row.cardHolder??"—"),titulaire:String(row.cardHolder??row.driver??"—"),carte:String(row.cardNumber??"—"),garde:String(row.custody)==="IN_SAFE"?"En coffre · non distribuée":"Distribuée / active",observation:String(row.notes??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
           mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:String(row.week??"—"),vehicule:String(row.vehicle),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),litresPeriode:Number(row.periodLiters??0),consommation100km:row.litersPer100Km==null?"—":Number(row.litersPer100Km),attendu:Number(row.expectedMileage??0),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—")})),
           drivers:(driversPayload.items??driversPayload).map((row:Record<string,unknown>)=>({id:String(row.id),companyId:String(row.companyId??""),nomComplet:String(row.fullName??"—"),numeroClient:String(row.customerNumber??"—"),nomClient:String(row.customerName??"—"),numeroChauffeur:String(row.driverNumber??"—"),prenom:String(row.firstName??"—"),nom:String(row.lastName??row.fullName??"—"),codeChauffeur:String(row.driverCode??"—"),vehicules:Array.isArray(row.vehicles)?(row.vehicles as {registration:string}[]).map(item=>item.registration).join(", "):"—",statut:Boolean(row.active)?"Actif":"Inactif"})),
@@ -1629,16 +1629,17 @@ export default function Home() {
     setSelected(card);
     setModal("cardAction");
   }
-  function resolveAnomaly(id: string) {
-    const next = {
-      ...data,
-      anomalies: data.anomalies.map((x) =>
-        x.id === id ? { ...x, statut: "Résolue" } : x,
-      ),
-    };
-    setData(next);
-    persist(cards, next);
-    notify("Anomalie résolue");
+  async function resolveAnomaly(id: string) {
+    if(!token) return notify("Session expirée");
+    try {
+      const response=await fetch(`${API}/dashboard/anomalies/${id}/resolve`,{method:"PATCH",headers:{Authorization:`Bearer ${token}`}});
+      if(!response.ok) throw new Error(await response.text());
+      setData(current=>({...current,anomalies:current.anomalies.filter(row=>row.id!==id)}));
+      setRefreshTick(value=>value+1);
+      notify("Anomalie résolue");
+    } catch(error) {
+      notify(error instanceof Error?error.message:"Impossible de résoudre l’anomalie");
+    }
   }
   async function decideTransactionReview(id:string,accepted:boolean) {
     if(!token) return notify("Session expirée");
@@ -2883,7 +2884,7 @@ function DataView({
                     </>
                   ) : view === "requests" && r.statut === "VALIDEE_ZIN" && r.recu !== "—" ? (
                     <button className={styles.smallBtn} onClick={()=>printReceipt(r)}>Imprimer reçu PDF</button>
-                  ) : view === "anomalies" && r.statut === "À vérifier" ? (
+                  ) : view === "anomalies" && r.kind === "REVIEW" ? (
                     <><button className={styles.smallBtn} onClick={()=>decideReview(r.id,true)}>Accepter</button>{" "}<button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>decideReview(r.id,false)}>Refuser</button></>
                   ) : view === "anomalies" && r.statut !== "Résolue" && r.statut !== "Acceptée" && r.statut !== "Refusée" ? (
                     <button className={styles.smallBtn} onClick={() => resolve(r.id)}>Résoudre</button>

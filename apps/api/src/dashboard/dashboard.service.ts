@@ -94,4 +94,34 @@ export class DashboardService {
     return { ...kpis[0], ...overview, migrations, companies, monthly, topConsumers, products,
       risks: risks.filter((row:{reason:string|null})=>row.reason).slice(0,25) };
   }
+
+  anomalies() {
+    return this.db.query(`SELECT * FROM (SELECT a.id,a.created_at AS date,a.anomaly_type AS type,
+      coalesce(fc.masked_card_number,'—') AS card,coalesce(v.registration_display,'—') AS vehicle,
+      coalesce(ft.station,'—') AS station,coalesce(ft.product,'—') AS product,
+      coalesce(ft.quantity_liters,0)::float AS liters,coalesce(ft.amount_incl_tax,0)::float AS amount,
+      a.severity::text,a.status,a.description,'ANOMALY'::text AS kind
+      FROM anomaly a
+      LEFT JOIN fuel_card fc ON fc.id=a.fuel_card_id
+      LEFT JOIN fuel_transaction ft ON ft.id=a.fuel_transaction_id
+      LEFT JOIN vehicle v ON v.id=coalesce(a.vehicle_id,ft.vehicle_id)
+      WHERE a.status IN('OPEN','IN_REVIEW')
+      UNION ALL
+      SELECT tr.id,tr.created_at,tr.issue_type,tr.card_number,coalesce(tr.vehicle_registration,'—'),
+      coalesce(tr.station,'—'),coalesce(tr.product,'—'),tr.quantity_liters::float,tr.amount_incl_tax::float,
+      'HIGH','PENDING','Transaction Total nécessitant un rapprochement','REVIEW'
+      FROM transaction_review tr WHERE tr.status='PENDING') open_items
+      ORDER BY CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'WARNING' THEN 3 ELSE 4 END,date DESC`);
+  }
+
+  async resolveAnomaly(id:string,actor:{sub:string;email:string}) {
+    return this.db.transaction(async client=>{
+      const result=await client.query(`UPDATE anomaly SET status='RESOLVED',resolved_at=now(),resolution=$2
+        WHERE id=$1 AND status IN('OPEN','IN_REVIEW') RETURNING *`,[id,`Résolue par ${actor.email}`]);
+      if(!result.rows[0]) return null;
+      await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
+        VALUES($1,'RESOLVE_ANOMALY','anomaly',$2,$3)`,[actor.email,id,{status:'RESOLVED'}]);
+      return result.rows[0];
+    });
+  }
 }

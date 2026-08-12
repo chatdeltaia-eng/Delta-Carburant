@@ -2167,6 +2167,7 @@ function Dashboard({
         consumed={officialMonthlyConsumed}
         creditLine={activeMonthlyLimit}
       />}
+      {isDirection(user.role)&&<CardPortfolioOverview cards={cards} go={go}/>}
       <section className={styles.overviewPanel}>
         <div className={styles.overviewToolbar}>
           <div>
@@ -2226,6 +2227,33 @@ function Dashboard({
     </>
   );
 }
+
+function CardPortfolioOverview({cards,go}:{cards:Card[];go:(view:View)=>void}){
+  const active=cards.filter(card=>card.status==="ACTIVE");
+  const usage=(card:Card)=>Number(card.consumption_rate??(card.monthly_limit?100*Number(card.consumed_amount??0)/card.monthly_limit:0));
+  const bands=[
+    {label:"Plafond dépassé",value:active.filter(card=>usage(card)>=100).length,tone:"danger"},
+    {label:"À surveiller · 80–99 %",value:active.filter(card=>usage(card)>=80&&usage(card)<100).length,tone:"warning"},
+    {label:"Utilisation normale · 30–79 %",value:active.filter(card=>usage(card)>=30&&usage(card)<80).length,tone:"good"},
+    {label:"Faible utilisation · < 30 %",value:active.filter(card=>usage(card)<30).length,tone:"neutral"},
+  ];
+  const top=[...active].sort((a,b)=>usage(b)-usage(a)).slice(0,6);
+  const statusItems=Object.entries(cards.reduce<Record<string,number>>((acc,card)=>{acc[status(card.status)]=(acc[status(card.status)]??0)+1;return acc;},{})).map(([name,value])=>({name,value}));
+  return <section className={styles.portfolioGrid}>
+    <article className={styles.portfolioCard}>
+      <div className={styles.portfolioHead}><div><small>PORTEFEUILLE CARTES</small><h3>Niveaux d’utilisation du plafond</h3></div><button onClick={()=>go("cards")}>Voir les cartes</button></div>
+      <div className={styles.usageBands}>{bands.map(band=><div key={band.label} className={styles[`usage_${band.tone}`]}><strong>{band.value}</strong><span>{band.label}</span></div>)}</div>
+    </article>
+    <article className={styles.portfolioCard}>
+      <div className={styles.portfolioHead}><div><small>SUIVI PRIORITAIRE</small><h3>Cartes les plus consommées</h3></div><button onClick={()=>go("transactions")}>Transactions</button></div>
+      <div className={styles.cardUsageList}>{top.length?top.map(card=>{const rate=usage(card);return <div key={card.id}><span><b>{card.masked_card_number}</b><small>{card.beneficiary??"Non affectée"}</small></span><i><em style={{width:`${Math.min(100,rate)}%`}}/></i><strong>{rate.toFixed(0)} %</strong></div>}):<p className={styles.inlineEmpty}>Aucune carte active.</p>}</div>
+    </article>
+    <article className={styles.portfolioCard}>
+      <div className={styles.portfolioHead}><div><small>ÉTAT DU PARC</small><h3>Répartition des cartes</h3></div></div>
+      <Bars items={statusItems} unit="cartes"/>
+    </article>
+  </section>;
+}
 function DirectionReports({
   cards,
   transactions,
@@ -2235,31 +2263,22 @@ function DirectionReports({
   transactions: Row[];
   analytics: Record<string,unknown>|null;
 }) {
-  const [scenario, setScenario] = useState<"migration" | "new">("migration");
   const [company, setCompany] = useState("Toutes"),
-    [beneficiary, setBeneficiary] = useState("Tous");
+    [beneficiary, setBeneficiary] = useState("Tous"),
+    [department, setDepartment] = useState("Tous"),
+    [cardStatus, setCardStatus] = useState("Tous");
   const filteredCards = cards.filter(
     (c) =>
       (company === "Toutes" || c.company_code === company) &&
-      (beneficiary === "Tous" || c.beneficiary === beneficiary),
+      (beneficiary === "Tous" || c.beneficiary === beneficiary) &&
+      (department === "Tous" || (c.department??"Non renseigné") === department) &&
+      (cardStatus === "Tous" || c.status === cardStatus),
   );
   const filteredTx = transactions.filter((t) =>
     filteredCards.some((c) => c.masked_card_number === String(t.carte)),
   );
   const liters = (rows: Row[]) =>
     rows.reduce((n, r) => n + parseNumeric(r.litres), 0);
-  const old = filteredCards.filter((c) => !c.old_card_id),
-    fresh = filteredCards.filter((c) => c.old_card_id);
-  const oldLiters = liters(
-    filteredTx.filter((t) =>
-      old.some((c) => c.masked_card_number === String(t.carte)),
-    ),
-  );
-  const newLiters = liters(
-    filteredTx.filter((t) =>
-      fresh.some((c) => c.masked_card_number === String(t.carte)),
-    ),
-  );
   const active = filteredCards.filter((c) => c.status === "ACTIVE").length,
     limit = filteredCards
       .filter((c) => c.status === "ACTIVE")
@@ -2289,7 +2308,16 @@ function DirectionReports({
     (sum, row) => sum + parseNumeric(row.montant),
     0,
   );
-  const activeFilters = Number(company !== "Toutes") + Number(beneficiary !== "Tous");
+  const cardUsage=(card:Card)=>Number(card.consumption_rate??(card.monthly_limit?100*Number(card.consumed_amount??0)/card.monthly_limit:0));
+  const consumed=filteredCards.reduce((sum,card)=>sum+Number(card.consumed_amount??0),0);
+  const available=Math.max(0,limit-consumed);
+  const overLimit=filteredCards.filter(card=>card.status==="ACTIVE"&&cardUsage(card)>=100);
+  const warningCards=filteredCards.filter(card=>card.status==="ACTIVE"&&cardUsage(card)>=80&&cardUsage(card)<100);
+  const unusedCards=filteredCards.filter(card=>card.status==="ACTIVE"&&cardUsage(card)<10);
+  const topCards=[...filteredCards].filter(card=>card.status==="ACTIVE").sort((a,b)=>cardUsage(b)-cardUsage(a)).slice(0,10);
+  const departments=[...new Set(cards.map(card=>card.department??"Non renseigné"))].sort();
+  const statusOptions=[...new Set(cards.map(card=>card.status))];
+  const activeFilters = Number(company !== "Toutes") + Number(beneficiary !== "Tous")+Number(department!=="Tous")+Number(cardStatus!=="Tous");
   return (
     <section className={styles.reportShell}>
       <div className={styles.reportTitle}>
@@ -2298,12 +2326,8 @@ function DirectionReports({
           <div><b>DeltaCarburant</b><small>Centre de pilotage exécutif</small></div>
         </div>
         <div className={styles.reportHeading}>
-          <small>{scenario === "migration" ? "SCÉNARIO 01" : "SCÉNARIO 02"}</small>
-          <h2>
-            {scenario === "migration"
-              ? "Pilotage migration des cartes"
-              : "Suivi des nouvelles cartes"}
-          </h2>
+          <small>VISION CONSOLIDÉE · MOIS EN COURS</small>
+          <h2>Pilotage cartes, plafonds et consommations</h2>
         </div>
         <div className={styles.reportLive}><i /> Données Total synchronisées</div>
       </div>
@@ -2314,75 +2338,29 @@ function DirectionReports({
         <span>{filteredCards.length} cartes dans le périmètre</span>
         <strong>{totalAmount.toLocaleString("fr-FR", { maximumFractionDigits: 3 })} TND analysés</strong>
       </div>
-      <div className={styles.reportTabs}>
-        <button
-          className={scenario === "migration" ? styles.reportActive : ""}
-          onClick={() => setScenario("migration")}
-        >
-          Migration cartes
-        </button>
-        <button
-          className={scenario === "new" ? styles.reportActive : ""}
-          onClick={() => setScenario("new")}
-        >
-          Nouvelles cartes
-        </button>
-      </div>
       <div className={styles.reportLayout}>
         <div>
-          {analytics&&<div className={styles.executiveStrip}>
-            <ReportKpi label="DÉPENSE DU MOIS" value={`${Number(analytics.monthAmount??0).toLocaleString("fr-FR")} TND`} meta="Montant officiel Total" tone="money"/>
-            <ReportKpi label="VOLUME DU MOIS" value={`${Number(analytics.monthLiters??0).toLocaleString("fr-FR")} L`} meta="Carburant consommé" tone="volume"/>
-            <ReportKpi label="ÉCARTS FACTURATION" value={Number(analytics.billingMismatches??0)} meta="Contrôle de conformité" tone={Number(analytics.billingMismatches??0) ? "danger" : "good"}/>
-            <ReportKpi label="ANOMALIES OUVERTES" value={Number(analytics.openAnomalies??0)} meta="Actions à traiter" tone={Number(analytics.openAnomalies??0) ? "warning" : "good"}/>
-          </div>}
-          <div className={styles.reportKpis}>
-            {scenario === "migration" ? (
-              <>
-                <ReportKpi
-                  label="CONSO ANCIENNES CARTES"
-                  value={`${oldLiters.toFixed(0)} L`}
-                />
-                <ReportKpi
-                  label="CONSO NOUVELLES CARTES"
-                  value={`${newLiters.toFixed(0)} L`}
-                />
-                <ReportKpi label="NB CARTES MIGRÉES" value={fresh.length} />
-                <ReportKpi
-                  label="TAUX DE MIGRATION"
-                  value={`${old.length ? Math.round((fresh.length / old.length) * 100) : 0} %`}
-                />
-              </>
-            ) : (
-              <>
-                <ReportKpi
-                  label="CONSO NOUVELLES CARTES"
-                  value={`${newLiters.toFixed(0)} L`}
-                />
-                <ReportKpi label="NB CARTES ACTIVES" value={active} />
-                <ReportKpi
-                  label="PLAFOND TOTAL"
-                  value={`${limit.toLocaleString("fr-FR")} TND`}
-                />
-                <ReportKpi
-                  label="TAUX D’UTILISATION"
-                  value={`${utilization} %`}
-                />
-              </>
-            )}
+          <div className={styles.executiveStrip}>
+            <ReportKpi label="CONSOMMATION DU MOIS" value={`${Number(analytics?.monthAmount??consumed).toLocaleString("fr-FR")} TND`} meta="Montant officiel Total" tone="money"/>
+            <ReportKpi label="PLAFOND DISTRIBUÉ" value={`${limit.toLocaleString("fr-FR")} TND`} meta={`${active} cartes actives`} tone="volume"/>
+            <ReportKpi label="SOLDE DISPONIBLE" value={`${available.toLocaleString("fr-FR")} TND`} meta={`${utilization} % du plafond utilisé`} tone={utilization>=90?"danger":utilization>=75?"warning":"good"}/>
+            <ReportKpi label="VOLUME DU MOIS" value={`${Number(analytics?.monthLiters??0).toLocaleString("fr-FR")} L`} meta={`${filteredTx.length} transactions`} tone="default"/>
           </div>
-          {scenario === "migration" ? (
-            <MigrationReport cards={filteredCards} transactions={filteredTx} />
-          ) : (
-            <NewCardsReport
-              cards={filteredCards}
-              transactions={filteredTx}
-              bars={byBeneficiary}
-            />
-          )}
+          <div className={styles.reportKpis}>
+            <ReportKpi label="PLAFOND DÉPASSÉ" value={overLimit.length} meta="Cartes nécessitant une action" tone={overLimit.length?"danger":"good"}/>
+            <ReportKpi label="SEUIL 80 % ATTEINT" value={warningCards.length} meta="Cartes à surveiller" tone={warningCards.length?"warning":"good"}/>
+            <ReportKpi label="FAIBLE UTILISATION" value={unusedCards.length} meta="Moins de 10 % consommé" tone="default"/>
+            <ReportKpi label="ANOMALIES OUVERTES" value={Number(analytics?.openAnomalies??0)} meta="Actions de contrôle" tone={Number(analytics?.openAnomalies??0)?"danger":"good"}/>
+          </div>
+          <section className={styles.dgControlGrid}>
+            <article><h3>Utilisation par carte</h3><div className={styles.dgCardTable}>
+              <div className={styles.dgCardTableHead}><span>Carte / bénéficiaire</span><span>Consommé</span><span>Plafond</span><span>Utilisation</span><span>Solde</span></div>
+              {topCards.length?topCards.map(card=>{const rate=cardUsage(card),amount=Number(card.consumed_amount??0);return <div key={card.id} className={rate>=100?styles.dgCritical:rate>=80?styles.dgWarning:""}><span><b>{card.masked_card_number}</b><small>{card.beneficiary??"Non affectée"}</small></span><span>{amount.toLocaleString("fr-FR")} DT</span><span>{card.monthly_limit.toLocaleString("fr-FR")} DT</span><span><i><em style={{width:`${Math.min(100,rate)}%`}}/></i><b>{rate.toFixed(0)} %</b></span><span>{Math.max(0,card.monthly_limit-amount).toLocaleString("fr-FR")} DT</span></div>}):<p className={styles.inlineEmpty}>Aucune carte dans ce périmètre.</p>}
+            </div></article>
+            <article><h3>Consommation par bénéficiaire</h3>{byBeneficiary.some(item=>item.value>0)?<Bars items={byBeneficiary}/>:<p className={styles.inlineEmpty}>Aucune consommation disponible pour ce périmètre.</p>}</article>
+          </section>
           {analytics&&<section className={styles.intelligenceGrid}>
-            <article><h3>Top consommateurs du mois</h3><Bars items={((analytics.topConsumers??[]) as Record<string,unknown>[]).slice(0,7).map(row=>({name:`${String(row.card)} · ${String(row.beneficiary??"—")}`,value:Number(row.amount??0)}))}/></article>
-            <article><h3>Répartition par produit</h3><Bars items={((analytics.products??[]) as Record<string,unknown>[]).map(row=>({name:String(row.product),value:Number(row.liters??0)}))}/></article>
+            {((analytics.products??[]) as Record<string,unknown>[]).length>0&&<article><h3>Répartition par produit</h3><Bars items={((analytics.products??[]) as Record<string,unknown>[]).map(row=>({name:String(row.product),value:Number(row.liters??0)}))}/></article>}
             <article className={styles.riskPanel}><h3>Contrôles intelligents</h3>{((analytics.risks??[]) as Record<string,unknown>[]).length?((analytics.risks??[]) as Record<string,unknown>[]).slice(0,8).map((row,index)=><div key={`${String(row.id)}-${index}`}><b>{String(row.reason)}</b><span>Carte {String(row.card)} · {String(row.station??"—")} · {Number(row.amount??0).toFixed(3)} TND</span></div>):<p>Aucun mouvement à risque détecté.</p>}</article>
           </section>}
         </div>
@@ -2414,26 +2392,22 @@ function DirectionReports({
           </label>
           <label>
             Département
-            <select>
-              <option>Tous</option>
-              <option>Ressources humaines</option>
-              <option>Moyen commun</option>
-              <option>Technique</option>
+            <select value={department} onChange={event=>setDepartment(event.target.value)}>
+              <option>Tous</option>{departments.map(value=><option key={value}>{value}</option>)}
             </select>
           </label>
           <label>
             Statut
-            <select>
-              <option>Tous</option>
-              <option>Active</option>
-              <option>Remplacée</option>
-              <option>Opposée</option>
+            <select value={cardStatus} onChange={event=>setCardStatus(event.target.value)}>
+              <option>Tous</option>{statusOptions.map(value=><option value={value} key={value}>{status(value)}</option>)}
             </select>
           </label>
           <button
             onClick={() => {
               setCompany("Toutes");
               setBeneficiary("Tous");
+              setDepartment("Tous");
+              setCardStatus("Tous");
             }}
           >
             Effacer les filtres
@@ -2465,7 +2439,7 @@ function ReportKpi({
     </article>
   );
 }
-function Bars({ items }: { items: { name: string; value: number }[] }) {
+function Bars({ items,unit="L" }: { items: { name: string; value: number }[];unit?:string }) {
   const max = Math.max(1, ...items.map((x) => x.value));
   return (
     <div className={styles.bars}>
@@ -2475,191 +2449,9 @@ function Bars({ items }: { items: { name: string; value: number }[] }) {
           <i>
             <b style={{ width: `${(x.value / max) * 100}%` }} />
           </i>
-          <em>{x.value.toFixed(0)} L</em>
+          <em>{x.value.toFixed(0)} {unit}</em>
         </div>
       ))}
-    </div>
-  );
-}
-function MigrationReport({
-  cards,
-  transactions,
-}: {
-  cards: Card[];
-  transactions: Row[];
-}) {
-  const links = cards.filter((c) => c.replacement_card_id);
-  const byCompany = [...new Set(cards.map((c) => c.company_code))].map(
-    (name) => ({
-      name,
-      value: transactions
-        .filter((t) =>
-          cards.some(
-            (c) =>
-              c.company_code === name &&
-              c.masked_card_number === String(t.carte),
-          ),
-        )
-        .reduce((n, t) => n + parseNumeric(t.litres), 0),
-    }),
-  );
-  return (
-    <div className={styles.reportGrid}>
-      <article>
-        <h3>CORRESPONDANCE ANCIENNE CARTE → NOUVELLE CARTE</h3>
-        {links.length ? (
-          links.map((c) => (
-            <div className={styles.migrationLink} key={c.id}>
-              <b>{c.masked_card_number}</b>
-              <span>⟶</span>
-              <b>
-                {
-                  cards.find((x) => x.id === c.replacement_card_id)
-                    ?.masked_card_number
-                }
-              </b>
-            </div>
-          ))
-        ) : (
-          <p>Aucune migration dans ce filtre</p>
-        )}
-      </article>
-      <article>
-        <h3>CONSOMMATION PAR SOCIÉTÉ</h3>
-        <Bars items={byCompany} />
-      </article>
-      <article>
-        <h3>TOP BÉNÉFICIAIRES</h3>
-        <Bars
-          items={[
-            ...new Set(cards.map((c) => c.beneficiary).filter(Boolean)),
-          ].map((name) => ({
-            name: String(name),
-            value: transactions
-              .filter((t) => t.beneficiaire === name)
-              .reduce((n, t) => n + parseNumeric(t.litres), 0),
-          }))}
-        />
-      </article>
-      <article>
-        <h3>CORRESPONDANCE DES CARTES</h3>
-        <div className={styles.tableWrap}>
-          <table>
-            <thead>
-              <tr>
-                <th>ANCIENNE</th>
-                <th>NOUVELLE</th>
-                <th>BÉNÉFICIAIRE</th>
-                <th>DÉPARTEMENT</th>
-                <th>STATUT</th>
-              </tr>
-            </thead>
-            <tbody>
-              {links.map((c) => (
-                <tr key={c.id}>
-                  <td>{c.masked_card_number}</td>
-                  <td>
-                    {
-                      cards.find((x) => x.id === c.replacement_card_id)
-                        ?.masked_card_number
-                    }
-                  </td>
-                  <td>{c.beneficiary}</td>
-                  <td>{c.department}</td>
-                  <td>Active</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </article>
-    </div>
-  );
-}
-function NewCardsReport({
-  cards,
-  transactions,
-  bars,
-}: {
-  cards: Card[];
-  transactions: Row[];
-  bars: { name: string; value: number }[];
-}) {
-  const daily = [...transactions.reduce((map, transaction) => {
-    const rawDate = String(transaction.date ?? "");
-    const key = rawDate.slice(0, 10) || "—";
-    map.set(key, (map.get(key) ?? 0) + parseNumeric(transaction.litres));
-    return map;
-  }, new Map<string, number>()).entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .slice(-14);
-  const dailyMax = Math.max(1, ...daily.map(([, value]) => value));
-  return (
-    <div className={styles.reportGrid}>
-      <article>
-        <h3>CONSOMMATION PAR BÉNÉFICIAIRE</h3>
-        <Bars items={bars} />
-      </article>
-      <article>
-        <h3>CONSOMMATION QUOTIDIENNE</h3>
-        <div className={styles.dailyChart}>
-          {daily.length ? daily.map(([date, value]) => (
-            <div className={styles.dailyBar} key={date} title={`${date} · ${value.toFixed(2)} L`}>
-              <strong>{value.toFixed(0)} L</strong>
-              <i style={{ height: `${Math.max(8, (value / dailyMax) * 100)}%` }} />
-              <span>{date === "—" ? date : new Date(`${date}T12:00:00`).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" })}</span>
-            </div>
-          )) : <p className={styles.chartEmpty}>Aucune consommation sur la période</p>}
-        </div>
-      </article>
-      <article>
-        <h3>RÉPARTITION PAR SOCIÉTÉ</h3>
-        <Bars
-          items={[...new Set(cards.map((c) => c.company_code))].map((name) => ({
-            name,
-            value: transactions
-              .filter((t) =>
-                cards.some(
-                  (c) =>
-                    c.company_code === name &&
-                    c.masked_card_number === String(t.carte),
-                ),
-              )
-              .reduce((n, t) => n + parseNumeric(t.litres), 0),
-          }))}
-        />
-      </article>
-      <article>
-        <h3>DÉTAILS DES TRANSACTIONS</h3>
-        <div className={styles.tableWrap}>
-          <table>
-            <thead>
-              <tr>
-                <th>CARTE</th>
-                <th>BÉNÉFICIAIRE</th>
-                <th>STATION</th>
-                <th>DATE</th>
-                <th>PRODUIT</th>
-                <th>VOLUME</th>
-                <th>MONTANT</th>
-              </tr>
-            </thead>
-            <tbody>
-              {transactions.map((t) => (
-                <tr key={t.id}>
-                  <td>{t.carte}</td>
-                  <td>{t.beneficiaire}</td>
-                  <td>{t.station}</td>
-                  <td>{t.date}</td>
-                  <td>{t.produit}</td>
-                  <td>{t.litres}</td>
-                  <td>{t.montant}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </article>
     </div>
   );
 }

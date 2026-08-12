@@ -121,10 +121,19 @@ export class TransactionsService {
     await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'OBSERVATION','fuel_transaction',$2,$3)`,[actor.email,id,{observation}]);
     return {...created.rows[0],observation:observation.trim()};
   });}
-  async import(dto:{filename:string;rows:ImportRow[]},actor:Actor) { return this.db.transaction(async client => {
+  async import(dto:{filename:string;rows:ImportRow[];replaceFrom?:string},actor:Actor) { return this.db.transaction(async client => {
     if (!dto.rows.length) throw new BadRequestException('Le fichier ne contient aucune transaction');
     const batch = await client.query(`INSERT INTO transaction_import_batch(source_filename,source_sha256,imported_by,total_rows)
       VALUES($1,encode(digest($2 || clock_timestamp()::text,'sha256'),'hex'),$3,$4) RETURNING id`,[dto.filename,dto.filename,actor.sub,dto.rows.length]);
+    let replaced=0;
+    if(dto.replaceFrom){
+      const archived=await client.query(`UPDATE fuel_transaction SET deleted_at=now(),deleted_by=$2
+        WHERE deleted_at IS NULL AND transaction_date >= $1::date RETURNING id`,[dto.replaceFrom,actor.sub]);
+      replaced=archived.rowCount??0;
+      await client.query(`UPDATE transaction_review SET status='REJECTED',decided_by=$2,decided_at=now(),
+        decision_reason='Remplacée par le nouvel instantané Total'
+        WHERE status='PENDING' AND transaction_date >= $1::date`,[dto.replaceFrom,actor.sub]);
+    }
     let imported=0,review=0,duplicates=0,verified=0,mismatches=0,unpriced=0;
     for (let index=0;index<dto.rows.length;index++) {
       const row=dto.rows[index], cardKey=row.cardNumber.replace(/\D/g,'');
@@ -223,7 +232,14 @@ export class TransactionsService {
       const external=`TOTAL:FP:${fingerprint}`;
       const inserted=await client.query(`INSERT INTO fuel_transaction(external_transaction_id,fuel_card_id,beneficiary_id,vehicle_id,transaction_date,station,product,
         quantity_liters,amount_incl_tax,source,import_batch_id,source_row_number,previous_mileage,reported_mileage,authorization_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'TOTAL_EXCEL',$10,$11,$12,$13,$14)
-        ON CONFLICT DO NOTHING RETURNING id`,[external,card.rows[0].id,beneficiary.rows[0].id,vehicle.rows[0]?.id??null,row.date,row.station??null,row.product??null,row.liters,row.amount,batch.rows[0].id,index+1,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]);
+        ON CONFLICT(external_transaction_id,source) DO UPDATE SET
+          fuel_card_id=excluded.fuel_card_id,beneficiary_id=excluded.beneficiary_id,vehicle_id=excluded.vehicle_id,
+          transaction_date=excluded.transaction_date,station=excluded.station,product=excluded.product,
+          quantity_liters=excluded.quantity_liters,amount_incl_tax=excluded.amount_incl_tax,
+          import_batch_id=excluded.import_batch_id,source_row_number=excluded.source_row_number,
+          previous_mileage=excluded.previous_mileage,reported_mileage=excluded.reported_mileage,
+          authorization_code=excluded.authorization_code,deleted_at=null,deleted_by=null
+        RETURNING id`,[external,card.rows[0].id,beneficiary.rows[0].id,vehicle.rows[0]?.id??null,row.date,row.station??null,row.product??null,row.liters,row.amount,batch.rows[0].id,index+1,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]);
       if(inserted.rowCount){
         imported++;
         const canonicalProduct=this.canonicalFuelProduct(row.product);
@@ -285,7 +301,7 @@ export class TransactionsService {
     if(review) await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
       SELECT id,'Transactions inconnues détectées',$2,'WARNING','anomalies','transaction_import_batch',$3 FROM app_user
       WHERE active AND role::text=ANY($1::text[])`,[['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'],`${review} transaction(s) nécessitent la vérification d’une carte ou d’un véhicule`,batch.rows[0].id]);
-    return {batchId:batch.rows[0].id,imported,duplicates,pendingReview:review,verified,mismatches,unpriced,
+    return {batchId:batch.rows[0].id,imported,duplicates,replaced,pendingReview:review,verified,mismatches,unpriced,
       products:new Set(dto.rows.map(row=>row.product.toUpperCase())).size,
       stations:new Set(dto.rows.map(row=>row.station.toUpperCase())).size};
   }); }

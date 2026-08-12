@@ -224,7 +224,9 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       const token = await this.refreshAccessToken(
         this.decrypt(config.refresh_token_ciphertext),
       );
-      const fromDate = requestedFromDate ?? undefined;
+      // Chaque passage est un instantané complet. L'ancien état de la période
+      // est remplacé dans la même transaction seulement après réception de Total.
+      const fromDate = requestedFromDate ?? this.initialExtractionDate;
       const remote = await this.fetchAll(config, token, fromDate);
       const rows = remote.map((r, index) => this.mapTransaction(r, index));
       const result = rows.length
@@ -232,6 +234,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
             {
               filename: `TOTAL_MOBILITY_${new Date().toISOString()}.json`,
               rows,
+              replaceFrom: fromDate,
             },
             actor,
           )
@@ -247,7 +250,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           result.pendingReview,
           {
             source: 'TOTAL_MOBILITY_API',
-            dateFrom: fromDate ?? 'INCREMENTAL',
+            dateFrom: fromDate,
             dateTo: new Date().toISOString(),
           },
         ],
@@ -259,7 +262,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       return {
         status: result.pendingReview ? 'PARTIAL' : 'SUCCESS',
         fetched: rows.length,
-        dateFrom: fromDate ?? 'INCREMENTAL',
+        dateFrom: fromDate,
         ...result,
       };
     } catch (error) {

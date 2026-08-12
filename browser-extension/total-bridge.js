@@ -27,6 +27,10 @@ function reportSession() {
   if (refreshToken) chrome.runtime.sendMessage({ type: "TOTAL_SESSION", refreshToken });
 }
 
+// Certaines versions du portail gardent le jeton en mémoire et ne le publient
+// qu'après une actualisation. L'agent réseau du service worker le récupère alors
+// directement depuis la réponse OAuth, sans DevTools ni copier-coller.
+
 window.addEventListener("storage", reportSession);
 document.addEventListener("visibilitychange", reportSession);
 setInterval(reportSession, 2500);

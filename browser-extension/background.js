@@ -1,6 +1,20 @@
 const API = "https://delta-carburant-api.onrender.com/api/v1";
 let pending = null;
 
+function extractRefreshToken(value) {
+  if (!value) return null;
+  if (typeof value === "string") {
+    try { return extractRefreshToken(JSON.parse(value)); } catch { return null; }
+  }
+  if (typeof value !== "object") return null;
+  for (const [key, child] of Object.entries(value)) {
+    if (/refresh[_-]?token/i.test(key) && typeof child === "string" && child.length > 20) return child;
+    const nested = extractRefreshToken(child);
+    if (nested) return nested;
+  }
+  return null;
+}
+
 function notifyApp(message) {
   if (!pending?.appTabId) return;
   chrome.tabs.sendMessage(pending.appTabId, { source: "delta-total-extension", ...message }).catch(() => undefined);
@@ -10,6 +24,9 @@ async function finishIfReady() {
   if (!pending?.accessToken || !pending?.refreshToken || pending.finishing) return;
   pending.finishing = true;
   try {
+    if (pending.totalTabId) {
+      try { await chrome.debugger.detach({ tabId: pending.totalTabId }); } catch {}
+    }
     notifyApp({ type: "STATUS", message: "Session détectée. Connexion et extraction en cours…" });
     const response = await fetch(`${API}/total-mobility/reconnect`, {
       method: "POST",
@@ -32,11 +49,46 @@ async function finishIfReady() {
   }
 }
 
+async function watchTotalAuthentication(tabId) {
+  const target = { tabId };
+  try {
+    await chrome.debugger.attach(target, "1.3");
+    await chrome.debugger.sendCommand(target, "Network.enable");
+  } catch (error) {
+    notifyApp({ type: "STATUS", message: "Total est ouvert. Détection sécurisée de la session en cours…" });
+  }
+}
+
+chrome.debugger.onEvent.addListener(async (source, method, params) => {
+  if (!pending || source.tabId !== pending.totalTabId || method !== "Network.responseReceived") return;
+  const response = params?.response;
+  if (!response || !/(?:oauth|connect|token|login)/i.test(response.url || "")) return;
+  try {
+    const body = await chrome.debugger.sendCommand(source, "Network.getResponseBody", { requestId: params.requestId });
+    const refreshToken = extractRefreshToken(body?.body);
+    if (!refreshToken) return;
+    pending.refreshToken = refreshToken;
+    try { await chrome.debugger.detach(source); } catch {}
+    void finishIfReady();
+  } catch {}
+});
+
+chrome.debugger.onDetach.addListener((source) => {
+  if (pending?.totalTabId === source.tabId && !pending.refreshToken) {
+    notifyApp({ type: "STATUS", message: "Détection Total interrompue. Revenez au portail puis actualisez la page." });
+  }
+});
+
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message?.type === "START_RECONNECT") {
     pending = { accessToken: message.accessToken, appTabId: sender.tab?.id, finishing: false };
     notifyApp({ type: "STATUS", message: "Ouverture de Total… Connectez-vous si le portail le demande." });
-    chrome.tabs.create({ url: "https://customer.fleet.totalenergies.com/tn/", active: true });
+    chrome.tabs.create({ url: "about:blank", active: true }).then(async (tab) => {
+      if (!pending || !tab.id) return;
+      pending.totalTabId = tab.id;
+      await watchTotalAuthentication(tab.id);
+      await chrome.tabs.update(tab.id, { url: "https://customer.fleet.totalenergies.com/tn/" });
+    });
   }
   if (message?.type === "TOTAL_SESSION" && pending) {
     pending.refreshToken = message.refreshToken;

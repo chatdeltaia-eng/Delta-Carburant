@@ -21,6 +21,7 @@ import {
 import { Roles } from '../common/roles';
 import { RolesGuard } from '../common/roles.guard';
 import { TotalMobilityService } from './total-mobility.service';
+import { TotalLoginAgentService } from './total-login-agent.service';
 
 class ConfigureTotalMobilityDto {
   @IsString() @MinLength(10) customerId!: string;
@@ -44,12 +45,29 @@ class SyncTotalMobilitySessionDto {
   @IsString() @MinLength(20) accessToken!: string;
   @IsOptional() @IsDateString() fromDate?: string;
 }
+class TotalVerificationCodeDto {
+  @IsString() @MinLength(4) code!: string;
+}
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Roles('SUPER_ADMIN', 'DIRECTION_GENERAL')
 @Controller('total-mobility')
 export class TotalMobilityController {
-  constructor(private readonly total: TotalMobilityService) {}
+  constructor(
+    private readonly total: TotalMobilityService,
+    private readonly agent: TotalLoginAgentService,
+  ) {}
+  @Get('agent/status') agentStatus() {
+    return this.agent.getStatus();
+  }
+  @Post('agent/start') startAgent(
+    @Req() req: { user: { sub: string; email: string } },
+  ) {
+    return this.agent.start(req.user);
+  }
+  @Post('agent/code') submitAgentCode(@Body() dto: TotalVerificationCodeDto) {
+    return this.agent.submitCode(dto.code);
+  }
   @Get('status') status() {
     return this.total.status();
   }
@@ -84,6 +102,10 @@ export class TotalMobilityController {
     @Body() dto: SyncTotalMobilitySessionDto,
     @Req() req: { user: { sub: string; email: string } },
   ) {
-    return this.total.syncWithAccessToken(req.user, dto.accessToken, dto.fromDate);
+    return this.total.syncWithAccessToken(
+      req.user,
+      dto.accessToken,
+      dto.fromDate,
+    );
   }
 }

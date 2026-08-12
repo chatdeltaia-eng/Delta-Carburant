@@ -3665,6 +3665,7 @@ function Login({
 }
 type TotalMobilityStatus={customerNumber?:string;siteNumber?:string;enabled?:boolean;syncIntervalMinutes?:number;lastSuccessAt?:string;lastError?:string};
 type TotalMobilityRun={id:string;startedAt:string;status:string;fetchedRows:number;importedRows:number;duplicateRows:number;reviewRows?:number;errorMessage?:string;metadata?:{dateFrom?:string;dateTo?:string}};
+type TotalAgentStatus={state:"IDLE"|"STARTING"|"SIGNING_IN"|"CODE_REQUIRED"|"EXTRACTING"|"SUCCESS"|"FAILED";message:string;updatedAt:string;result?:{imported?:number}};
 type TotalMobilityPayload={CustomerId?:string;CustomerNumber?:string;SiteNumber?:string;UserId?:string;usersname?:string};
 function readTotalMobilityPayload(raw:string):TotalMobilityPayload{
   const text=raw.trim();
@@ -3680,20 +3681,21 @@ function Settings({ reset,token,user,notify,onSynced }: { reset:()=>void;token:s
   const [total,setTotal]=useState<TotalMobilityStatus>({});
   const [runs,setRuns]=useState<TotalMobilityRun[]>([]);
   const [busy,setBusy]=useState(false);
+  const [agent,setAgent]=useState<TotalAgentStatus|null>(null);
+  const [verificationCode,setVerificationCode]=useState("");
   const direction=isDirection(user.role);
-  function reconnectWithAgent(){
-    window.postMessage({source:"delta-carburant",type:"RECONNECT_TOTAL"},"*");
-    notify("Ouverture de Total… Connectez-vous uniquement si le portail le demande.");
+  async function reconnectWithAgent(){
+    if(!token)return;
+    setBusy(true);
+    try{
+      const response=await fetch(`${API}/total-mobility/agent/start`,{method:"POST",headers:{Authorization:`Bearer ${token}`}});
+      const body=await response.json().catch(()=>({})) as TotalAgentStatus&{message?:string|string[]};
+      if(!response.ok)throw new Error(Array.isArray(body.message)?body.message.join(" · "):body.message||"Impossible de démarrer l’agent Total");
+      setAgent(body);notify("L’agent se connecte à Total Mobility en arrière-plan.");
+    }catch(error){notify(error instanceof Error?error.message:"Connexion automatique impossible");setBusy(false);}
   }
-  useEffect(()=>{
-    const receive=(event:MessageEvent)=>{
-      if(event.source!==window||event.data?.source!=="delta-total-extension")return;
-      if(event.data.message)notify(String(event.data.message));
-      if(event.data.type==="SUCCESS"){void loadTotal();onSynced();}
-    };
-    window.addEventListener("message",receive);
-    return()=>window.removeEventListener("message",receive);
-  });
+  async function submitVerificationCode(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!token)return;setBusy(true);try{const response=await fetch(`${API}/total-mobility/agent/code`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({code:verificationCode})});const body=await response.json().catch(()=>({})) as TotalAgentStatus&{message?:string|string[]};if(!response.ok)throw new Error(Array.isArray(body.message)?body.message.join(" · "):body.message||"Code refusé");setAgent(body);setVerificationCode("");}catch(error){notify(error instanceof Error?error.message:"Code Total refusé");}finally{setBusy(false);}}
+  useEffect(()=>{if(!token||!agent||!["STARTING","SIGNING_IN","CODE_REQUIRED","EXTRACTING"].includes(agent.state))return;const poll=window.setInterval(()=>{void fetch(`${API}/total-mobility/agent/status`,{headers:{Authorization:`Bearer ${token}`}}).then(async response=>{if(!response.ok)return;const next=await response.json() as TotalAgentStatus;setAgent(next);if(next.state==="SUCCESS"){setBusy(false);notify(`Total connecté : ${next.result?.imported??0} transaction(s) actualisée(s).`);await loadTotal();onSynced();}else if(next.state==="FAILED"){setBusy(false);notify(next.message);}}).catch(()=>undefined);},1200);return()=>window.clearInterval(poll);},[agent,token]); // eslint-disable-line react-hooks/exhaustive-deps
   async function loadTotal(){if(!token||!direction)return;try{const headers={Authorization:`Bearer ${token}`};const [a,b]=await Promise.all([fetch(`${API}/total-mobility/status`,{headers}),fetch(`${API}/total-mobility/runs`,{headers})]);if(a.ok)setTotal(await a.json());if(b.ok)setRuns(await b.json());}catch{/* Rechargement au prochain affichage. */}}
   useEffect(()=>{
     if(!token||!direction)return;
@@ -3711,8 +3713,8 @@ function Settings({ reset,token,user,notify,onSynced }: { reset:()=>void;token:s
       {direction&&<article className={styles.totalConnector}>
         <div className={styles.connectorHead}><div><small>EXTRACTION DIRECTE — SANS CSV / EXCEL</small><h2>TotalEnergies Mobility</h2><p>Chaque extraction remplace l’ancien état depuis le 01/08/2026 par le nouvel instantané officiel Total.</p></div><span className={total.customerNumber&&total.enabled?styles.connectorOnline:styles.connectorOffline}>{total.customerNumber&&total.enabled?"● Connecté":"○ Non connecté"}</span></div>
         {total.customerNumber&&<><div className={styles.connectorMetrics}><span><small>Client</small><b>{total.customerNumber}</b></span><span><small>Site</small><b>{total.siteNumber}</b></span><span><small>Fréquence</small><b>{total.syncIntervalMinutes} min</b></span><span><small>Dernier succès</small><b>{total.lastSuccessAt?new Date(total.lastSuccessAt).toLocaleString("fr-FR"):"Jamais"}</b></span></div>{total.lastError&&<div className={styles.connectorError}>⚠ {total.lastError}</div>}<button disabled={busy} onClick={sync}>{busy?"Extraction depuis Total…":"Extraire depuis Total (depuis le 01/08/2026)"}</button></>}
-        <button className={styles.connectorConnectButton} disabled={busy} onClick={reconnectWithAgent}>Reconnecter Total automatiquement</button>
-        <p><small>Le portail Total s’ouvre. Faites seulement le login s’il est demandé : la session et l’extraction sont ensuite détectées automatiquement.</small></p>
+        <button className={styles.connectorConnectButton} disabled={busy} onClick={reconnectWithAgent}>{busy?"Agent Total en cours…":"Se connecter et extraire automatiquement"}</button>
+        <p><small>L’agent serveur utilise les secrets Render, renouvelle la session puis extrait les transactions. Aucun portail, extension ou paramétrage manuel.</small></p>
         <details className={styles.connectorConfig}><summary>Mode de secours administrateur</summary><form onSubmit={connect} className={styles.connectorForm}>
           <div className={styles.connectorGuide}><b>1</b><span><strong>Copiez la configuration des transactions</strong><small>Total Mobility → F12 → Network → requête <code>report/list</code> → Payload → clic droit → Copy value.</small></span></div>
           <label className={styles.connectorSecret}>Configuration Total copiée<textarea name="totalPayload" rows={5} placeholder={'Collez ici tout le Request Payload. Les champs client, site et utilisateur seront détectés automatiquement.'} /></label>
@@ -3724,6 +3726,7 @@ function Settings({ reset,token,user,notify,onSynced }: { reset:()=>void;token:s
         </form></details>
         {runs.length>0&&<details className={styles.connectorRuns} open><summary>Journal des extractions Total</summary><div className={styles.tableWrap}><table><thead><tr><th>Date</th><th>Période</th><th>État</th><th>Reçues</th><th>Réécrites</th><th>Doublons</th><th>À contrôler</th></tr></thead><tbody>{runs.slice(0,10).map(run=><tr key={run.id}><td>{new Date(run.startedAt).toLocaleString("fr-FR")}</td><td>{run.metadata?.dateFrom==="2026-08-01"?"Depuis le 01/08/2026":run.metadata?.dateFrom??"Automatique"}</td><td><b>{run.status}</b>{run.errorMessage&&<small> — {run.errorMessage}</small>}</td><td>{run.fetchedRows}</td><td>{run.importedRows}</td><td>{run.duplicateRows}</td><td>{run.reviewRows??0}</td></tr>)}</tbody></table></div></details>}
       </article>}
+      {agent&&["STARTING","SIGNING_IN","CODE_REQUIRED","EXTRACTING","FAILED","SUCCESS"].includes(agent.state)&&<div className={styles.overlay}><section className={`${styles.modal} ${styles.totalAgentModal}`}><div className={styles.modalHead}><div><h2>Agent Total Mobility</h2><p>Connexion et extraction sécurisées</p></div>{["FAILED","SUCCESS"].includes(agent.state)&&<button type="button" onClick={()=>setAgent(null)}>×</button>}</div><div className={styles.agentBody}><span className={`${styles.agentPulse} ${agent.state==="FAILED"?styles.agentFailed:""}`}>{agent.state==="SUCCESS"?"✓":agent.state==="FAILED"?"!":"●"}</span><h3>{agent.message}</h3>{agent.state==="CODE_REQUIRED"&&<form onSubmit={submitVerificationCode}><label>Code de vérification reçu<input autoFocus inputMode="numeric" autoComplete="one-time-code" value={verificationCode} onChange={event=>setVerificationCode(event.target.value.replace(/\D/g,"").slice(0,8))} placeholder="000000" minLength={4} required /></label><button disabled={busy||verificationCode.length<4}>Valider le code</button></form>}{!["CODE_REQUIRED","FAILED","SUCCESS"].includes(agent.state)&&<p>Gardez cette fenêtre ouverte. L’opération continue automatiquement.</p>}{agent.state==="FAILED"&&<p>Vérifiez les secrets Render ou réessayez. Si Total affiche un CAPTCHA, celui-ci doit être traité manuellement.</p>}{agent.state==="SUCCESS"&&<button onClick={()=>setAgent(null)}>Terminer</button>}</div></section></div>}
       <article>
         <h2>Règles des rôles</h2>
         <p>

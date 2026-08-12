@@ -1,12 +1,11 @@
 services:
   - type: web
     name: delta-carburant-api
-    runtime: node
+    runtime: docker
+    dockerfilePath: ./Dockerfile.api
     region: frankfurt
     plan: free
     autoDeployTrigger: off
-    buildCommand: npm ci --include=dev --prefix apps/api && npm run build --prefix apps/api
-    startCommand: node apps/api/scripts/migrate.js && npm run start:prod --prefix apps/api
     healthCheckPath: /api/v1/health
     maxShutdownDelaySeconds: 60
     envVars:
@@ -32,6 +31,10 @@ services:
         sync: false
       - key: LOGIN_ALERT_TO
         value: Khaled.sfaxi@deltacuisine.com
+      - key: TOTAL_USERNAME
+        sync: false
+      - key: TOTAL_PASSWORD
+        sync: false
 
   - type: web
     name: delta-carburant-web

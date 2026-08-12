@@ -2127,6 +2127,10 @@ function Dashboard({
           note={`Source Total · toutes les transactions du mois`}
         />
       </section>
+      {isDirection(user.role)&&<MonthlyConsumptionGauge
+        consumed={officialMonthlyConsumed}
+        creditLine={activeMonthlyLimit}
+      />}
       <section className={styles.overviewPanel}>
         <div className={styles.overviewToolbar}>
           <div>
@@ -3728,6 +3732,31 @@ const titles: Record<string, string> = {
   settings: "Configuration",
   import: "Importer les transactions Total",
 };
+function MonthlyConsumptionGauge({consumed,creditLine}:{consumed:number;creditLine:number}){
+  const rawRate=creditLine>0?consumed/creditLine*100:0;
+  const rate=Math.max(0,Math.min(100,rawRate));
+  const formattedRate=rawRate.toLocaleString("fr-FR",{minimumFractionDigits:2,maximumFractionDigits:2});
+  return <section className={styles.monthlyGauge} aria-label={`Consommation mensuelle ${formattedRate} pour cent`}>
+    <div className={styles.gaugeHeading}>
+      <div><small>INDICATEUR DIRECTION GÉNÉRALE</small><h2>Jauge de consommation</h2><p><b>Période :</b> Mensuelle · Source officielle TotalEnergies</p></div>
+      <span>Actualisation automatique</span>
+    </div>
+    <div className={styles.gaugeVisual}>
+      <svg viewBox="0 0 240 132" role="img" aria-hidden="true">
+        <path className={styles.gaugeTrack} pathLength="100" d="M 24 116 A 96 96 0 0 1 216 116" />
+        <path className={styles.gaugeValue} pathLength="100" strokeDasharray={`${rate} 100`} d="M 24 116 A 96 96 0 0 1 216 116" />
+      </svg>
+      <div className={styles.gaugeRate}><strong>{formattedRate}%</strong><small>du plafond consommé</small></div>
+    </div>
+    <div className={styles.gaugeFigures}>
+      <div><small>Consommation Total</small><strong>{consumed.toLocaleString("fr-FR",{maximumFractionDigits:3})} TND</strong></div>
+      <i aria-hidden="true" />
+      <div><small>Ligne de crédit distribuée</small><strong>{creditLine.toLocaleString("fr-FR",{maximumFractionDigits:3})} TND</strong></div>
+      <i aria-hidden="true" />
+      <div><small>Crédit disponible</small><strong>{Math.max(0,creditLine-consumed).toLocaleString("fr-FR",{maximumFractionDigits:3})} TND</strong></div>
+    </div>
+  </section>;
+}
 function Metric({
   icon,
   color,

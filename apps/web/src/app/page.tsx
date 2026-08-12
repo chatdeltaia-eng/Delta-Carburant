@@ -1797,10 +1797,10 @@ export default function Home() {
                 <AppIcon name="bell" size={19}/>{unread > 0 && <span>{unread}</span>}
               </button>
               {showNotifications && (
-                <div className={styles.notificationMenu}>
+                <><button className={styles.notificationBackdrop} aria-label="Fermer les notifications" onClick={() => setShowNotifications(false)} /><div className={styles.notificationMenu} role="dialog" aria-label="Centre de notifications">
                   <div className={styles.notificationHeader}>
                     <div><h3>Notifications</h3><small>Privées · {roleLabel(user.role)}</small></div>
-                    <span>{unread} non lue{unread > 1 ? "s" : ""}</span>
+                    <div className={styles.notificationHeaderActions}><span>{unread} non lue{unread > 1 ? "s" : ""}</span><button aria-label="Fermer" onClick={() => setShowNotifications(false)}>×</button></div>
                   </div>
                   {userNotifications.length > 0 && (
                     <div className={styles.notificationTools}>
@@ -1821,9 +1821,9 @@ export default function Home() {
                       </button>
                     ))
                   ) : (
-                    <p>Aucune notification</p>
+                    <div className={styles.notificationEmpty}><AppIcon name="bell" size={25}/><b>Tout est sous contrôle</b><p>Aucune nouvelle notification pour le moment.</p></div>
                   )}
-                </div>
+                </div></>
               )}
             </div>
             <div className={styles.user}>
@@ -1846,6 +1846,7 @@ export default function Home() {
             go={setView}
             open={setModal}
             edit={openCard}
+            analytics={directionData}
           />
         ) : view === "reports" ? (
           <DirectionReports cards={cards} transactions={data.transactions} analytics={directionData} />
@@ -2077,6 +2078,7 @@ function Dashboard({
   go,
   open,
   edit,
+  analytics,
 }: {
   summary: Record<string, number>;
   cards: Card[];
@@ -2085,6 +2087,7 @@ function Dashboard({
   go: (v: View) => void;
   open: (m: Modal) => void;
   edit: (c: Card) => void;
+  analytics: Record<string,unknown>|null;
 }) {
   const [overviewSearch, setOverviewSearch] = useState("");
   const query = normalizedKey(overviewSearch);
@@ -2104,8 +2107,32 @@ function Dashboard({
   const totalMonthlyLimit = activeMonthlyLimit + safeCardsLimit;
   const officialMonthlyConsumed = Number(summary.officialMonthAmount ??
     activeCards.reduce((sum, card) => sum + Number(card.consumed_amount ?? 0), 0));
+  const utilization = activeMonthlyLimit ? Math.round((officialMonthlyConsumed / activeMonthlyLimit) * 100) : 0;
+  const cardsAtRisk = activeCards.filter((card) => Number(card.consumption_rate ?? 0) >= 80);
+  const openAnomalies = Number(analytics?.openAnomalies ?? 0);
+  const billingMismatches = Number(analytics?.billingMismatches ?? 0);
   return (
     <>
+      {isDirection(user.role) && <section className={styles.executiveHero}>
+        <div className={styles.executiveHeroCopy}>
+          <span className={styles.executiveLabel}>COCKPIT EXÉCUTIF · TEMPS RÉEL</span>
+          <h2>La consommation du parc est à <strong>{utilization}%</strong> de la ligne distribuée.</h2>
+          <p>Une lecture immédiate de la performance, des risques et des décisions à prendre sur le mois en cours.</p>
+          <div className={styles.executiveHeroActions}>
+            <button onClick={() => go("reports")}><AppIcon name="reports" size={17}/> Ouvrir l’analyse Direction</button>
+            <button onClick={() => go("anomalies")}><AppIcon name="alert" size={17}/> Examiner les alertes</button>
+          </div>
+        </div>
+        <div className={styles.executivePulse}>
+          <div style={{"--rate":`${Math.min(100, utilization)}%`} as React.CSSProperties}><strong>{utilization}%</strong><span>utilisé</span></div>
+          <small>Actualisé depuis Total Mobility</small>
+        </div>
+        <div className={styles.executiveSignals}>
+          <article className={openAnomalies ? styles.signalDanger : styles.signalGood}><span><AppIcon name="alert" size={18}/></span><div><small>Anomalies ouvertes</small><strong>{openAnomalies}</strong></div></article>
+          <article className={billingMismatches ? styles.signalWarning : styles.signalGood}><span><AppIcon name="check" size={18}/></span><div><small>Écarts de facturation</small><strong>{billingMismatches}</strong></div></article>
+          <article className={cardsAtRisk.length ? styles.signalWarning : styles.signalGood}><span><AppIcon name="cards" size={18}/></span><div><small>Cartes à surveiller</small><strong>{cardsAtRisk.length}</strong></div></article>
+        </div>
+      </section>}
       <section className={styles.metrics}>
         <Metric
           icon="sum"

@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Delta Carburant — Connexion Total",
+  "version": "1.0.0",
+  "description": "Renouvelle la connexion Total Mobility et lance l'extraction sans copier de jeton.",
+  "permissions": ["tabs"],
+  "host_permissions": [
+    "https://customer.fleet.totalenergies.com/*",
+    "https://delta-carburant-api.onrender.com/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://delta-carburant-web.onrender.com/*", "http://localhost:3000/*"],
+      "js": ["app-bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://customer.fleet.totalenergies.com/*"],
+      "js": ["total-bridge.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

@@ -37,6 +37,9 @@ class ToggleDto {
 class SyncTotalMobilityDto {
   @IsOptional() @IsDateString() fromDate?: string;
 }
+class ReconnectTotalMobilityDto {
+  @IsString() @MinLength(20) refreshToken!: string;
+}
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Roles('SUPER_ADMIN', 'DIRECTION_GENERAL')
@@ -54,6 +57,12 @@ export class TotalMobilityController {
     @Req() req: { user: { sub: string; email: string } },
   ) {
     return this.total.connect(dto, req.user);
+  }
+  @Post('reconnect') reconnect(
+    @Body() dto: ReconnectTotalMobilityDto,
+    @Req() req: { user: { sub: string; email: string } },
+  ) {
+    return this.total.reconnect(dto.refreshToken, req.user);
   }
   @Patch('enabled') toggle(
     @Body() dto: ToggleDto,

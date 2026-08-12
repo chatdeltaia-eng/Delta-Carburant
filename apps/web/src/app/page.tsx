@@ -3681,6 +3681,19 @@ function Settings({ reset,token,user,notify,onSynced }: { reset:()=>void;token:s
   const [runs,setRuns]=useState<TotalMobilityRun[]>([]);
   const [busy,setBusy]=useState(false);
   const direction=isDirection(user.role);
+  function reconnectWithAgent(){
+    window.postMessage({source:"delta-carburant",type:"RECONNECT_TOTAL"},"*");
+    notify("Ouverture de Total… Connectez-vous uniquement si le portail le demande.");
+  }
+  useEffect(()=>{
+    const receive=(event:MessageEvent)=>{
+      if(event.source!==window||event.data?.source!=="delta-total-extension")return;
+      if(event.data.message)notify(String(event.data.message));
+      if(event.data.type==="SUCCESS"){void loadTotal();onSynced();}
+    };
+    window.addEventListener("message",receive);
+    return()=>window.removeEventListener("message",receive);
+  });
   async function loadTotal(){if(!token||!direction)return;try{const headers={Authorization:`Bearer ${token}`};const [a,b]=await Promise.all([fetch(`${API}/total-mobility/status`,{headers}),fetch(`${API}/total-mobility/runs`,{headers})]);if(a.ok)setTotal(await a.json());if(b.ok)setRuns(await b.json());}catch{/* Rechargement au prochain affichage. */}}
   useEffect(()=>{
     if(!token||!direction)return;
@@ -3698,7 +3711,9 @@ function Settings({ reset,token,user,notify,onSynced }: { reset:()=>void;token:s
       {direction&&<article className={styles.totalConnector}>
         <div className={styles.connectorHead}><div><small>EXTRACTION DIRECTE — SANS CSV / EXCEL</small><h2>TotalEnergies Mobility</h2><p>Chaque extraction remplace l’ancien état depuis le 01/08/2026 par le nouvel instantané officiel Total.</p></div><span className={total.customerNumber&&total.enabled?styles.connectorOnline:styles.connectorOffline}>{total.customerNumber&&total.enabled?"● Connecté":"○ Non connecté"}</span></div>
         {total.customerNumber&&<><div className={styles.connectorMetrics}><span><small>Client</small><b>{total.customerNumber}</b></span><span><small>Site</small><b>{total.siteNumber}</b></span><span><small>Fréquence</small><b>{total.syncIntervalMinutes} min</b></span><span><small>Dernier succès</small><b>{total.lastSuccessAt?new Date(total.lastSuccessAt).toLocaleString("fr-FR"):"Jamais"}</b></span></div>{total.lastError&&<div className={styles.connectorError}>⚠ {total.lastError}</div>}<button disabled={busy} onClick={sync}>{busy?"Extraction depuis Total…":"Extraire depuis Total (depuis le 01/08/2026)"}</button></>}
-        <details className={styles.connectorConfig}><summary>{total.customerNumber?"Reconnecter ou modifier":"Connexion guidée — 2 étapes"}</summary><form onSubmit={connect} className={styles.connectorForm}>
+        <button className={styles.connectorConnectButton} disabled={busy} onClick={reconnectWithAgent}>Reconnecter Total automatiquement</button>
+        <p><small>Le portail Total s’ouvre. Faites seulement le login s’il est demandé : la session et l’extraction sont ensuite détectées automatiquement.</small></p>
+        <details className={styles.connectorConfig}><summary>Mode de secours administrateur</summary><form onSubmit={connect} className={styles.connectorForm}>
           <div className={styles.connectorGuide}><b>1</b><span><strong>Copiez la configuration des transactions</strong><small>Total Mobility → F12 → Network → requête <code>report/list</code> → Payload → clic droit → Copy value.</small></span></div>
           <label className={styles.connectorSecret}>Configuration Total copiée<textarea name="totalPayload" rows={5} placeholder={'Collez ici tout le Request Payload. Les champs client, site et utilisateur seront détectés automatiquement.'} /></label>
           <div className={styles.connectorGuide}><b>2</b><span><strong>Collez le jeton de connexion</strong><small>F12 → Application → Local Storage → <code>refresh_token</code>. Ne le partagez avec personne.</small></span></div>

@@ -165,6 +165,30 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       syncIntervalMinutes: dto.syncIntervalMinutes ?? 60,
     };
   }
+  async reconnect(refreshTokenValue: string, actor: Actor) {
+    const refreshToken = this.normalizeRefreshToken(refreshTokenValue);
+    try {
+      await this.refreshAccessToken(refreshToken);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new BadRequestException(`Reconnexion Total refusée : ${message}`);
+    }
+    const updated = await this.db.query<{ id: string }>(
+      `UPDATE total_mobility_connection SET refresh_token_ciphertext=$1,enabled=true,last_error=null,
+       connected_by=$2,updated_at=now() RETURNING id`,
+      [this.encrypt(refreshToken), actor.sub],
+    );
+    if (!updated[0])
+      throw new BadRequestException(
+        'La connexion Total initiale doit être configurée une seule fois par un administrateur',
+      );
+    await this.db.query(
+      `INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
+       VALUES($1,'RECONNECT_TOTAL_MOBILITY','integration','TOTAL_MOBILITY',$2)`,
+      [actor.email, { automatic: true }],
+    );
+    return { connected: true };
+  }
   async toggle(enabled: boolean, email: string) {
     await this.db.query(
       `UPDATE total_mobility_connection SET enabled=$1,updated_at=now()`,

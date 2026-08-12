@@ -70,6 +70,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
     'https://tte-pool-prod.auth.eu-central-1.amazoncognito.com/oauth2/token';
   private readonly clientId = '75e7et2c904672c940ct6pcie8';
   private readonly applicationId = '2657f67d-1b24-4c31-af22-a0ba72df0623';
+  private readonly initialExtractionDate = '2026-08-01';
   constructor(
     private readonly db: DatabaseService,
     private readonly transactions: TransactionsService,
@@ -190,7 +191,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         );
       }
   }
-  async syncNow(actor: Actor) {
+  async syncNow(actor: Actor, requestedFromDate?: string) {
     const lock = await this.db.query<{ locked: boolean }>(
       `SELECT pg_try_advisory_lock(hashtext('delta-total-mobility-sync')) AS locked`,
     );
@@ -223,7 +224,8 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       const token = await this.refreshAccessToken(
         this.decrypt(config.refresh_token_ciphertext),
       );
-      const remote = await this.fetchAll(config, token);
+      const fromDate = requestedFromDate ?? undefined;
+      const remote = await this.fetchAll(config, token, fromDate);
       const rows = remote.map((r, index) => this.mapTransaction(r, index));
       const result = rows.length
         ? await this.transactions.import(
@@ -243,7 +245,11 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           result.imported,
           result.duplicates,
           result.pendingReview,
-          { source: 'TOTAL_MOBILITY_API' },
+          {
+            source: 'TOTAL_MOBILITY_API',
+            dateFrom: fromDate ?? 'INCREMENTAL',
+            dateTo: new Date().toISOString(),
+          },
         ],
       );
       await this.db.query(
@@ -253,6 +259,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       return {
         status: result.pendingReview ? 'PARTIAL' : 'SUCCESS',
         fetched: rows.length,
+        dateFrom: fromDate ?? 'INCREMENTAL',
         ...result,
       };
     } catch (error) {
@@ -335,11 +342,18 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       .update(payload + nonce)
       .digest('base64');
   }
-  private async fetchAll(config: ConnectionRow, token: string) {
+  private async fetchAll(
+    config: ConnectionRow,
+    token: string,
+    requestedFromDate?: string,
+  ) {
     const results: RemoteTransaction[] = [];
-    const now = new Date(),
-      from = new Date(config.last_success_at ?? now.getTime() - 48 * 3600_000);
-    from.setHours(from.getHours() - 6);
+    const now = new Date();
+    const from = requestedFromDate
+      ? new Date(`${requestedFromDate}T00:00:00+01:00`)
+      : new Date(config.last_success_at ?? `${this.initialExtractionDate}T00:00:00+01:00`);
+    if (Number.isNaN(from.getTime())) throw new Error('date de début invalide');
+    if (!requestedFromDate) from.setHours(from.getHours() - 6);
     for (let page = 0; page < 100; page++) {
       const correlation = randomUUID(),
         payload: Record<string, unknown> = {

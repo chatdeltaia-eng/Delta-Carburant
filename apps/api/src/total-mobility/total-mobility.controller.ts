@@ -10,6 +10,7 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import {
   IsBoolean,
+  IsDateString,
   IsInt,
   IsOptional,
   IsString,
@@ -32,6 +33,9 @@ class ConfigureTotalMobilityDto {
 }
 class ToggleDto {
   @IsBoolean() enabled!: boolean;
+}
+class SyncTotalMobilityDto {
+  @IsOptional() @IsDateString() fromDate?: string;
 }
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -57,7 +61,10 @@ export class TotalMobilityController {
   ) {
     return this.total.toggle(dto.enabled, req.user.email);
   }
-  @Post('sync') sync(@Req() req: { user: { sub: string; email: string } }) {
-    return this.total.syncNow(req.user);
+  @Post('sync') sync(
+    @Body() dto: SyncTotalMobilityDto,
+    @Req() req: { user: { sub: string; email: string } },
+  ) {
+    return this.total.syncNow(req.user, dto.fromDate);
   }
 }

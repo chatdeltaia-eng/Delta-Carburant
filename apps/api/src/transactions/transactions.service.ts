@@ -144,14 +144,16 @@ export class TransactionsService {
       row.product=String(row.product??'').trim();
       if(!row.product) throw new BadRequestException(`Nom de produit absent à la ligne ${index+2}. Import annulé.`);
       if(!row.station) throw new BadRequestException(`Nom de la station absent à la ligne ${index+2}. Import annulé.`);
-      const card=await client.query(`SELECT id,company_id,official_registration,holder_name,card_category,reference_vehicle_id,status FROM fuel_card WHERE deleted_at IS NULL AND (
-        total_payment_number=$1
-        OR (length($1)>6 AND total_payment_number=right($1,6))
-        OR regexp_replace(masked_card_number,'[^0-9]','','g')=$1
-        OR official_card_number=$1
-      ) ORDER BY CASE WHEN total_payment_number=$1 THEN 0
-        WHEN length($1)>6 AND total_payment_number=right($1,6) THEN 1
-        WHEN regexp_replace(masked_card_number,'[^0-9]','','g')=$1 THEN 2 ELSE 3 END LIMIT 1`,[cardKey]);
+      const card=await client.query(`SELECT fc.id,fc.company_id,fc.official_registration,fc.holder_name,fc.card_category,fc.reference_vehicle_id,fc.status,
+        (SELECT max(rr.returned_at) FROM card_return_receipt rr WHERE rr.fuel_card_id=fc.id) AS last_returned_at
+        FROM fuel_card fc WHERE fc.deleted_at IS NULL AND (
+        fc.total_payment_number=$1
+        OR (length($1)>6 AND fc.total_payment_number=right($1,6))
+        OR regexp_replace(fc.masked_card_number,'[^0-9]','','g')=$1
+        OR fc.official_card_number=$1
+      ) ORDER BY CASE WHEN fc.total_payment_number=$1 THEN 0
+        WHEN length($1)>6 AND fc.total_payment_number=right($1,6) THEN 1
+        WHEN regexp_replace(fc.masked_card_number,'[^0-9]','','g')=$1 THEN 2 ELSE 3 END LIMIT 1`,[cardKey]);
       const fingerprint=this.transactionFingerprint(row,cardKey);
       if(!card.rows[0]) {
         const existingReview=await client.query(`SELECT id FROM transaction_review
@@ -166,7 +168,10 @@ export class TransactionsService {
         review++;
         continue;
       }
-      if(card.rows[0].status!=='ACTIVE') {
+      const availableStatuses=['ACTIVE','DISTRIBUTED','ASSIGNED'];
+      const historicalBeforeReturn=card.rows[0].status==='SAFE'&&card.rows[0].last_returned_at
+        &&new Date(row.date).getTime()<=new Date(card.rows[0].last_returned_at).getTime();
+      if(!availableStatuses.includes(card.rows[0].status)&&!historicalBeforeReturn) {
         await client.query(`INSERT INTO transaction_review(import_batch_id,source_row_number,issue_type,card_number,vehicle_registration,
           beneficiary_name,transaction_date,station,product,quantity_liters,amount_incl_tax,fuel_card_id,previous_mileage,reported_mileage,authorization_code)
           VALUES($1,$2,'UNAVAILABLE_CARD',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,

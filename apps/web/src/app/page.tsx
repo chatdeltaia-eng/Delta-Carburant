@@ -1,9 +1,30 @@
 "use client";
 
-import { FormEvent, Fragment, useEffect, useState } from "react";
+import { FormEvent, Fragment, ReactNode, useEffect, useRef, useState } from "react";
 import Image from "next/image";
+import { createPortal } from "react-dom";
 import * as XLSX from "xlsx";
 import styles from "./page.module.css";
+
+function TopLayerDialog({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+    return () => { if (dialog?.open) dialog.close(); };
+  }, []);
+  return (
+    <dialog
+      ref={dialogRef}
+      className={styles.notificationDialog}
+      aria-label="Centre de notifications"
+      onCancel={(event) => { event.preventDefault(); onClose(); }}
+      onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
+    >
+      {children}
+    </dialog>
+  );
+}
 
 type Role =
   "SUPER_ADMIN" | "DIRECTION_GENERAL" | "ZIN_FINANCE" | "NAJIB_ASSIGNER";
@@ -20,6 +41,8 @@ type View =
   | "requests"
   | "mileage"
   | "anomalies"
+  | "complaints"
+  | "documents"
   | "settings";
 type CardStatus =
   | "TO_ASSIGN"
@@ -252,6 +275,8 @@ const seeds: Record<string, Row[]> = {
   requests: [],
   mileage: [],
   anomalies: [],
+  complaints: [],
+  receipts: [],
   drivers: [],
   fuelPrices: [],
 };
@@ -279,6 +304,8 @@ const viewMeta: Record<View, [string, string]> = {
   requests: ["Demandes", "Suivez les workflows et validations."],
   mileage: ["Kilométrage hebdomadaire", "Suivez les relevés, distances détectées et validations."],
   anomalies: ["Anomalies", "Analysez les alertes détectées."],
+  complaints: ["Réclamations", "Échangez et suivez les réclamations entre Najib, Zin et la DG."],
+  documents: ["Factures et reçus", "Éditez les factures périodiques et autorisez les reçus de distribution."],
   settings: ["Paramètres", "Configurez l’application."],
 };
 const isDirection = (role: Role) =>
@@ -518,6 +545,8 @@ export default function Home() {
       canManage(user.role)?fetch(`${API}/cards/responsibles`,{headers,cache:"no-store"}):Promise.resolve(null),
       fetch(`${API}/cards/companies`,{headers,cache:"no-store"}),
       user.role==="NAJIB_ASSIGNER"?fetch(`${API}/cards/safe-inventory`,{headers,cache:"no-store"}):Promise.resolve(null),
+      fetch(`${API}/complaints`,{headers,cache:"no-store"}),
+      fetch(`${API}/documents/receipts`,{headers,cache:"no-store"}),
       ]);
     };
     const renewSession = async () => {
@@ -545,7 +574,7 @@ export default function Home() {
       return responses;
     };
     refreshRemote()
-      .then(async ([cardResponse, requestResponse, notificationResponse,transactionResponse,summaryResponse,reviewsResponse,vehiclesResponse,mileageResponse,driversResponse,fuelPricesResponse,responsiblesResponse,companiesResponse,safeResponse]) => {
+      .then(async ([cardResponse, requestResponse, notificationResponse,transactionResponse,summaryResponse,reviewsResponse,vehiclesResponse,mileageResponse,driversResponse,fuelPricesResponse,responsiblesResponse,companiesResponse,safeResponse,complaintsResponse,receiptsResponse]) => {
         if (cancelled) return;
         // Management reference data must remain usable even if an unrelated
         // dashboard endpoint is temporarily unavailable.
@@ -556,6 +585,7 @@ export default function Home() {
           ["cartes",cardResponse],["demandes",requestResponse],["notifications",notificationResponse],
           ["transactions",transactionResponse],["tableau de bord",summaryResponse],["véhicules",vehiclesResponse],
           ["kilométrages",mileageResponse],["chauffeurs",driversResponse],["prix carburant",fuelPricesResponse],
+          ["réclamations",complaintsResponse],["reçus",receiptsResponse],
         ] as const;
         const failed=requiredResponses.find(([,response])=>!response.ok);
         if(failed) throw new Error(`${failed[0]} (${failed[1].status})`);
@@ -568,6 +598,7 @@ export default function Home() {
         const vehiclesPayload=await vehiclesResponse.json();
         const mileagePayload=await mileageResponse.json();
         const driversPayload=await driversResponse.json(); const fuelPricesPayload=await fuelPricesResponse.json();
+        const complaintsPayload=await complaintsResponse.json();const receiptsPayload=await receiptsResponse.json();
         setCards(cardPayload.items ?? cardPayload);
         setNotifications((notificationPayload.items ?? notificationPayload).map(
           (row: Record<string, unknown>) => toNotification(row, user.role),
@@ -576,11 +607,13 @@ export default function Home() {
           ...current,
           requests: (requestPayload.items ?? requestPayload).map(toRequestRow),
           transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => {const allocations=Array.isArray(row.allocations)?row.allocations as Record<string,unknown>[]:[];return { id:String(row.id),reviewId:String(row.reviewId??""),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),prixApplique:row.appliedPrice==null?"—":Number(row.appliedPrice),montantTheorique:row.expectedAmount==null?"—":Number(row.expectedAmount),ecartFacturation:row.billingDifference==null?"—":Number(row.billingDifference),controleFacturation:String(row.billingStatus??"PRICE_UNAVAILABLE"),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),repartition:allocations.map(item=>`${String(item.beneficiary)} — ${String(item.vehicle)} — ${Number(item.amount).toFixed(3)} DT${item.mileage?` — ${Number(item.mileage)} km`:""}`).join(" | "),observation:row.observation?`${String(row.observation)} — ${String(row.observationBy??"—")}`:"—",statut:row.reviewStatus==="PENDING"?(row.reviewIssue==="MISSING_BENEFICIARY"?"Bénéficiaire à identifier":"Véhicule inconnu à valider"):"Importée Total",fichier:String(row.file??"—") }}),
-          anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => ({ id:String(row.id),kind:String(row.kind??"REVIEW"),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.kind)==="REVIEW"?(String(row.type)==="MISSING_BENEFICIARY"?"Bénéficiaire manquant":"Véhicule inconnu"):String(row.description??row.type),carte:String(row.card??"—"),beneficiaire:"—",vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters??0),montant:Number(row.amount??0),gravite:String(row.severity)==="CRITICAL"?"Critique":String(row.severity)==="WARNING"?"Moyenne":String(row.severity)==="INFO"?"Information":"Haute",statut:String(row.kind)==="REVIEW"?"À vérifier":String(row.status)==="IN_REVIEW"?"En cours":"Ouverte" })),
+          anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => {const reviewLabels:Record<string,string>={MISSING_BENEFICIARY:"Bénéficiaire manquant",UNKNOWN_CARD:"Carte absente de la base",UNAVAILABLE_CARD:"Carte indisponible",UNKNOWN_VEHICLE:"Véhicule absent de la base",UNAVAILABLE_VEHICLE:"Véhicule indisponible"};return { id:String(row.id),kind:String(row.kind??"REVIEW"),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.kind)==="REVIEW"?(reviewLabels[String(row.type)]??"Transaction à vérifier"):String(row.description??row.type),carte:String(row.card??"—"),beneficiaire:"—",vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters??0),montant:Number(row.amount??0),gravite:String(row.severity)==="CRITICAL"?"Critique":String(row.severity)==="WARNING"?"Moyenne":String(row.severity)==="INFO"?"Information":"Haute",statut:String(row.kind)==="REVIEW"?"À vérifier":String(row.status)==="IN_REVIEW"?"En cours":"Ouverte" }}),
           vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>,index:number)=>({id:String(row.id),companyId:String(row.companyId??""),numero:Number(row.fleetNumber??0)||index+1,immatriculation:Boolean(row.registrationMissing)?"Sans matricule":String(row.registration),sansMatricule:Boolean(row.registrationMissing),type:String(row.vehicleType??row.model??"À compléter"),societe:String(row.company??"—"),mise_en_circulation:row.firstRegistrationDate?new Date(String(row.firstRegistrationDate)).toLocaleDateString("fr-FR"):"À compléter",reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??row.cardHolder??"—"),titulaire:String(row.cardHolder??row.driver??"—"),carte:String(row.cardNumber??"—"),garde:String(row.custody)==="IN_SAFE"?"En coffre · non distribuée":"Distribuée / active",observation:String(row.notes??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
           mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:String(row.week??"—"),vehicule:String(row.vehicle),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),litresPeriode:Number(row.periodLiters??0),consommation100km:row.litersPer100Km==null?"—":Number(row.litersPer100Km),attendu:Number(row.expectedMileage??0),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—")})),
           drivers:(driversPayload.items??driversPayload).map((row:Record<string,unknown>)=>({id:String(row.id),companyId:String(row.companyId??""),nomComplet:String(row.fullName??"—"),numeroClient:String(row.customerNumber??"—"),nomClient:String(row.customerName??"—"),numeroChauffeur:String(row.driverNumber??"—"),prenom:String(row.firstName??"—"),nom:String(row.lastName??row.fullName??"—"),codeChauffeur:String(row.driverCode??"—"),vehicules:Array.isArray(row.vehicles)?(row.vehicles as {registration:string}[]).map(item=>item.registration).join(", "):"—",statut:Boolean(row.active)?"Actif":"Inactif"})),
           fuelPrices:(fuelPricesPayload.items??fuelPricesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),societe:String(row.company),produit:String(row.product),ancienPrix:Number(row.oldPrice),nouveauPrix:Number(row.newPrice),variation:`${Number(row.variationPercent).toFixed(2)} %`,date:new Date(String(row.effectiveDate)).toLocaleDateString("fr-FR"),auteur:String(row.createdBy??"—"),source:String(row.source)==="OFFICIAL_TUNISIA"?"Ministère tunisien":String(row.source)==="TOTAL_SUPPLIER"?"Tarif fournisseur Total":"Saisie manuelle"})),
+          complaints:(complaintsPayload.items??complaintsPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numero:String(row.number),objet:String(row.subject),description:String(row.description),priorite:String(row.priority),statut:String(row.status),destinataire:String(row.targetRole),createur:String(row.creator),date:new Date(String(row.createdAt)).toLocaleString("fr-FR"),resolution:String(row.resolution??"—"),messages:JSON.stringify(row.messages??[])})),
+          receipts:(receiptsPayload.items??receiptsPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numero:String(row.receiptNumber),carte:String(row.card),beneficiaire:String(row.beneficiary),vehicule:String(row.vehicle),distribueA:String(row.distributedTo),statut:String(row.status),zin:String(row.zinApprovedBy??"En attente"),dg:String(row.dgApprovedBy??"En attente"),date:String(row.issuedAt?new Date(String(row.issuedAt)).toLocaleString("fr-FR"):"—")})),
         }));
         setDatabaseSummary(summaryPayload);
         setError("");
@@ -1714,11 +1747,13 @@ export default function Home() {
     ["transactions", "transactions", "Transactions"], ["requests", "requests", "Demandes"],
     ["mileage", "mileage", "Kilométrage"], ["fuelPrices", "fuel", "Prix carburants"],
     ["anomalies", "alert", "Anomalies"],
+    ["complaints", "requests", "Réclamations"],
+    ["documents", "reports", "Factures et reçus"],
   ];
   const nav =
     user.role === "NAJIB_ASSIGNER"
       ? allNav.filter(([v]) =>
-          ["dashboard", "cards", "vehicles", "drivers", "transactions", "requests", "mileage", "fuelPrices"].includes(v),
+          ["dashboard", "cards", "vehicles", "drivers", "transactions", "requests", "mileage", "fuelPrices", "complaints", "documents"].includes(v),
         )
       : isDirection(user.role)
         ? allNav
@@ -1797,8 +1832,8 @@ export default function Home() {
               >
                 <AppIcon name="bell" size={19}/>{unread > 0 && <span>{unread}</span>}
               </button>
-              {showNotifications && (
-                <><button className={styles.notificationBackdrop} aria-label="Fermer les notifications" onClick={() => setShowNotifications(false)} /><div className={styles.notificationMenu} role="dialog" aria-label="Centre de notifications">
+              {showNotifications && typeof document !== "undefined" && createPortal(
+                <TopLayerDialog onClose={() => setShowNotifications(false)}><div className={styles.notificationMenu}>
                   <div className={styles.notificationHeader}>
                     <div><h3>Notifications</h3><small>Privées · {roleLabel(user.role)}</small></div>
                     <div className={styles.notificationHeaderActions}><span>{unread} non lue{unread > 1 ? "s" : ""}</span><button aria-label="Fermer" onClick={() => setShowNotifications(false)}>×</button></div>
@@ -1824,7 +1859,8 @@ export default function Home() {
                   ) : (
                     <div className={styles.notificationEmpty}><AppIcon name="bell" size={25}/><b>Tout est sous contrôle</b><p>Aucune nouvelle notification pour le moment.</p></div>
                   )}
-                </div></>
+                </div></TopLayerDialog>,
+                document.body,
               )}
             </div>
             <div className={styles.user}>
@@ -1851,6 +1887,10 @@ export default function Home() {
           />
         ) : view === "reports" ? (
           <DirectionReports cards={cards} transactions={data.transactions} analytics={directionData} operationalData={data} />
+        ) : view === "complaints" ? (
+          <ComplaintsView token={token} user={user} rows={data.complaints} refresh={()=>setRefreshTick(value=>value+1)} notify={notify}/>
+        ) : view === "documents" ? (
+          <DocumentsView token={token} user={user} receipts={data.receipts} refresh={()=>setRefreshTick(value=>value+1)} notify={notify}/>
         ) : view === "settings" ? (
           <Settings
             token={token}
@@ -2527,6 +2567,24 @@ function Bars({ items,unit="L" }: { items: { name: string; value: number }[];uni
       ))}
     </div>
   );
+}
+function printOfficialDocument(title:string,body:string){
+  const popup=window.open("","_blank","width=1100,height=800");if(!popup)return;
+  popup.document.write(`<!doctype html><html><head><title>${title}</title><style>@page{size:A4;margin:14mm}body{font-family:Arial,sans-serif;color:#14213d;margin:0}header{display:flex;align-items:center;gap:20px;border-bottom:3px solid #198754;padding-bottom:14px;margin-bottom:22px}header img{width:95px;height:95px;object-fit:contain}h1{margin:0;color:#198754;font-size:25px}small{color:#65736d}.meta{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:18px 0}.meta div{border:1px solid #dce5e0;border-radius:7px;padding:10px}table{width:100%;border-collapse:collapse;font-size:10px}th,td{border:1px solid #d9e1dd;padding:6px;text-align:left}th{background:#edf7f2}.total{font-size:17px;text-align:right;margin-top:18px}.signatures{display:flex;justify-content:space-between;margin-top:65px}.signatures div{width:42%;border-top:1px solid #333;padding-top:8px}.notice{margin-top:18px;font-size:10px;color:#65736d}@media print{button{display:none}}</style></head><body><header><img src="/brand/delta-logo.png" alt="Delta Carburant"><div><h1>Delta Carburant</h1><b>${title}</b><br><small>Document généré depuis la plateforme de suivi carburant</small></div></header>${body}<button onclick="window.print()">Imprimer / Enregistrer en PDF</button><script>window.onload=()=>setTimeout(()=>window.print(),300)</script></body></html>`);popup.document.close();
+}
+const documentText=(value:unknown)=>String(value??"—").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]??char));
+function ComplaintsView({token,user,rows,refresh,notify}:{token:string;user:User;rows:Row[];refresh:()=>void;notify:(message:string)=>void}){
+ const create=async()=>{const subject=window.prompt("Objet de la réclamation");if(!subject)return;const description=window.prompt("Description détaillée");if(!description)return;const available=["NAJIB_ASSIGNER","ZIN_FINANCE","DIRECTION_GENERAL"].filter(role=>role!==user.role);const targetRole=window.prompt(`Destinataire : ${available.join(" / ")}`,available[0]);if(!targetRole||!available.includes(targetRole))return notify("Destinataire invalide");const priority=window.prompt("Priorité : NORMAL / HIGH / URGENT","NORMAL")?.toUpperCase();if(!priority||!["NORMAL","HIGH","URGENT"].includes(priority))return notify("Priorité invalide");const response=await fetch(`${API}/complaints`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({subject,description,targetRole,priority})});if(!response.ok)return notify("La réclamation n’a pas été enregistrée");notify("Réclamation transmise");refresh();};
+ const respond=async(row:Row)=>{const message=window.prompt(`Réponse à ${row.numero}`);if(!message)return;const response=await fetch(`${API}/complaints/${row.id}/messages`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({message})});if(!response.ok)return notify("Réponse non enregistrée");refresh();};
+ const resolve=async(row:Row)=>{const resolution=window.prompt("Solution apportée à la réclamation");if(!resolution)return;const response=await fetch(`${API}/complaints/${row.id}/status`,{method:"PATCH",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({status:"RESOLVED",resolution})});if(!response.ok)return notify("Clôture impossible");notify("Réclamation résolue");refresh();};
+ return <section className={styles.fullPanel}><div className={styles.importNotice}><b>Canal interne officiel</b><span>Najib, Zin et la DG peuvent ouvrir une réclamation, répondre, suivre son traitement et conserver la résolution dans l’historique.</span></div><Toolbar search="" setSearch={()=>{}} count={rows.length} button="Nouvelle réclamation" click={create}/><div className={styles.tableWrap}><table><thead><tr>{["N°","Date","Créateur","Destinataire","Objet","Priorité","Statut","Résolution","Action"].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.id}><td>{row.numero}</td><td>{row.date}</td><td>{row.createur}</td><td>{roleName[String(row.destinataire)]??row.destinataire}</td><td><b>{row.objet}</b><br/><small>{row.description}</small></td><td>{row.priorite}</td><td>{row.statut}</td><td>{row.resolution}</td><td><button className={styles.smallBtn} onClick={()=>respond(row)}>Répondre</button>{!['RESOLVED','CLOSED'].includes(String(row.statut))&&<><br/><button className={styles.smallBtn} onClick={()=>resolve(row)}>Résoudre</button></>}</td></tr>)}</tbody></table></div></section>;
+}
+function DocumentsView({token,user,receipts,refresh,notify}:{token:string;user:User;receipts:Row[];refresh:()=>void;notify:(message:string)=>void}){
+ const [period,setPeriod]=useState<'WEEK'|'MONTH'>('WEEK');const [start,setStart]=useState(new Date().toISOString().slice(0,10));const [busy,setBusy]=useState(false);
+ const invoice=async()=>{setBusy(true);try{const response=await fetch(`${API}/documents/statement?period=${period}&start=${start}`,{headers:{Authorization:`Bearer ${token}`}});if(!response.ok)throw new Error();const doc=await response.json() as Record<string,unknown>;const transactions=(doc.transactions??[]) as Record<string,unknown>[];const html=`<div class="meta"><div><b>N° facture</b><br>${documentText(doc.documentNumber)}</div><div><b>Période</b><br>${documentText(new Date(String(doc.startDate)).toLocaleDateString('fr-FR'))} au ${documentText(new Date(String(doc.endDate)).toLocaleDateString('fr-FR'))}</div><div><b>Source</b><br>${documentText(doc.source)}</div><div><b>Nombre de transactions</b><br>${Number(doc.totalTransactions)}</div></div><table><thead><tr><th>Date</th><th>Carte</th><th>Bénéficiaire</th><th>Véhicule</th><th>Station</th><th>Produit</th><th>Litres</th><th>Montant TND</th></tr></thead><tbody>${transactions.map(row=>`<tr><td>${documentText(new Date(String(row.date)).toLocaleString('fr-FR'))}</td><td>${documentText(row.card)}</td><td>${documentText(row.beneficiary)}</td><td>${documentText(row.vehicle)}</td><td>${documentText(row.station)}</td><td>${documentText(row.product)}</td><td>${Number(row.liters).toFixed(3)}</td><td>${Number(row.amount).toFixed(3)}</td></tr>`).join('')}</tbody></table><p class="total"><b>Total : ${Number(doc.totalLiters).toFixed(3)} L · ${Number(doc.totalAmount).toFixed(3)} TND</b></p><p class="notice">Facture récapitulative interne établie à partir des transactions TotalEnergies importées. Les factures fiscales originales du fournisseur restent les pièces comptables de référence.</p>`;printOfficialDocument(period==='WEEK'?'Facture hebdomadaire':'Facture mensuelle',html);}catch{notify("Impossible de générer la facture");}finally{setBusy(false);}};
+ const approve=async(row:Row)=>{const response=await fetch(`${API}/documents/receipts/${row.id}/approve`,{method:'PATCH',headers:{Authorization:`Bearer ${token}`}});if(!response.ok)return notify("Autorisation non enregistrée ou déjà effectuée");notify("Autorisation enregistrée");refresh();};
+ const printCardReceipt=(row:Row)=>{if(row.statut!=='AUTHORIZED')return notify("Le reçu doit être autorisé par Zin et la DG");printOfficialDocument(`Reçu officiel de distribution ${documentText(row.numero)}`,`<div class="meta"><div><b>Carte</b><br>${documentText(row.carte)}</div><div><b>Bénéficiaire</b><br>${documentText(row.beneficiaire)}</div><div><b>Véhicule</b><br>${documentText(row.vehicule)}</div><div><b>Distribuée à</b><br>${documentText(row.distribueA)}</div><div><b>Autorisation Zin</b><br>${documentText(row.zin)}</div><div><b>Autorisation Direction Générale</b><br>${documentText(row.dg)}</div><div><b>Date d’émission</b><br>${documentText(row.date)}</div><div><b>Statut</b><br>AUTORISÉ</div></div><p>Le présent reçu certifie que cette carte carburant a été distribuée dans le cadre du workflow officiel de Delta Carburant et autorisée conjointement par Zin Finance et la Direction Générale.</p><div class="signatures"><div>Visa Zin Finance</div><div>Visa Direction Générale</div></div>`);};
+ return <section className={styles.fullPanel}><div className={styles.importNotice}><b>Documents Delta Carburant</b><span>Les factures récapitulent les transactions Total de la semaine ou du mois. Un reçu de carte n’est imprimable qu’après l’autorisation conjointe de Zin et de la DG.</span></div><div className={styles.bulkBar}><select value={period} onChange={e=>setPeriod(e.target.value as 'WEEK'|'MONTH')}><option value="WEEK">Facture hebdomadaire</option><option value="MONTH">Facture mensuelle</option></select><input type="date" value={start} onChange={e=>setStart(e.target.value)}/><button onClick={invoice} disabled={busy}>{busy?'Génération…':'Générer / imprimer PDF'}</button></div><div className={styles.tableWrap}><table><thead><tr>{["N° reçu","Carte","Bénéficiaire","Véhicule","Distribuée à","Zin","DG","Statut","Action"].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{receipts.map(row=><tr key={row.id}><td>{row.numero}</td><td>{row.carte}</td><td>{row.beneficiaire}</td><td>{row.vehicule}</td><td>{row.distribueA}</td><td>{row.zin}</td><td>{row.dg}</td><td>{row.statut==='AUTHORIZED'?'Autorisé':'Double validation en attente'}</td><td>{row.statut==='AUTHORIZED'?<button className={styles.smallBtn} onClick={()=>printCardReceipt(row)}>Imprimer reçu PDF</button>:user.role!=='NAJIB_ASSIGNER'?<button className={styles.smallBtn} onClick={()=>approve(row)}>Autoriser</button>:<span>En attente de Zin / DG</span>}</td></tr>)}</tbody></table></div></section>;
 }
 function DataView({
   view,

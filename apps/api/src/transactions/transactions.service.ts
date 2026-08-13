@@ -144,7 +144,7 @@ export class TransactionsService {
       row.product=String(row.product??'').trim();
       if(!row.product) throw new BadRequestException(`Nom de produit absent à la ligne ${index+2}. Import annulé.`);
       if(!row.station) throw new BadRequestException(`Nom de la station absent à la ligne ${index+2}. Import annulé.`);
-      const card=await client.query(`SELECT id,company_id,official_registration,holder_name,card_category,reference_vehicle_id FROM fuel_card WHERE deleted_at IS NULL AND (
+      const card=await client.query(`SELECT id,company_id,official_registration,holder_name,card_category,reference_vehicle_id,status FROM fuel_card WHERE deleted_at IS NULL AND (
         total_payment_number=$1
         OR (length($1)>6 AND total_payment_number=right($1,6))
         OR regexp_replace(masked_card_number,'[^0-9]','','g')=$1
@@ -166,8 +166,19 @@ export class TransactionsService {
         review++;
         continue;
       }
+      if(card.rows[0].status!=='ACTIVE') {
+        await client.query(`INSERT INTO transaction_review(import_batch_id,source_row_number,issue_type,card_number,vehicle_registration,
+          beneficiary_name,transaction_date,station,product,quantity_liters,amount_incl_tax,fuel_card_id,previous_mileage,reported_mileage,authorization_code)
+          VALUES($1,$2,'UNAVAILABLE_CARD',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        [batch.rows[0].id,index+1,row.cardNumber,row.vehicle??null,row.beneficiary??null,row.date,row.station,row.product,row.liters,row.amount,card.rows[0].id,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]);
+        review++;
+        continue;
+      }
       const vehicleKey=(row.vehicle??'').toUpperCase().replace(/[^A-Z0-9]/g,'');
       const vehicleKeys=this.registrationKeys(vehicleKey);
+      const unavailableVehicle=vehicleKey ? await client.query(`SELECT id FROM vehicle
+        WHERE regexp_replace(upper(coalesce(registration_normalized::text,registration_display)),'[^A-Z0-9]','','g')=ANY($1::text[])
+        AND (NOT active OR deleted_at IS NOT NULL) LIMIT 1`,[vehicleKeys]) : {rows:[]};
       let vehicle=vehicleKey ? await client.query(`SELECT v.id,v.company_id,v.driver_name,d.full_name AS driver_full_name
         FROM vehicle v LEFT JOIN driver d ON d.id=v.driver_id AND d.deleted_at IS NULL AND d.active
         WHERE regexp_replace(upper(coalesce(v.registration_normalized::text,v.registration_display)),'[^A-Z0-9]','','g')=ANY($1::text[])
@@ -201,7 +212,9 @@ export class TransactionsService {
         await client.query(`UPDATE fuel_card SET company_id=$2,updated_at=now() WHERE id=$1`,[card.rows[0].id,companyId]);
         card.rows[0].company_id=companyId;
       }
-      const issue=!companyId||(!vehicle.rows[0]&&!isOffPark)?'UNKNOWN_VEHICLE':!beneficiaryName?'MISSING_BENEFICIARY':null;
+      const issue=!companyId||(!vehicle.rows[0]&&!isOffPark)
+        ?(unavailableVehicle.rows[0]?'UNAVAILABLE_VEHICLE':'UNKNOWN_VEHICLE')
+        :!beneficiaryName?'MISSING_BENEFICIARY':null;
       if (issue) {
         await client.query(`INSERT INTO transaction_review(import_batch_id,source_row_number,issue_type,card_number,vehicle_registration,
           beneficiary_name,transaction_date,station,product,quantity_liters,amount_incl_tax,fuel_card_id,previous_mileage,reported_mileage,authorization_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
@@ -290,6 +303,10 @@ export class TransactionsService {
           await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
             SELECT id,'Dépassement de plafond',$2,'CRITICAL','anomalies','anomaly',$3 FROM app_user
             WHERE active AND (id=$1 OR role::text=ANY($4::text[]))`,[limit.rows[0].responsible_user_id,`La carte ${limit.rows[0].masked_card_number} a dépassé son plafond mensuel`,anomaly.rows[0].id,['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN']]);
+        } else {
+          await client.query(`UPDATE anomaly SET status='RESOLVED',resolved_at=now(),
+            resolution='Consommation mensuelle inférieure ou égale à 100 % du plafond'
+            WHERE fuel_card_id=$1 AND anomaly_type='MONTHLY_LIMIT_EXCEEDED' AND status IN('OPEN','IN_REVIEW')`,[card.rows[0].id]);
         }
       } else duplicates++;
     }
@@ -310,7 +327,12 @@ export class TransactionsService {
     const row=found.rows[0]; if(!row) throw new NotFoundException('Contrôle introuvable ou déjà traité');
     if(dto.decision==='REJECTED') {
       await client.query(`INSERT INTO anomaly(fuel_card_id,anomaly_type,severity,status,description,assigned_to)
-        VALUES($1,$2,'HIGH','OPEN',$3,$4)`,[row.fuel_card_id,row.issue_type,row.issue_type==='UNKNOWN_CARD'?`Carte ${row.card_number} inconnue de DeltaCarburant ayant effectué une transaction de ${row.amount_incl_tax}`:row.issue_type==='MISSING_BENEFICIARY'?`Aucun bénéficiaire identifié pour le véhicule ${row.vehicle_registration}`:`Véhicule ${row.vehicle_registration} externe utilisant la carte ${row.card_number}`,actor.sub]);
+        VALUES($1,$2,'HIGH','OPEN',$3,$4)`,[row.fuel_card_id,row.issue_type,
+          row.issue_type==='UNKNOWN_CARD'?`Carte ${row.card_number} absente de la base ayant effectué une transaction de ${row.amount_incl_tax}`:
+          row.issue_type==='UNAVAILABLE_CARD'?`Carte ${row.card_number} indisponible ayant effectué une transaction de ${row.amount_incl_tax}`:
+          row.issue_type==='MISSING_BENEFICIARY'?`Aucun bénéficiaire identifié pour le véhicule ${row.vehicle_registration}`:
+          row.issue_type==='UNAVAILABLE_VEHICLE'?`Véhicule ${row.vehicle_registration} indisponible ayant effectué une transaction avec la carte ${row.card_number}`:
+          `Véhicule ${row.vehicle_registration} absent de la base utilisant la carte ${row.card_number}`,actor.sub]);
     } else {
       const requestedRegistration=String(dto.newVehicleRegistration??row.vehicle_registration??'').trim();
       const vehicleKey=requestedRegistration.toUpperCase().replace(/[^A-Z0-9]/g,'');

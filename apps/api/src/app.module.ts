@@ -13,6 +13,8 @@ import { MileageModule } from './mileage/mileage.module';
 import { DriversModule } from './drivers/drivers.module';
 import { FuelPricesModule } from './fuel-prices/fuel-prices.module';
 import { TotalMobilityModule } from './total-mobility/total-mobility.module';
+import { ComplaintsModule } from './complaints/complaints.module';
+import { DocumentsModule } from './documents/documents.module';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { TotalMobilityModule } from './total-mobility/total-mobility.module';
     DriversModule,
     FuelPricesModule,
     TotalMobilityModule,
+    ComplaintsModule,
+    DocumentsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

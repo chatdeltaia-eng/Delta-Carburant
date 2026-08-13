@@ -1213,8 +1213,15 @@ export default function Home() {
         const decision=await apiResponse.json();
         setRefreshTick(value=>value+1);
         notify(!accepted?"Demande refusée":decision.pendingSecondApproval?"Votre accord est enregistré. La deuxième autorisation Zin/DG reste obligatoire.":isCustody?"Changement coffre / distribution validé par Zin et la DG":isNewCard?`Carte ${request.carte} sortie du coffre et attribuée`:`${isFunding?"Alimentation":"Plafond"} de la carte ${request.carte} validé`);
-      } catch {
-        notify("Échec de la décision distante : aucune modification enregistrée");
+      } catch (error) {
+        const raw=error instanceof Error?error.message:"";
+        try {
+          const parsed=JSON.parse(raw);
+          const message=Array.isArray(parsed.message)?parsed.message.join(" · "):parsed.message;
+          notify(String(message||"La validation n’a pas pu être enregistrée"));
+        } catch {
+          notify(raw||"La validation n’a pas pu être enregistrée");
+        }
       }
       return;
     }

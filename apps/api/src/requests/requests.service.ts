@@ -207,8 +207,8 @@ export class RequestsService {
         await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'CUSTODY_CHANGE','fuel_card',$2,$3)`,[actor.email??actor.sub,request.fuel_card_id,{status:request.requested_card_status,responsibleUserId:request.requested_card_status==='DISTRIBUTED'?request.requested_by:null}]);
       }
       const receiptNumber=dto.decision==='APPROVED'?`RC-${new Date().getFullYear()}-${request.request_number.replace(/\D/g,'').slice(-10)}`:null;
-      const updated = await client.query(`UPDATE card_request SET status=$2::request_status,approved_by=$3,
-        decision_date=now(),decision_reason=$4,fuel_card_id=coalesce($5,fuel_card_id),receipt_number=$6,receipt_issued_at=CASE WHEN $6 IS NULL THEN NULL ELSE now() END WHERE id=$1
+      const updated = await client.query(`UPDATE card_request SET status=$2::request_status,approved_by=$3::uuid,
+        decision_date=now(),decision_reason=$4::text,fuel_card_id=coalesce($5::uuid,fuel_card_id),receipt_number=$6::text,receipt_issued_at=CASE WHEN $6::text IS NULL THEN NULL ELSE now() END WHERE id=$1::uuid
         RETURNING id,status,fuel_card_id AS "fuelCardId",decision_reason AS "decisionReason",receipt_number AS "receiptNumber",receipt_issued_at AS "receiptIssuedAt"`,
         [id,dto.decision,actor.sub,dto.reason ?? null,fuelCardId,receiptNumber]);
       const author = actor.role === 'ZIN_FINANCE' ? 'Zin' : actor.role === 'DIRECTION_GENERAL' ? 'la Direction Générale' : 'le Super Admin';

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
@@ -6,6 +6,7 @@ type Actor = { sub: string; email?: string; role?: string; companyId?: string };
 type CreateRequest = { requestType: 'NEW_CARD'|'LIMIT_CHANGE'|'CARD_FUNDING'|'CUSTODY_CHANGE'; requestedCardStatus?:'SAFE'|'DISTRIBUTED'; fuelCardId?: string; sourceCardId?:string; beneficiary: string; department: string; vehicle: string; requestedLimit: number; reason: string };
 @Injectable()
 export class RequestsService {
+  private readonly logger = new Logger(RequestsService.name);
   constructor(private readonly db: DatabaseService, private readonly notifications: NotificationsService) {}
   list(actor: Actor) {
     const ownOnly = actor.role === 'NAJIB_ASSIGNER';
@@ -125,7 +126,9 @@ export class RequestsService {
   }
   async decide(id: string, dto: { decision: 'APPROVED'|'REJECTED'; reason?: string; cardNumber?: string }, actor: Actor) {
     if (dto.decision === 'REJECTED' && !dto.reason?.trim()) throw new BadRequestException('Le motif du refus est obligatoire');
-    const row = await this.db.transaction(async client => {
+    let row;
+    try {
+      row = await this.db.transaction(async client => {
       const requestResult = await client.query(`SELECT cr.*,b.company_id,fc.masked_card_number FROM card_request cr
         JOIN beneficiary b ON b.id=cr.beneficiary_id LEFT JOIN fuel_card fc ON fc.id=cr.fuel_card_id WHERE cr.id=$1 FOR UPDATE OF cr`, [id]);
       const request = requestResult.rows[0];
@@ -209,15 +212,32 @@ export class RequestsService {
         RETURNING id,status,fuel_card_id AS "fuelCardId",decision_reason AS "decisionReason",receipt_number AS "receiptNumber",receipt_issued_at AS "receiptIssuedAt"`,
         [id,dto.decision,actor.sub,dto.reason ?? null,fuelCardId,receiptNumber]);
       const author = actor.role === 'ZIN_FINANCE' ? 'Zin' : actor.role === 'DIRECTION_GENERAL' ? 'la Direction Générale' : 'le Super Admin';
-      await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id)
-        VALUES($1,$2,$3,$4,'card_request',$5)`, [request.requested_by,
-        dto.decision === 'APPROVED' ? (request.request_type === 'LIMIT_CHANGE' ? 'Augmentation de plafond validée' : request.request_type==='REACTIVATION'?'Alimentation de carte validée':'Carte créée et demande validée') : 'Demande refusée',
-        dto.decision === 'APPROVED' ? (request.request_type === 'LIMIT_CHANGE' ? `Le plafond de votre carte a été porté à ${request.requested_limit} par ${author}` : request.request_type==='REACTIVATION'?`Votre carte a été alimentée à hauteur de ${request.requested_limit} par ${author}`:`La carte ${request.masked_card_number} est active et affectée par ${author}`) : `${dto.reason} — décision par ${author}`,
-        dto.decision === 'APPROVED' ? 'cards' : 'requests',id]);
-      await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
-        VALUES($1,$2,'card_request',$3,$4)`, [actor.email ?? actor.sub,dto.decision,id,{fuelCardId,cardNumber:dto.cardNumber,reason:dto.reason}]);
+      // Une notification ou une trace d'audit ne doit jamais annuler la mise
+      // au coffre et le reçu après les deux validations obligatoires.
+      await client.query('SAVEPOINT request_side_effects');
+      try {
+        await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id)
+          VALUES($1,$2,$3,$4,'card_request',$5)`, [request.requested_by,
+          dto.decision === 'APPROVED' ? (request.request_type === 'LIMIT_CHANGE' ? 'Augmentation de plafond validée' : request.request_type==='REACTIVATION'?'Alimentation de carte validée':'Carte créée et demande validée') : 'Demande refusée',
+          dto.decision === 'APPROVED' ? (request.request_type === 'LIMIT_CHANGE' ? `Le plafond de votre carte a été porté à ${request.requested_limit} par ${author}` : request.request_type==='REACTIVATION'?`Votre carte a été alimentée à hauteur de ${request.requested_limit} par ${author}`:`La carte ${request.masked_card_number} est active et affectée par ${author}`) : `${dto.reason} — décision par ${author}`,
+          dto.decision === 'APPROVED' ? 'cards' : 'requests',id]);
+        await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
+          VALUES($1,$2,'card_request',$3,$4)`, [actor.email ?? actor.sub,dto.decision,id,{fuelCardId,cardNumber:dto.cardNumber,reason:dto.reason}]);
+        await client.query('RELEASE SAVEPOINT request_side_effects');
+      } catch (sideEffectError) {
+        await client.query('ROLLBACK TO SAVEPOINT request_side_effects');
+        this.logger.error(`Effet secondaire de validation ignoré: ${sideEffectError instanceof Error ? sideEffectError.message : String(sideEffectError)}`);
+      }
       return updated.rows[0];
-    });
+      });
+    } catch (error) {
+      const databaseError=error as {code?:string;constraint?:string;message?:string};
+      this.logger.error(`Échec validation ${id}: ${databaseError.message??String(error)} (${databaseError.code??'sans-code'})`);
+      if(databaseError.code){
+        throw new BadRequestException(`La restitution n’a pas pu être finalisée (base ${databaseError.code}${databaseError.constraint?` · ${databaseError.constraint}`:''}). Le détail est enregistré dans les logs API.`);
+      }
+      throw error;
+    }
     return row;
   }
 }

@@ -8,6 +8,11 @@ type ImportRow = { date:string; cardNumber:string; vehicle?:string; beneficiary?
 @Injectable()
 export class TransactionsService {
   constructor(private readonly db: DatabaseService) {}
+  private async archiveCompletedMonths() {
+    await this.db.query(`UPDATE fuel_transaction SET archived_at=now()
+      WHERE deleted_at IS NULL AND archived_at IS NULL
+        AND transaction_date<date_trunc('month',current_date)`);
+  }
   private canonicalFuelProduct(value:string) {
     const key=value.toUpperCase().replace(/[^A-Z0-9]/g,'');
     if(['GASOIL','GO','DIESEL'].includes(key)) return 'GASOIL ORDINAIRE';
@@ -37,6 +42,7 @@ export class TransactionsService {
     return createHash('sha256').update(normalized).digest('hex');
   }
   async list(actor: { sub: string; role: string }) {
+    await this.archiveCompletedMonths();
     const transactions = await this.db.query(`SELECT ft.id,ft.transaction_date AS date,fc.masked_card_number AS card,
     ft.station,ft.product,ft.quantity_liters AS liters,ft.amount_incl_tax AS amount,ft.unit_price AS "appliedPrice",
     ft.expected_amount AS "expectedAmount",ft.billing_difference AS "billingDifference",ft.validation_status AS "billingStatus",
@@ -63,7 +69,7 @@ export class TransactionsService {
     LEFT JOIN transaction_allocation ta ON ta.fuel_transaction_id=ft.id
     LEFT JOIN LATERAL (SELECT tro.observation,tro.created_at,au.display_name AS author FROM transaction_observation tro
       JOIN app_user au ON au.id=tro.author_id WHERE tro.fuel_transaction_id=ft.id ORDER BY tro.created_at DESC LIMIT 1) obs ON true
-    WHERE ft.deleted_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2)
+    WHERE ft.deleted_at IS NULL AND ft.archived_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2)
     GROUP BY ft.id,fc.id,tib.source_filename,b.display_name,v.registration_display,obs.observation,obs.created_at,obs.author
     ORDER BY ft.transaction_date DESC`, [actor.role==='NAJIB_ASSIGNER',actor.sub]);
     if (actor.role === 'NAJIB_ASSIGNER') {
@@ -456,6 +462,14 @@ export class TransactionsService {
     await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'SOFT_DELETE','fuel_transaction',$2,$3)`, [actor.email,id,{deleted:true}]);
     return { success: true };
   }); }
+  async archive(id:string,actor:Actor){return this.db.transaction(async client=>{
+    const result=await client.query(`UPDATE fuel_transaction SET archived_at=coalesce(archived_at,now()),archived_by=coalesce(archived_by,$2)
+      WHERE id=$1 AND deleted_at IS NULL RETURNING id,archived_at`,[id,actor.sub]);
+    if(!result.rows[0])throw new NotFoundException('Transaction introuvable');
+    await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
+      VALUES($1,'ARCHIVE','fuel_transaction',$2,$3)`,[actor.email,id,{archivedAt:result.rows[0].archived_at}]);
+    return result.rows[0];
+  });}
   async removeAll(actor: Actor) { return this.db.transaction(async client => {
     const result = await client.query('UPDATE fuel_transaction SET deleted_at=now(),deleted_by=$1 WHERE deleted_at IS NULL', [actor.sub]);
     const reviews = await client.query(`UPDATE transaction_review SET status='REJECTED',decided_by=$1,decided_at=now(),

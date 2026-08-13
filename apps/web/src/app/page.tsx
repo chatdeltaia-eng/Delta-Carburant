@@ -1496,6 +1496,17 @@ export default function Home() {
       if(!response.ok)throw new Error(await response.text());setRefreshTick(value=>value+1);notify("Observation transmise à la Direction Générale");
     }catch(error){notify(error instanceof Error?error.message:"Observation non enregistrée");}
   }
+  async function archiveTransaction(row:Row){
+    if(!user||!canManage(user.role))return notify("Archivage réservé à Zin et à la Direction");
+    if(!token)return notify("Session expirée : reconnectez-vous");
+    if(!window.confirm(`Archiver la transaction de la carte ${String(row.carte??"—")} ? Elle restera disponible dans l’historique.`))return;
+    try{
+      const response=await fetch(`${API}/transactions/${row.id}/archive`,{method:"PATCH",headers:{Authorization:`Bearer ${token}`}});
+      const body=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error(String(body.message??"Archivage impossible"));
+      setRefreshTick(value=>value+1);notify("Transaction archivée — historique conservé");
+    }catch(error){notify(error instanceof Error?error.message:"Archivage impossible");}
+  }
   async function deleteRow(
     section: "transactions" | "vehicles" | "beneficiaries",
     id?: string,
@@ -1930,6 +1941,7 @@ export default function Home() {
             edit={openCard}
             editTransaction={editTransaction}
             allocateConsumption={allocateConsumption}
+            archiveTransaction={archiveTransaction}
             deleteRow={deleteRow}
             editVehicle={(row) => {
               if (!canManage(user.role)) return notify("Najib peut uniquement consulter les véhicules");
@@ -2162,7 +2174,7 @@ function Dashboard({
     card.company_code,
     status(card.status),
   ].some((value) => normalizedKey(String(value ?? "")).includes(query)));
-  const activeCards = cards.filter((card) => card.status === "ACTIVE");
+  const activeCards = cards.filter((card) => ["ACTIVE","DISTRIBUTED","ASSIGNED"].includes(card.status));
   const safeCards = cards.filter((card) => card.status === "SAFE");
   const activeMonthlyLimit = activeCards.reduce((sum, card) => sum + Number(card.monthly_limit ?? 0), 0);
   const safeCardsLimit = safeCards.reduce((sum, card) => sum + Number(card.monthly_limit ?? 0), 0);
@@ -2640,6 +2652,7 @@ function DataView({
   edit,
   editTransaction,
   allocateConsumption,
+  archiveTransaction,
   deleteRow,
   editVehicle,
   resolve,
@@ -2662,6 +2675,7 @@ function DataView({
   edit: (c: Card) => void;
   editTransaction: (row: Row) => void;
   allocateConsumption: (row: Row) => void;
+  archiveTransaction: (row: Row) => void;
   deleteRow: (
     section: "transactions" | "vehicles" | "beneficiaries",
     id?: string,
@@ -3006,6 +3020,7 @@ function DataView({
                           Corriger
                         </button>{" "}
                         {user.role==="ZIN_FINANCE"&&<><button className={styles.smallBtn} onClick={()=>observeTransaction(r)}>Observation DG</button>{" "}</>}
+                        <button className={styles.smallBtn} onClick={()=>archiveTransaction(r)}>Archiver</button>{" "}
                         <button
                           className={`${styles.smallBtn} ${styles.dangerBtn}`}
                           onClick={() => deleteRow("transactions", r.id)}

@@ -69,6 +69,8 @@ export class TransactionsController {
     @Body() dto:ObservationDto,@Req() req:{user:{sub:string;email:string;role:string}}){return this.transactions.observe(id,dto.observation,req.user);}
   @Patch(':id') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') correct(@Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CorrectTransactionDto, @Req() req: { user: { sub: string; email: string } }) { return this.transactions.correct(id,dto,req.user); }
+  @Patch(':id/archive') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') archive(@Param('id',ParseUUIDPipe) id:string,
+    @Req() req:{user:{sub:string;email:string}}){return this.transactions.archive(id,req.user);}
   @Delete('batch/all') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') removeAll(@Req() req: { user: { sub: string; email: string } }) { return this.transactions.removeAll(req.user); }
   @Delete(':id') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') remove(@Param('id', ParseUUIDPipe) id: string, @Req() req: { user: { sub: string; email: string } }) { return this.transactions.remove(id, req.user); }
 }

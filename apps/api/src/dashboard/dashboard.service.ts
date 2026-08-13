@@ -8,9 +8,9 @@ export class DashboardService {
     const ownCards = actor.role === 'NAJIB_ASSIGNER';
     const [totals] = await this.db.query(`SELECT
       count(*)::int AS "totalCards",
-      count(*) FILTER (WHERE status='ACTIVE')::int AS "activeCards",
+      count(*) FILTER (WHERE status IN('ACTIVE','DISTRIBUTED','ASSIGNED'))::int AS "activeCards",
       count(*) FILTER (WHERE status IN ('SUSPENDED','OPPOSED','LOST','STOLEN'))::int AS "blockedCards",
-      coalesce(sum(monthly_limit) FILTER (WHERE status='ACTIVE'),0)::float AS "activeMonthlyLimit"
+      coalesce(sum(monthly_limit) FILTER (WHERE status IN('ACTIVE','DISTRIBUTED','ASSIGNED')),0)::float AS "activeMonthlyLimit"
       FROM fuel_card WHERE deleted_at IS NULL AND ($1::boolean=false OR responsible_user_id=$2)`, [ownCards, actor.sub]);
     const [entities] = await this.db.query(`SELECT
       (SELECT count(DISTINCT ca.beneficiary_id)::int FROM card_assignment ca JOIN fuel_card fc ON fc.id=ca.fuel_card_id
@@ -64,9 +64,9 @@ export class DashboardService {
       coalesce(sum(ft.quantity_liters) FILTER (WHERE fc.old_card_id IS NULL),0)::float AS "oldCardLiters",
       coalesce(sum(ft.quantity_liters) FILTER (WHERE fc.old_card_id IS NOT NULL),0)::float AS "newCardLiters",
       count(DISTINCT fc.id) FILTER (WHERE fc.old_card_id IS NOT NULL)::int AS "migratedCards",
-      count(DISTINCT fc.id) FILTER (WHERE fc.status='ACTIVE')::int AS "activeCards",
+      count(DISTINCT fc.id) FILTER (WHERE fc.status IN('ACTIVE','DISTRIBUTED','ASSIGNED'))::int AS "activeCards",
       (SELECT coalesce(sum(monthly_limit),0)::float FROM fuel_card
-        WHERE deleted_at IS NULL AND status='ACTIVE') AS "totalLimit"
+        WHERE deleted_at IS NULL AND status IN('ACTIVE','DISTRIBUTED','ASSIGNED')) AS "totalLimit"
       FROM fuel_card fc LEFT JOIN fuel_transaction ft ON ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL`);
     const migrations = await this.db.query('SELECT * FROM v_direction_card_reporting ORDER BY lifecycle_liters DESC');
     const companies = await this.db.query(`SELECT c.code AS company,coalesce(sum(ft.quantity_liters),0)::float AS liters
@@ -74,7 +74,7 @@ export class DashboardService {
     const [overview] = await this.db.query(`SELECT
       coalesce(sum(ft.amount_incl_tax) FILTER(WHERE ft.transaction_date>=date_trunc('month',now())),0)::float AS "monthAmount",
       coalesce(sum(ft.quantity_liters) FILTER(WHERE ft.transaction_date>=date_trunc('month',now())),0)::float AS "monthLiters",
-      (SELECT coalesce(sum(monthly_limit),0)::float FROM fuel_card WHERE deleted_at IS NULL AND status='ACTIVE') AS "monthBudget",
+      (SELECT coalesce(sum(monthly_limit),0)::float FROM fuel_card WHERE deleted_at IS NULL AND status IN('ACTIVE','DISTRIBUTED','ASSIGNED')) AS "monthBudget",
       count(*) FILTER(WHERE ft.validation_status='BILLING_MISMATCH' AND ft.transaction_date>=date_trunc('month',now()))::int AS "billingMismatches",
       coalesce(sum(abs(ft.billing_difference)) FILTER(WHERE ft.validation_status='BILLING_MISMATCH' AND ft.transaction_date>=date_trunc('month',now())),0)::float AS "billingExposure",
       (SELECT count(*)::int FROM anomaly WHERE status IN('OPEN','IN_REVIEW')) AS "openAnomalies"

@@ -73,9 +73,9 @@ export class CardsService {
   async list(page: number, search: string, status: string, companyId:string, actor: { sub: string; role: string }) {
     const limit = 200, offset = (page - 1) * limit;
     const term = `%${search.trim()}%`;
-    const where = `WHERE ($1='' OR masked_card_number ILIKE $2 OR beneficiary ILIKE $2 OR registration ILIKE $2)
-      AND ($3='' OR status::text=$3)
-      AND ($6::boolean=false OR responsible_user_id=$7) AND ($8='' OR company_id=$8::uuid)`;
+    const where = `WHERE ($1='' OR v.masked_card_number ILIKE $2 OR v.beneficiary ILIKE $2 OR v.registration ILIKE $2)
+      AND ($3='' OR v.status::text=$3)
+      AND ($6::boolean=false OR v.responsible_user_id=$7) AND ($8='' OR v.company_id=$8::uuid)`;
     const items = await this.db.query(`SELECT v.*,
       responsible.role::text AS responsible_role,
       coalesce((SELECT sum(ft.amount_incl_tax) FROM fuel_transaction ft
@@ -89,7 +89,7 @@ export class CardsService {
           AND ft.transaction_date>=date_trunc('month',current_date)
           AND ft.transaction_date<date_trunc('month',current_date)+interval '1 month'),0) / v.monthly_limit)) ELSE 0 END AS consumption_rate
       FROM v_fuel_card_list v LEFT JOIN app_user responsible ON responsible.id=v.responsible_user_id ${where}
-      ORDER BY updated_at DESC LIMIT $4 OFFSET $5`, [search.trim(), term, status, limit, offset, actor.role==='NAJIB_ASSIGNER', actor.sub,companyId]);
+      ORDER BY v.updated_at DESC LIMIT $4 OFFSET $5`, [search.trim(), term, status, limit, offset, actor.role==='NAJIB_ASSIGNER', actor.sub,companyId]);
     const countWhere = `WHERE ($1='' OR masked_card_number ILIKE $2 OR beneficiary ILIKE $2 OR registration ILIKE $2)
       AND ($3='' OR status::text=$3)
       AND ($4::boolean=false OR responsible_user_id=$5) AND ($6='' OR company_id=$6::uuid)`;

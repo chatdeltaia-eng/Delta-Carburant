@@ -43,7 +43,8 @@ export class RequestsService {
   }
   async create(dto: CreateRequest, actor: Actor) {
     if (dto.requestType === 'LIMIT_CHANGE' && !dto.fuelCardId) throw new BadRequestException('La carte concernée est obligatoire');
-    if (dto.requestType === 'CARD_FUNDING' && (!dto.fuelCardId || !dto.sourceCardId)) throw new BadRequestException('La carte à alimenter et la carte source sont obligatoires');
+    if (dto.requestType === 'NEW_CARD' && !dto.fuelCardId) throw new BadRequestException('Choisissez une carte disponible en coffre');
+    if (dto.requestType === 'CARD_FUNDING' && !dto.fuelCardId) throw new BadRequestException('Choisissez une carte disponible en coffre à alimenter');
     if (dto.requestType === 'CUSTODY_CHANGE' && (!dto.fuelCardId || !dto.requestedCardStatus)) throw new BadRequestException('La carte et son nouvel état sont obligatoires');
     const number = `D-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
     const row = await this.db.transaction(async client => {
@@ -64,22 +65,26 @@ export class RequestsService {
         VALUES($1,$2,$3) ON CONFLICT(company_id,registration_normalized) DO UPDATE SET active=true
         RETURNING id`, [companyId,normalized,registration]);
       let fuelCardId: string | null = null;
-      if (dto.requestType === 'LIMIT_CHANGE') {
+      if (['NEW_CARD','CARD_FUNDING'].includes(dto.requestType)) {
+        const exhausted=await client.query(`SELECT fc.masked_card_number FROM fuel_card fc WHERE fc.responsible_user_id=$1
+          AND fc.deleted_at IS NULL AND fc.status NOT IN('SAFE','RETURNED') AND fc.monthly_limit>0
+          AND 100*coalesce((SELECT sum(ft.amount_incl_tax) FROM fuel_transaction ft WHERE ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL AND ft.transaction_date>=date_trunc('month',current_date)),0)/fc.monthly_limit>=100`,[actor.sub]);
+        if(exhausted.rows.length)throw new BadRequestException(`Restituez d’abord à Zin la ou les cartes ayant atteint 100 % : ${exhausted.rows.map(card=>card.masked_card_number).join(', ')}`);
+      }
+      if (dto.requestType === 'NEW_CARD') {
+        const safe=await client.query(`SELECT id FROM fuel_card WHERE id=$1 AND status='SAFE' AND responsible_user_id IS NULL AND deleted_at IS NULL`,[dto.fuelCardId]);
+        if(!safe.rows[0])throw new BadRequestException('Cette carte n’est plus disponible dans le coffre');
+        fuelCardId=safe.rows[0].id;
+      } else if (dto.requestType === 'LIMIT_CHANGE') {
         const card = await client.query(`SELECT id,monthly_limit FROM fuel_card WHERE id=$1
           AND responsible_user_id=$2 AND status='ACTIVE' AND deleted_at IS NULL`, [dto.fuelCardId,actor.sub]);
         if (!card.rows[0]) throw new BadRequestException('Cette carte active n’est pas disponible pour ce responsable');
         if (dto.requestedLimit <= Number(card.rows[0].monthly_limit)) throw new BadRequestException('Le nouveau plafond doit être supérieur au plafond actuel');
         fuelCardId = card.rows[0].id;
       } else if(dto.requestType==='CARD_FUNDING') {
-        const cards=await client.query(`SELECT id,masked_card_number,monthly_limit,status FROM fuel_card WHERE id=ANY($1::uuid[])
-          AND responsible_user_id=$2 AND deleted_at IS NULL`,[[dto.fuelCardId,dto.sourceCardId],actor.sub]);
-        const target=cards.rows.find(card=>card.id===dto.fuelCardId),source=cards.rows.find(card=>card.id===dto.sourceCardId);
-        if(!target||!source||target.id===source.id)throw new BadRequestException('Les deux cartes doivent appartenir au responsable hors parc');
-        if(Number(source.monthly_limit)<=0)throw new BadRequestException(`La carte ${source.masked_card_number} ne possède pas de plafond valide. L’alimentation est impossible tant que Zin ou la DG n’a pas défini son plafond`);
-        const usage=await client.query(`SELECT coalesce(sum(amount_incl_tax),0)::float AS amount FROM fuel_transaction WHERE fuel_card_id=$1 AND deleted_at IS NULL AND transaction_date>=date_trunc('month',current_date)`,[source.id]);
-        const rate=100*Number(usage.rows[0].amount)/Number(source.monthly_limit);
-        if(rate<60)throw new BadRequestException(`Votre carte ${source.masked_card_number} n’a consommé que ${rate.toFixed(1)} % de son plafond ce mois-ci. Attendez qu’elle dépasse 60 % avant de demander une alimentation`);
-        fuelCardId=target.id;
+        const target=await client.query(`SELECT id FROM fuel_card WHERE id=$1 AND status='SAFE' AND responsible_user_id IS NULL AND deleted_at IS NULL`,[dto.fuelCardId]);
+        if(!target.rows[0])throw new BadRequestException('La carte à alimenter doit être une carte disponible en coffre');
+        fuelCardId=target.rows[0].id;
       } else if(dto.requestType==='CUSTODY_CHANGE') {
         const card=await client.query(`SELECT id,status,responsible_user_id FROM fuel_card WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`,[dto.fuelCardId]);
         if(!card.rows[0])throw new BadRequestException('Carte introuvable');
@@ -121,14 +126,14 @@ export class RequestsService {
   async decide(id: string, dto: { decision: 'APPROVED'|'REJECTED'; reason?: string; cardNumber?: string }, actor: Actor) {
     if (dto.decision === 'REJECTED' && !dto.reason?.trim()) throw new BadRequestException('Le motif du refus est obligatoire');
     const row = await this.db.transaction(async client => {
-      const requestResult = await client.query(`SELECT cr.*,b.company_id FROM card_request cr
-        JOIN beneficiary b ON b.id=cr.beneficiary_id WHERE cr.id=$1 FOR UPDATE`, [id]);
+      const requestResult = await client.query(`SELECT cr.*,b.company_id,fc.masked_card_number FROM card_request cr
+        JOIN beneficiary b ON b.id=cr.beneficiary_id LEFT JOIN fuel_card fc ON fc.id=cr.fuel_card_id WHERE cr.id=$1 FOR UPDATE OF cr`, [id]);
       const request = requestResult.rows[0];
       if (!request || !['SUBMITTED','UNDER_REVIEW'].includes(request.status)) throw new NotFoundException('Demande introuvable ou déjà traitée');
-      if (dto.decision === 'APPROVED' && request.request_type === 'NEW_CARD' && !dto.cardNumber?.trim()) throw new BadRequestException('Le numéro de la carte attribuée est obligatoire');
       let fuelCardId: string | null = request.fuel_card_id;
       const doubleApproval=['ASSIGNMENT_CHANGE','REACTIVATION'].includes(request.request_type);
       if(doubleApproval&&dto.decision==='APPROVED'){
+        if(request.request_type==='ASSIGNMENT_CHANGE'&&request.requested_card_status==='SAFE'&&actor.role==='SUPER_ADMIN')throw new BadRequestException('La restitution exige les validations personnelles de Zin et de la DG');
         if(actor.role==='ZIN_FINANCE'){
           if(request.zin_approved_at)throw new BadRequestException('Zin a déjà validé cette demande');
           await client.query(`UPDATE card_request SET zin_approved_by=$2,zin_approved_at=now(),status='UNDER_REVIEW' WHERE id=$1`,[id,actor.sub]);
@@ -147,12 +152,9 @@ export class RequestsService {
         }
       }
       if (dto.decision === 'APPROVED' && request.request_type === 'NEW_CARD') {
-        const number = dto.cardNumber!.trim();
-        const inserted = await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,
-          masked_card_number,monthly_limit,status,card_category,responsible_user_id) VALUES($1,pgp_sym_encrypt($2,$3,'cipher-algo=aes256'),
-          hmac($2,$4,'sha256'),$2,$5,'ACTIVE','OFF_PARK',$6) RETURNING id`, [request.company_id, number,
-          process.env.CARD_ENCRYPTION_KEY ?? 'delta-development-card-key', process.env.CARD_HMAC_KEY ?? 'delta-development-hmac-key', request.requested_limit ?? 0, request.requested_by]);
-        fuelCardId = inserted.rows[0].id;
+        const assigned=await client.query(`UPDATE fuel_card SET monthly_limit=$2,status='DISTRIBUTED',card_category='OFF_PARK',responsible_user_id=$3 WHERE id=$1 AND status='SAFE' AND responsible_user_id IS NULL RETURNING id`,[request.fuel_card_id,request.requested_limit,request.requested_by]);
+        if(!assigned.rows[0])throw new BadRequestException('La carte choisie n’est plus disponible en coffre');
+        fuelCardId=assigned.rows[0].id;
         await client.query(`INSERT INTO card_assignment(fuel_card_id,beneficiary_id,vehicle_id,workflow_status,
           requested_by,reviewed_by,reviewed_at) VALUES($1,$2,$3,'APPROVED_ZIN',$4,$5,now())`,
           [fuelCardId,request.beneficiary_id,request.vehicle_id,request.requested_by,actor.sub]);
@@ -163,13 +165,18 @@ export class RequestsService {
         await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
           VALUES($1,'LIMIT_CHANGE','fuel_card',$2,$3)`, [actor.email ?? actor.sub,request.fuel_card_id,{monthlyLimit:request.requested_limit}]);
       } else if(dto.decision==='APPROVED'&&request.request_type==='REACTIVATION') {
-        const funded=await client.query(`UPDATE fuel_card SET monthly_limit=$2,status='ACTIVE' WHERE id=$1 AND deleted_at IS NULL RETURNING masked_card_number`,[request.fuel_card_id,request.requested_limit]);
+        const funded=await client.query(`UPDATE fuel_card SET monthly_limit=$2,status='DISTRIBUTED',card_category='OFF_PARK',responsible_user_id=$3 WHERE id=$1 AND status='SAFE' AND responsible_user_id IS NULL AND deleted_at IS NULL RETURNING masked_card_number`,[request.fuel_card_id,request.requested_limit,request.requested_by]);
         if(!funded.rows[0])throw new BadRequestException('La carte à alimenter n’est plus disponible');
+        await client.query(`INSERT INTO card_assignment(fuel_card_id,beneficiary_id,vehicle_id,workflow_status,requested_by,reviewed_by,reviewed_at) VALUES($1,$2,$3,'APPROVED_ZIN',$4,$5,now())`,[request.fuel_card_id,request.beneficiary_id,request.vehicle_id,request.requested_by,actor.sub]);
         await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'CARD_FUNDING','fuel_card',$2,$3)`,[actor.email??actor.sub,request.fuel_card_id,{amount:request.requested_limit,sourceCardId:request.source_card_id}]);
       } else if(dto.decision==='APPROVED'&&request.request_type==='ASSIGNMENT_CHANGE') {
         if(request.requested_card_status==='SAFE'){
+          const usage=await client.query(`SELECT fc.monthly_limit,fc.masked_card_number,100*coalesce(sum(ft.amount_incl_tax),0)/nullif(fc.monthly_limit,0) AS rate FROM fuel_card fc LEFT JOIN fuel_transaction ft ON ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL AND ft.transaction_date>=date_trunc('month',current_date) WHERE fc.id=$1 GROUP BY fc.id`,[request.fuel_card_id]);
+          const rate=Number(usage.rows[0]?.rate??0);if(rate<100)throw new BadRequestException(`La carte ${usage.rows[0]?.masked_card_number} ne peut être restituée qu’après utilisation de 100 % de son plafond (${rate.toFixed(1)} % actuellement)`);
           await client.query(`UPDATE fuel_card SET status='SAFE',responsible_user_id=NULL WHERE id=$1`,[request.fuel_card_id]);
           await client.query(`UPDATE card_assignment SET ends_at=now() WHERE fuel_card_id=$1 AND ends_at IS NULL`,[request.fuel_card_id]);
+          const zinReceiver=request.zin_approved_by??(actor.role==='ZIN_FINANCE'?actor.sub:null);if(!zinReceiver)throw new BadRequestException('La réception de la carte doit être validée par Zin');
+          await client.query(`INSERT INTO card_return_receipt(receipt_number,card_request_id,fuel_card_id,returned_by,received_by,consumption_rate,consumption_month) VALUES($1,$2,$3,$4,$5,least(100,$6),date_trunc('month',current_date)::date) ON CONFLICT(card_request_id) DO NOTHING`,[`RES-${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${request.request_number.replace(/\D/g,'').slice(-10)}`,id,request.fuel_card_id,request.requested_by,zinReceiver,rate]);
         }else{
           await client.query(`UPDATE fuel_card SET status='DISTRIBUTED',responsible_user_id=$2,card_category='OFF_PARK' WHERE id=$1`,[request.fuel_card_id,request.requested_by]);
         }
@@ -184,7 +191,7 @@ export class RequestsService {
       await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id)
         VALUES($1,$2,$3,$4,'card_request',$5)`, [request.requested_by,
         dto.decision === 'APPROVED' ? (request.request_type === 'LIMIT_CHANGE' ? 'Augmentation de plafond validée' : request.request_type==='REACTIVATION'?'Alimentation de carte validée':'Carte créée et demande validée') : 'Demande refusée',
-        dto.decision === 'APPROVED' ? (request.request_type === 'LIMIT_CHANGE' ? `Le plafond de votre carte a été porté à ${request.requested_limit} par ${author}` : request.request_type==='REACTIVATION'?`Votre carte a été alimentée à hauteur de ${request.requested_limit} par ${author}`:`La carte ${dto.cardNumber} est active et affectée par ${author}`) : `${dto.reason} — décision par ${author}`,
+        dto.decision === 'APPROVED' ? (request.request_type === 'LIMIT_CHANGE' ? `Le plafond de votre carte a été porté à ${request.requested_limit} par ${author}` : request.request_type==='REACTIVATION'?`Votre carte a été alimentée à hauteur de ${request.requested_limit} par ${author}`:`La carte ${request.masked_card_number} est active et affectée par ${author}`) : `${dto.reason} — décision par ${author}`,
         dto.decision === 'APPROVED' ? 'cards' : 'requests',id]);
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
         VALUES($1,$2,'card_request',$3,$4)`, [actor.email ?? actor.sub,dto.decision,id,{fuelCardId,cardNumber:dto.cardNumber,reason:dto.reason}]);

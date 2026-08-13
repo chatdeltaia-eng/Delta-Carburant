@@ -51,7 +51,7 @@ describe('RequestsService workflow', () => {
           return { rows: [] };
         }
         if (
-          sql.includes("UPDATE fuel_card SET monthly_limit=$2,status='ACTIVE'")
+          sql.includes("UPDATE fuel_card SET monthly_limit=$2,status='DISTRIBUTED'")
         ) {
           return { rows: [{ masked_card_number: '****3506' }] };
         }
@@ -108,13 +108,13 @@ describe('RequestsService workflow', () => {
     expect(second).toMatchObject({ status: 'APPROVED' });
     expect(
       queries.some((sql) =>
-        sql.includes("UPDATE fuel_card SET monthly_limit=$2,status='ACTIVE'"),
+        sql.includes("UPDATE fuel_card SET monthly_limit=$2,status='DISTRIBUTED'"),
       ),
     ).toBe(true);
     expect(queries.some((sql) => sql.includes("'CARD_FUNDING'"))).toBe(true);
   });
 
-  it('un Super Admin peut effectuer la double validation en urgence', async () => {
+  it('exige les validations personnelles de Zin et de la DG pour une restitution', async () => {
     const state: RequestState = {
       id: 'request-id',
       request_number: 'D-2026-7654321',
@@ -125,6 +125,7 @@ describe('RequestsService workflow', () => {
       vehicle_id: 'vehicle-id',
       fuel_card_id: 'card-id',
       requested_card_status: 'SAFE',
+      zin_approved_by: 'admin-id',
       zin_approved_at: null,
       dg_approved_at: null,
       company_id: 'company-id',
@@ -132,6 +133,7 @@ describe('RequestsService workflow', () => {
     const client = {
       query: jest.fn(async (sql: string) => {
         if (sql.includes('SELECT cr.*,b.company_id')) return { rows: [state] };
+        if (sql.includes('100*coalesce(sum(ft.amount_incl_tax)')) return { rows: [{ masked_card_number: '70000001', monthly_limit: 100, rate: 100 }] };
         if (
           sql.includes('zin_approved_by=$2') &&
           sql.includes('dg_approved_by=$2')
@@ -158,12 +160,7 @@ describe('RequestsService workflow', () => {
         { decision: 'APPROVED' },
         { sub: 'admin-id', email: 'admin@delta.tn', role: 'SUPER_ADMIN' },
       ),
-    ).resolves.toMatchObject({ status: 'APPROVED' });
-    expect(
-      client.query.mock.calls.some(([sql]) =>
-        String(sql).includes("SET status='SAFE',responsible_user_id=NULL"),
-      ),
-    ).toBe(true);
+    ).rejects.toThrow('La restitution exige les validations personnelles de Zin et de la DG');
   });
 
   it('archive une demande traitée sans supprimer son historique', async () => {

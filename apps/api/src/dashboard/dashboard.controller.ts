@@ -1,4 +1,4 @@
-import { Controller, Get, Param, ParseUUIDPipe, Patch, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, Patch, Query, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Roles } from '../common/roles';
 import { RolesGuard } from '../common/roles.guard';
@@ -9,6 +9,7 @@ import { DashboardService } from './dashboard.service';
 export class DashboardController {
   constructor(private readonly dashboard: DashboardService) {}
   @Get('summary') summary(@Req() req: { user: { sub: string; role: string } }) { return this.dashboard.summary(req.user); }
+  @Get('history') history(@Query('month') month:string,@Req() req:{user:{sub:string;role:string}}){return this.dashboard.history(month,req.user);}
   @Get('direction') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') direction() { return this.dashboard.direction(); }
   @Get('anomalies') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') anomalies() { return this.dashboard.anomalies(); }
   @Patch('anomalies/:id/resolve') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE')

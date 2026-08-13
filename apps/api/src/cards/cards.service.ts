@@ -79,12 +79,14 @@ export class CardsService {
     const items = await this.db.query(`SELECT v.*,
       coalesce((SELECT sum(ft.amount_incl_tax) FROM fuel_transaction ft
         WHERE ft.fuel_card_id=v.id AND ft.deleted_at IS NULL
-          AND ft.transaction_date>=date_trunc('month',current_date)),0) AS consumed_amount,
+          AND ft.transaction_date>=date_trunc('month',current_date)
+          AND ft.transaction_date<date_trunc('month',current_date)+interval '1 month'),0) AS consumed_amount,
       coalesce((SELECT sum(ft.amount_incl_tax) FROM fuel_transaction ft
         WHERE ft.fuel_card_id=v.id AND ft.deleted_at IS NULL),0) AS total_consumed_amount,
       CASE WHEN v.monthly_limit > 0 THEN least(100,round(100 * coalesce((SELECT sum(ft.amount_incl_tax)
         FROM fuel_transaction ft WHERE ft.fuel_card_id=v.id AND ft.deleted_at IS NULL
-          AND ft.transaction_date>=date_trunc('month',current_date)),0) / v.monthly_limit)) ELSE 0 END AS consumption_rate
+          AND ft.transaction_date>=date_trunc('month',current_date)
+          AND ft.transaction_date<date_trunc('month',current_date)+interval '1 month'),0) / v.monthly_limit)) ELSE 0 END AS consumption_rate
       FROM v_fuel_card_list v ${where}
       ORDER BY updated_at DESC LIMIT $4 OFFSET $5`, [search.trim(), term, status, limit, offset, actor.role==='NAJIB_ASSIGNER', actor.sub,companyId]);
     const countWhere = `WHERE ($1='' OR masked_card_number ILIKE $2 OR beneficiary ILIKE $2 OR registration ILIKE $2)
@@ -112,7 +114,8 @@ export class CardsService {
       if (id === replacementId) throw new BadRequestException('Une carte ne peut pas se remplacer elle-même');
       if (old.rows[0].card_category === 'OFF_PARK') {
         const usage = await client.query(`SELECT coalesce(sum(amount_incl_tax),0) AS consumed
-          FROM fuel_transaction WHERE fuel_card_id=$1 AND deleted_at IS NULL`, [id]);
+          FROM fuel_transaction WHERE fuel_card_id=$1 AND deleted_at IS NULL
+          AND transaction_date>=date_trunc('month',current_date) AND transaction_date<date_trunc('month',current_date)+interval '1 month'`, [id]);
         if (Number(usage.rows[0].consumed) < Number(old.rows[0].monthly_limit))
           throw new BadRequestException('La carte hors parc précédente doit atteindre 100 % de son plafond avant activation de la remplaçante');
       }

@@ -42,6 +42,7 @@ type View =
   | "mileage"
   | "anomalies"
   | "complaints"
+  | "returns"
   | "documents"
   | "settings";
 type CardStatus =
@@ -192,6 +193,8 @@ const toRequestRow = (row: Record<string, unknown>): Row => ({
   dateDecision: row.decisionDate ? new Date(String(row.decisionDate)).toLocaleString("fr-FR", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit", second:"2-digit" }) : "—",
   decideur: String(row.decisionByName ?? "—"),
   suivi: requestTracking(row),
+  zinValide: row.zinApproved ? "Oui" : "Non",
+  dgValide: row.dgApproved ? "Oui" : "Non",
   recu: String(row.receiptNumber ?? "—"),
 });
 const initialCards: Card[] = [];
@@ -277,6 +280,7 @@ const seeds: Record<string, Row[]> = {
   anomalies: [],
   complaints: [],
   receipts: [],
+  returnReceipts: [],
   drivers: [],
   fuelPrices: [],
 };
@@ -305,7 +309,8 @@ const viewMeta: Record<View, [string, string]> = {
   mileage: ["Kilométrage hebdomadaire", "Suivez les relevés, distances détectées et validations."],
   anomalies: ["Anomalies", "Analysez les alertes détectées."],
   complaints: ["Réclamations", "Échangez et suivez les réclamations entre Najib, Zin et la DG."],
-  documents: ["Factures et reçus", "Éditez les factures périodiques et autorisez les reçus de distribution."],
+  returns: ["Restitution des cartes", "Restituez les cartes arrivées à 100 % et conservez leur reçu comme preuve."],
+  documents: ["Factures de rapprochement", "Générez et imprimez les factures hebdomadaires ou mensuelles pour le rapprochement avec Total."],
   settings: ["Paramètres", "Configurez l’application."],
 };
 const isDirection = (role: Role) =>
@@ -547,6 +552,7 @@ export default function Home() {
       user.role==="NAJIB_ASSIGNER"?fetch(`${API}/cards/safe-inventory`,{headers,cache:"no-store"}):Promise.resolve(null),
       fetch(`${API}/complaints`,{headers,cache:"no-store"}),
       fetch(`${API}/documents/receipts`,{headers,cache:"no-store"}),
+      fetch(`${API}/documents/return-receipts`,{headers,cache:"no-store"}),
       ]);
     };
     const renewSession = async () => {
@@ -574,7 +580,7 @@ export default function Home() {
       return responses;
     };
     refreshRemote()
-      .then(async ([cardResponse, requestResponse, notificationResponse,transactionResponse,summaryResponse,reviewsResponse,vehiclesResponse,mileageResponse,driversResponse,fuelPricesResponse,responsiblesResponse,companiesResponse,safeResponse,complaintsResponse,receiptsResponse]) => {
+      .then(async ([cardResponse, requestResponse, notificationResponse,transactionResponse,summaryResponse,reviewsResponse,vehiclesResponse,mileageResponse,driversResponse,fuelPricesResponse,responsiblesResponse,companiesResponse,safeResponse,complaintsResponse,receiptsResponse,returnReceiptsResponse]) => {
         if (cancelled) return;
         // Management reference data must remain usable even if an unrelated
         // dashboard endpoint is temporarily unavailable.
@@ -585,7 +591,7 @@ export default function Home() {
           ["cartes",cardResponse],["demandes",requestResponse],["notifications",notificationResponse],
           ["transactions",transactionResponse],["tableau de bord",summaryResponse],["véhicules",vehiclesResponse],
           ["kilométrages",mileageResponse],["chauffeurs",driversResponse],["prix carburant",fuelPricesResponse],
-          ["réclamations",complaintsResponse],["reçus",receiptsResponse],
+          ["réclamations",complaintsResponse],["reçus",receiptsResponse],["reçus de restitution",returnReceiptsResponse],
         ] as const;
         const failed=requiredResponses.find(([,response])=>!response.ok);
         if(failed) throw new Error(`${failed[0]} (${failed[1].status})`);
@@ -598,7 +604,7 @@ export default function Home() {
         const vehiclesPayload=await vehiclesResponse.json();
         const mileagePayload=await mileageResponse.json();
         const driversPayload=await driversResponse.json(); const fuelPricesPayload=await fuelPricesResponse.json();
-        const complaintsPayload=await complaintsResponse.json();const receiptsPayload=await receiptsResponse.json();
+        const complaintsPayload=await complaintsResponse.json();const receiptsPayload=await receiptsResponse.json();const returnReceiptsPayload=await returnReceiptsResponse.json();
         setCards(cardPayload.items ?? cardPayload);
         setNotifications((notificationPayload.items ?? notificationPayload).map(
           (row: Record<string, unknown>) => toNotification(row, user.role),
@@ -609,11 +615,12 @@ export default function Home() {
           transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => {const allocations=Array.isArray(row.allocations)?row.allocations as Record<string,unknown>[]:[];return { id:String(row.id),reviewId:String(row.reviewId??""),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),prixApplique:row.appliedPrice==null?"—":Number(row.appliedPrice),montantTheorique:row.expectedAmount==null?"—":Number(row.expectedAmount),ecartFacturation:row.billingDifference==null?"—":Number(row.billingDifference),controleFacturation:String(row.billingStatus??"PRICE_UNAVAILABLE"),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),repartition:allocations.map(item=>`${String(item.beneficiary)} — ${String(item.vehicle)} — ${Number(item.amount).toFixed(3)} DT${item.mileage?` — ${Number(item.mileage)} km`:""}`).join(" | "),observation:row.observation?`${String(row.observation)} — ${String(row.observationBy??"—")}`:"—",statut:row.reviewStatus==="PENDING"?(row.reviewIssue==="MISSING_BENEFICIARY"?"Bénéficiaire à identifier":"Véhicule inconnu à valider"):"Importée Total",fichier:String(row.file??"—") }}),
           anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => {const reviewLabels:Record<string,string>={MISSING_BENEFICIARY:"Bénéficiaire manquant",UNKNOWN_CARD:"Carte absente de la base",UNAVAILABLE_CARD:"Carte indisponible",UNKNOWN_VEHICLE:"Véhicule absent de la base",UNAVAILABLE_VEHICLE:"Véhicule indisponible"};return { id:String(row.id),kind:String(row.kind??"REVIEW"),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.kind)==="REVIEW"?(reviewLabels[String(row.type)]??"Transaction à vérifier"):String(row.description??row.type),carte:String(row.card??"—"),beneficiaire:"—",vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters??0),montant:Number(row.amount??0),gravite:String(row.severity)==="CRITICAL"?"Critique":String(row.severity)==="WARNING"?"Moyenne":String(row.severity)==="INFO"?"Information":"Haute",statut:String(row.kind)==="REVIEW"?"À vérifier":String(row.status)==="IN_REVIEW"?"En cours":"Ouverte" }}),
           vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>,index:number)=>({id:String(row.id),companyId:String(row.companyId??""),numero:Number(row.fleetNumber??0)||index+1,immatriculation:Boolean(row.registrationMissing)?"Sans matricule":String(row.registration),sansMatricule:Boolean(row.registrationMissing),type:String(row.vehicleType??row.model??"À compléter"),societe:String(row.company??"—"),mise_en_circulation:row.firstRegistrationDate?new Date(String(row.firstRegistrationDate)).toLocaleDateString("fr-FR"):"À compléter",reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??row.cardHolder??"—"),titulaire:String(row.cardHolder??row.driver??"—"),carte:String(row.cardNumber??"—"),garde:String(row.custody)==="IN_SAFE"?"En coffre · non distribuée":"Distribuée / active",observation:String(row.notes??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
-          mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:String(row.week??"—"),vehicule:String(row.vehicle),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),litresPeriode:Number(row.periodLiters??0),consommation100km:row.litersPer100Km==null?"—":Number(row.litersPer100Km),attendu:Number(row.expectedMileage??0),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—")})),
+          mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:String(row.week??"—"),vehicule:String(row.vehicle),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),litresPeriode:Number(row.periodLiters??0),consommation100km:row.litersPer100Km==null?"—":Number(row.litersPer100Km),reference100km:row.referenceLitersPer100Km==null?"—":Number(row.referenceLitersPer100Km),distanceEstimee:row.estimatedDistance==null?"—":Number(row.estimatedDistance),attendu:Number(row.estimatedMileage??row.expectedMileage??0),rapprochement:String(row.reconciliationMessage??"—"),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—")})),
           drivers:(driversPayload.items??driversPayload).map((row:Record<string,unknown>)=>({id:String(row.id),companyId:String(row.companyId??""),nomComplet:String(row.fullName??"—"),numeroClient:String(row.customerNumber??"—"),nomClient:String(row.customerName??"—"),numeroChauffeur:String(row.driverNumber??"—"),prenom:String(row.firstName??"—"),nom:String(row.lastName??row.fullName??"—"),codeChauffeur:String(row.driverCode??"—"),vehicules:Array.isArray(row.vehicles)?(row.vehicles as {registration:string}[]).map(item=>item.registration).join(", "):"—",statut:Boolean(row.active)?"Actif":"Inactif"})),
           fuelPrices:(fuelPricesPayload.items??fuelPricesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),societe:String(row.company),produit:String(row.product),ancienPrix:Number(row.oldPrice),nouveauPrix:Number(row.newPrice),variation:`${Number(row.variationPercent).toFixed(2)} %`,date:new Date(String(row.effectiveDate)).toLocaleDateString("fr-FR"),auteur:String(row.createdBy??"—"),source:String(row.source)==="OFFICIAL_TUNISIA"?"Ministère tunisien":String(row.source)==="TOTAL_SUPPLIER"?"Tarif fournisseur Total":"Saisie manuelle"})),
           complaints:(complaintsPayload.items??complaintsPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numero:String(row.number),objet:String(row.subject),description:String(row.description),priorite:String(row.priority),statut:String(row.status),destinataire:String(row.targetRole),createur:String(row.creator),date:new Date(String(row.createdAt)).toLocaleString("fr-FR"),resolution:String(row.resolution??"—"),messages:JSON.stringify(row.messages??[])})),
           receipts:(receiptsPayload.items??receiptsPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numero:String(row.receiptNumber),carte:String(row.card),beneficiaire:String(row.beneficiary),vehicule:String(row.vehicle),distribueA:String(row.distributedTo),statut:String(row.status),zin:String(row.zinApprovedBy??"En attente"),dg:String(row.dgApprovedBy??"En attente"),date:String(row.issuedAt?new Date(String(row.issuedAt)).toLocaleString("fr-FR"):"—")})),
+          returnReceipts:(returnReceiptsPayload.items??returnReceiptsPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numero:String(row.receiptNumber),carte:String(row.card),restituePar:String(row.returnedBy),recuPar:String(row.receivedBy),dg:String(row.dgApprovedBy),taux:Number(row.consumptionRate),mois:new Date(String(row.consumptionMonth)).toLocaleDateString("fr-FR",{month:"long",year:"numeric"}),date:new Date(String(row.returnedAt)).toLocaleString("fr-FR")})),
         }));
         setDatabaseSummary(summaryPayload);
         setError("");
@@ -1193,7 +1200,8 @@ export default function Home() {
     const isLimitChange = request.type === "Augmentation de plafond";
     const isFunding=request.type==="Alimentation de carte";
     const isCustody=request.type==="Mise en coffre"||request.type==="Distribution de carte";
-    if (isLimitChange||isFunding||isCustody) {
+    const isNewCard=request.type==="Nouvelle carte";
+    if (isLimitChange||isFunding||isCustody||isNewCard) {
       if (!token) return notify("Session distante expirée : reconnectez-vous");
       try {
         const apiResponse = await fetch(`${API}/requests/${id}/decision`, {
@@ -1204,7 +1212,7 @@ export default function Home() {
         if (!apiResponse.ok) throw new Error(await apiResponse.text());
         const decision=await apiResponse.json();
         setRefreshTick(value=>value+1);
-        notify(!accepted?"Demande refusée":decision.pendingSecondApproval?"Votre accord est enregistré. La deuxième autorisation Zin/DG reste obligatoire.":isCustody?"Changement coffre / distribution validé par Zin et la DG":`${isFunding?"Alimentation":"Plafond"} de la carte ${request.carte} validé`);
+        notify(!accepted?"Demande refusée":decision.pendingSecondApproval?"Votre accord est enregistré. La deuxième autorisation Zin/DG reste obligatoire.":isCustody?"Changement coffre / distribution validé par Zin et la DG":isNewCard?`Carte ${request.carte} sortie du coffre et attribuée`:`${isFunding?"Alimentation":"Plafond"} de la carte ${request.carte} validé`);
       } catch {
         notify("Échec de la décision distante : aucune modification enregistrée");
       }
@@ -1617,14 +1625,7 @@ export default function Home() {
     setAllocationRow(null);
     notify(`Répartition envoyée pour validation Zin/DG. Total original inchangé : ${originalAmount.toFixed(3)} DT`);
   }
-  const cardConsumption = (card: Card) =>
-    data.transactions
-      .filter((row) => String(row.carte) === card.masked_card_number)
-      .reduce((total, row) => total + parseNumeric(row.montant), 0);
-  const consumptionRate = (card: Card) =>
-    card.monthly_limit > 0
-      ? Math.min(100, Math.round((cardConsumption(card) / card.monthly_limit) * 100))
-      : 0;
+  const consumptionRate = (card: Card) => Math.min(100,Number(card.consumption_rate??0));
   const cardsForUser =
     user?.role === "NAJIB_ASSIGNER"
       ? cards
@@ -1748,12 +1749,13 @@ export default function Home() {
     ["mileage", "mileage", "Kilométrage"], ["fuelPrices", "fuel", "Prix carburants"],
     ["anomalies", "alert", "Anomalies"],
     ["complaints", "requests", "Réclamations"],
+    ["returns", "transfer", "Restitution des cartes"],
     ["documents", "reports", "Factures et reçus"],
   ];
   const nav =
     user.role === "NAJIB_ASSIGNER"
       ? allNav.filter(([v]) =>
-          ["dashboard", "cards", "vehicles", "drivers", "transactions", "requests", "mileage", "fuelPrices", "complaints", "documents"].includes(v),
+          ["dashboard", "cards", "vehicles", "drivers", "transactions", "requests", "mileage", "fuelPrices", "complaints", "returns", "documents"].includes(v),
         )
       : isDirection(user.role)
         ? allNav
@@ -1876,6 +1878,7 @@ export default function Home() {
         <WorkflowGuide role={user.role} activeView={view} go={setView} />
         {view === "dashboard" ? (
           <Dashboard
+            token={token}
             summary={summary}
             cards={cardsForUser}
             transactions={data.transactions}
@@ -1889,8 +1892,10 @@ export default function Home() {
           <DirectionReports cards={cards} transactions={data.transactions} analytics={directionData} operationalData={data} />
         ) : view === "complaints" ? (
           <ComplaintsView token={token} user={user} rows={data.complaints} refresh={()=>setRefreshTick(value=>value+1)} notify={notify}/>
+        ) : view === "returns" ? (
+          <CardReturnsView token={token} user={user} cards={cardsForUser} requests={data.requests} receipts={data.returnReceipts} decide={decideRequest} refresh={()=>setRefreshTick(value=>value+1)} notify={notify}/>
         ) : view === "documents" ? (
-          <DocumentsView token={token} user={user} receipts={data.receipts} refresh={()=>setRefreshTick(value=>value+1)} notify={notify}/>
+          <DocumentsView token={token} returnReceipts={data.returnReceipts} notify={notify}/>
         ) : view === "settings" ? (
           <Settings
             token={token}
@@ -2112,6 +2117,7 @@ function WorkflowGuide({
 }
 
 function Dashboard({
+  token,
   summary,
   cards,
   transactions,
@@ -2121,6 +2127,7 @@ function Dashboard({
   edit,
   analytics,
 }: {
+  token:string;
   summary: Record<string, number>;
   cards: Card[];
   transactions: Row[];
@@ -2130,9 +2137,15 @@ function Dashboard({
   edit: (c: Card) => void;
   analytics: Record<string,unknown>|null;
 }) {
+  const currentMonth=new Date().toISOString().slice(0,7);
+  const [historyMonth,setHistoryMonth]=useState(currentMonth);
+  const [history,setHistory]=useState<Record<string,unknown>|null>(null);
+  useEffect(()=>{let cancelled=false;fetch(`${API}/dashboard/history?month=${historyMonth}`,{headers:{Authorization:`Bearer ${token}`},cache:'no-store'}).then(response=>response.ok?response.json():Promise.reject()).then(payload=>{if(!cancelled)setHistory(payload)}).catch(()=>{if(!cancelled)setHistory(null)});return()=>{cancelled=true}},[token,historyMonth]);
+  const historyCards=(history?.cards??[]) as Record<string,unknown>[];
+  const periodCards=cards.map(card=>{const item=historyCards.find(row=>String(row.id)===card.id);return {...card,consumed_amount:Number(item?.consumed??0),consumption_rate:Math.min(100,Number(item?.rate??0))};});
   const [overviewSearch, setOverviewSearch] = useState("");
   const query = normalizedKey(overviewSearch);
-  const overviewCards = cards.filter((card) => !query || [
+  const overviewCards = periodCards.filter((card) => !query || [
     card.masked_card_number,
     card.beneficiary,
     card.department,
@@ -2146,7 +2159,7 @@ function Dashboard({
   const activeMonthlyLimit = activeCards.reduce((sum, card) => sum + Number(card.monthly_limit ?? 0), 0);
   const safeCardsLimit = safeCards.reduce((sum, card) => sum + Number(card.monthly_limit ?? 0), 0);
   const totalMonthlyLimit = activeMonthlyLimit + safeCardsLimit;
-  const officialMonthlyConsumed = Number(summary.officialMonthAmount ??
+  const officialMonthlyConsumed = Number(history?.amount??summary.officialMonthAmount ??
     activeCards.reduce((sum, card) => sum + Number(card.consumed_amount ?? 0), 0));
   const utilization = activeMonthlyLimit ? Math.round((officialMonthlyConsumed / activeMonthlyLimit) * 100) : 0;
   const cardsAtRisk = activeCards.filter((card) => Number(card.consumption_rate ?? 0) >= 80);
@@ -2154,6 +2167,7 @@ function Dashboard({
   const billingMismatches = Number(analytics?.billingMismatches ?? 0);
   return (
     <>
+      <section className={styles.periodFilter}><div><small>HISTORIQUE D’UTILISATION</small><h2>Période affichée</h2><p>Tous les indicateurs ci-dessous correspondent uniquement au mois sélectionné.</p></div><label>Mois et année<input type="month" value={historyMonth} max={currentMonth} onChange={event=>setHistoryMonth(event.target.value)}/></label><div><b>{Number(history?.transactions??0).toLocaleString('fr-FR')}</b><span>transactions</span></div><div><b>{Number(history?.liters??0).toLocaleString('fr-FR',{maximumFractionDigits:3})} L</b><span>volume du mois</span></div></section>
       {isDirection(user.role) && <section className={styles.executiveHero}>
         <div className={styles.executiveHeroCopy}>
           <span className={styles.executiveLabel}>COCKPIT EXÉCUTIF · TEMPS RÉEL</span>
@@ -2208,13 +2222,13 @@ function Dashboard({
         consumed={officialMonthlyConsumed}
         creditLine={activeMonthlyLimit}
       />}
-      {isDirection(user.role)&&<DailyConsumptionHistogram transactions={transactions}/>}
-      {isDirection(user.role)&&<CardPortfolioOverview cards={cards} go={go}/>}
+      {isDirection(user.role)&&historyMonth===currentMonth&&<DailyConsumptionHistogram transactions={transactions}/>}
+      {isDirection(user.role)&&<CardPortfolioOverview cards={periodCards} go={go}/>}
       <section className={styles.overviewPanel}>
         <div className={styles.overviewToolbar}>
           <div>
             <h2>Contrôle global des cartes et consommations</h2>
-            <p>{overviewCards.length} carte(s) affichée(s) sur {cards.length} · bénéficiaires, véhicules, plafonds et consommations</p>
+            <p>{overviewCards.length} carte(s) affichée(s) sur {cards.length} · historique de {new Date(`${historyMonth}-01T12:00:00`).toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</p>
           </div>
           <input
             value={overviewSearch}
@@ -2272,7 +2286,7 @@ function Dashboard({
 
 function CardPortfolioOverview({cards,go}:{cards:Card[];go:(view:View)=>void}){
   const active=cards.filter(card=>card.status==="ACTIVE");
-  const usage=(card:Card)=>Number(card.consumption_rate??(card.monthly_limit?100*Number(card.consumed_amount??0)/card.monthly_limit:0));
+  const usage=(card:Card)=>Math.min(100,Number(card.consumption_rate??(card.monthly_limit?100*Number(card.consumed_amount??0)/card.monthly_limit:0)));
   const bands=[
     {label:"Plafond dépassé",value:active.filter(card=>usage(card)>=100).length,tone:"danger"},
     {label:"À surveiller · 80–99 %",value:active.filter(card=>usage(card)>=80&&usage(card)<100).length,tone:"warning"},
@@ -2352,7 +2366,7 @@ function DirectionReports({
     (sum, row) => sum + parseNumeric(row.montant),
     0,
   );
-  const cardUsage=(card:Card)=>Number(card.consumption_rate??(card.monthly_limit?100*Number(card.consumed_amount??0)/card.monthly_limit:0));
+  const cardUsage=(card:Card)=>Math.min(100,Number(card.consumption_rate??(card.monthly_limit?100*Number(card.consumed_amount??0)/card.monthly_limit:0)));
   const consumed=filteredCards.reduce((sum,card)=>sum+Number(card.consumed_amount??0),0);
   const available=Math.max(0,limit-consumed);
   const overLimit=filteredCards.filter(card=>card.status==="ACTIVE"&&cardUsage(card)>=100);
@@ -2570,7 +2584,16 @@ function Bars({ items,unit="L" }: { items: { name: string; value: number }[];uni
 }
 function printOfficialDocument(title:string,body:string){
   const popup=window.open("","_blank","width=1100,height=800");if(!popup)return;
-  popup.document.write(`<!doctype html><html><head><title>${title}</title><style>@page{size:A4;margin:14mm}body{font-family:Arial,sans-serif;color:#14213d;margin:0}header{display:flex;align-items:center;gap:20px;border-bottom:3px solid #198754;padding-bottom:14px;margin-bottom:22px}header img{width:95px;height:95px;object-fit:contain}h1{margin:0;color:#198754;font-size:25px}small{color:#65736d}.meta{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:18px 0}.meta div{border:1px solid #dce5e0;border-radius:7px;padding:10px}table{width:100%;border-collapse:collapse;font-size:10px}th,td{border:1px solid #d9e1dd;padding:6px;text-align:left}th{background:#edf7f2}.total{font-size:17px;text-align:right;margin-top:18px}.signatures{display:flex;justify-content:space-between;margin-top:65px}.signatures div{width:42%;border-top:1px solid #333;padding-top:8px}.notice{margin-top:18px;font-size:10px;color:#65736d}@media print{button{display:none}}</style></head><body><header><img src="/brand/delta-logo.png" alt="Delta Carburant"><div><h1>Delta Carburant</h1><b>${title}</b><br><small>Document généré depuis la plateforme de suivi carburant</small></div></header>${body}<button onclick="window.print()">Imprimer / Enregistrer en PDF</button><script>window.onload=()=>setTimeout(()=>window.print(),300)</script></body></html>`);popup.document.close();
+  popup.document.write(`<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${title}</title><style>
+  :root{--green:#087a55;--green-dark:#075f45;--green-soft:#eaf6f1;--ink:#172b3a;--muted:#667781;--line:#dbe5e1;--paper:#fff}
+  *{box-sizing:border-box} @page{size:A4 landscape;margin:11mm 10mm 14mm} body{font-family:Inter,"Segoe UI",Arial,sans-serif;color:var(--ink);background:#eef3f1;margin:0;font-size:11px;line-height:1.45}.sheet{max-width:1120px;margin:24px auto;background:var(--paper);padding:34px 38px;box-shadow:0 12px 40px #183d2d1a}
+  header{display:flex;align-items:center;justify-content:space-between;gap:24px;border-bottom:2px solid var(--green);padding-bottom:16px;margin-bottom:18px}.brand{display:flex;align-items:center;gap:16px}.brand img{width:72px;height:72px;object-fit:contain}.brand h1{margin:0;color:var(--green-dark);font-size:24px;letter-spacing:-.4px}.brand p{margin:3px 0 0;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:1.1px}.document-title{text-align:right}.document-title strong{display:block;font-size:20px;color:var(--ink)}.document-title span{display:inline-block;margin-top:5px;padding:4px 10px;border-radius:20px;background:var(--green-soft);color:var(--green-dark);font-weight:700;font-size:9px;letter-spacing:.8px;text-transform:uppercase}
+  .meta{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin:16px 0}.meta div{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:#fbfdfc;min-height:58px}.meta b{display:block;margin-bottom:4px;color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.7px}.meta br{display:none}
+  .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0 18px}.summary div{border-radius:9px;padding:12px 14px;background:var(--green-soft);border-left:4px solid var(--green)}.summary span{display:block;color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.7px}.summary strong{display:block;margin-top:2px;color:var(--green-dark);font-size:18px}
+  table{width:100%;border-collapse:separate;border-spacing:0;font-size:8.5px;border:1px solid var(--line);border-radius:8px;overflow:hidden}thead{display:table-header-group}th{background:var(--green-dark);color:#fff;text-transform:uppercase;letter-spacing:.35px;font-size:7.5px;padding:8px 6px;text-align:left}td{padding:7px 6px;border-bottom:1px solid #e8efec;vertical-align:top}tbody tr:nth-child(even){background:#f6faf8}tbody tr:last-child td{border-bottom:0}th.numeric,td.numeric{text-align:right;white-space:nowrap}tr{break-inside:avoid}
+  .total{font-size:16px;text-align:right;margin:16px 0 0;padding:12px 15px;color:var(--green-dark);background:var(--green-soft);border-radius:8px}.signatures{display:flex;justify-content:space-between;margin-top:65px}.signatures div{width:42%;border-top:1px solid #52645c;padding-top:8px;text-align:center;color:var(--muted)}.notice{margin:14px 0 0;padding:9px 12px;border-left:3px solid #b8c9c2;background:#f5f8f7;font-size:8.5px;color:var(--muted)}footer{display:flex;justify-content:space-between;gap:20px;margin-top:15px;padding-top:10px;border-top:1px solid var(--line);color:var(--muted);font-size:8px}.print-action{display:block;margin:20px auto 0;border:0;border-radius:8px;background:var(--green);color:#fff;padding:11px 18px;font-weight:700;cursor:pointer}
+  @media print{body{background:#fff}.sheet{max-width:none;margin:0;padding:0;box-shadow:none}.print-action{display:none}footer{position:fixed;bottom:-9mm;left:0;right:0}.page-number:after{content:"Page " counter(page)}}
+  </style></head><body><main class="sheet"><header><div class="brand"><img src="/brand/delta-logo.png" alt="Delta Carburant"><div><h1>Delta Carburant</h1><p>Gestion et suivi des consommations</p></div></div><div class="document-title"><strong>${title}</strong><span>Document contrôlé</span></div></header>${body}<footer><span>Delta Carburant · Document généré automatiquement</span><span class="page-number">Édition du ${new Date().toLocaleDateString('fr-FR')}</span></footer><button class="print-action" onclick="window.print()">Imprimer / Enregistrer en PDF</button></main><script>window.onload=()=>setTimeout(()=>window.print(),350)</script></body></html>`);popup.document.close();
 }
 const documentText=(value:unknown)=>String(value??"—").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]??char));
 function ComplaintsView({token,user,rows,refresh,notify}:{token:string;user:User;rows:Row[];refresh:()=>void;notify:(message:string)=>void}){
@@ -2579,12 +2602,20 @@ function ComplaintsView({token,user,rows,refresh,notify}:{token:string;user:User
  const resolve=async(row:Row)=>{const resolution=window.prompt("Solution apportée à la réclamation");if(!resolution)return;const response=await fetch(`${API}/complaints/${row.id}/status`,{method:"PATCH",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({status:"RESOLVED",resolution})});if(!response.ok)return notify("Clôture impossible");notify("Réclamation résolue");refresh();};
  return <section className={styles.fullPanel}><div className={styles.importNotice}><b>Canal interne officiel</b><span>Najib, Zin et la DG peuvent ouvrir une réclamation, répondre, suivre son traitement et conserver la résolution dans l’historique.</span></div><Toolbar search="" setSearch={()=>{}} count={rows.length} button="Nouvelle réclamation" click={create}/><div className={styles.tableWrap}><table><thead><tr>{["N°","Date","Créateur","Destinataire","Objet","Priorité","Statut","Résolution","Action"].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.id}><td>{row.numero}</td><td>{row.date}</td><td>{row.createur}</td><td>{roleName[String(row.destinataire)]??row.destinataire}</td><td><b>{row.objet}</b><br/><small>{row.description}</small></td><td>{row.priorite}</td><td>{row.statut}</td><td>{row.resolution}</td><td><button className={styles.smallBtn} onClick={()=>respond(row)}>Répondre</button>{!['RESOLVED','CLOSED'].includes(String(row.statut))&&<><br/><button className={styles.smallBtn} onClick={()=>resolve(row)}>Résoudre</button></>}</td></tr>)}</tbody></table></div></section>;
 }
-function DocumentsView({token,user,receipts,refresh,notify}:{token:string;user:User;receipts:Row[];refresh:()=>void;notify:(message:string)=>void}){
+function CardReturnsView({token,user,cards,requests,receipts,decide,refresh,notify}:{token:string;user:User;cards:Card[];requests:Row[];receipts:Row[];decide:(id:string,accepted:boolean)=>void|Promise<void>;refresh:()=>void;notify:(message:string)=>void}){
+ const eligible=cards.filter(card=>Math.min(100,Number(card.consumption_rate??0))>=100||receipts.some(receipt=>receipt.carte===card.masked_card_number));
+ const pendingFor=(card:Card)=>requests.find(row=>row.type==='Mise en coffre'&&row.carte===card.masked_card_number&&row.statut==='EN_ATTENTE_ZIN');
+ const receiptFor=(card:Card)=>receipts.find(row=>row.carte===card.masked_card_number);
+ const returnCard=async(card:Card)=>{if(pendingFor(card))return notify("Une demande de restitution est déjà en cours");const response=await fetch(`${API}/requests`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({requestType:'CUSTODY_CHANGE',requestedCardStatus:'SAFE',fuelCardId:card.id,beneficiary:card.beneficiary||'Najib',department:card.department||'Hors parc',vehicle:card.registration||'Sans véhicule',requestedLimit:0,reason:'Restitution obligatoire après utilisation de 100 % du plafond'})});if(!response.ok){const body=await response.json().catch(()=>({}));return notify(String(body.message??"La demande de restitution n’a pas été enregistrée"));}notify("Demande de restitution envoyée à Zin et à la DG");refresh();};
+ const printReceipt=(row:Row)=>printOfficialDocument(`Reçu de restitution ${documentText(row.numero)}`,`<div class="meta"><div><b>N° reçu</b><br>${documentText(row.numero)}</div><div><b>Carte restituée</b><br>${documentText(row.carte)}</div><div><b>Restituée par</b><br>${documentText(row.restituePar)}</div><div><b>Reçue et validée par Zin</b><br>${documentText(row.recuPar)}</div><div><b>Validée par la DG</b><br>${documentText(row.dg)}</div><div><b>Plafond consommé</b><br>${Number(row.taux).toFixed(1)} %</div><div><b>Date</b><br>${documentText(row.date)}</div></div><p>Delta Carburant certifie que la carte indiquée a été physiquement restituée par Najib et reçue par le responsable carburant Zin après validation de Zin et de la Direction Générale.</p><div class="signatures"><div>Signature Delta Carburant</div><div>Signature Responsable carburant Zin</div></div>`);
+ const rows=[...eligible];for(const receipt of receipts)if(!rows.some(card=>card.masked_card_number===receipt.carte))rows.push({id:`receipt-${receipt.id}`,masked_card_number:String(receipt.carte),company_code:'DC',beneficiary:null,registration:null,monthly_limit:0,status:'SAFE',finance_status:'CONFIRMED',created_at:'',updated_at:'',card_category:'OFF_PARK',consumption_rate:Number(receipt.taux)});
+ return <section className={styles.fullPanel}><div className={styles.importNotice}><b>Restitution obligatoire à 100 %</b><span>Najib lance la restitution. Zin et la DG donnent chacun leur accord. Le reçu devient ensuite la preuve officielle visible par les trois rôles.</span></div><div className={styles.tableWrap}><table><thead><tr>{["Carte","Consommation","Najib","Validation Zin","Validation DG","Statut","Reçu / action"].map(label=><th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map(card=>{const request=pendingFor(card),receipt=receiptFor(card);const zinDone=request?.zinValide==='Oui',dgDone=request?.dgValide==='Oui';const alreadyApproved=(user.role==='ZIN_FINANCE'&&zinDone)||(user.role==='DIRECTION_GENERAL'&&dgDone);return <tr key={card.id}><td><b>{card.masked_card_number}</b><small>{card.beneficiary||'—'} · {card.registration||'—'}</small></td><td><span className={styles.documentPending}>{Number(card.consumption_rate??receipt?.taux??0).toFixed(1)} %</span></td><td>{receipt?'✓ Restituée':request?'✓ Demandée':'À restituer'}</td><td>{receipt||zinDone?'✓ Validée':'○ En attente'}</td><td>{receipt||dgDone?'✓ Validée':'○ En attente'}</td><td>{receipt?<span className={styles.documentAuthorized}>✓ Restitution terminée</span>:request?<span className={styles.documentPending}>Validation en cours</span>:<span className={styles.documentPending}>Restitution requise</span>}</td><td>{receipt?<button className={styles.documentPrintBtn} onClick={()=>printReceipt(receipt)}>▣ Imprimer le reçu</button>:user.role==='NAJIB_ASSIGNER'?<button className={styles.documentApproveBtn} onClick={()=>returnCard(card)}>Restituer la carte</button>:request&&!alreadyApproved?<button className={styles.documentApproveBtn} onClick={()=>decide(String(request.id),true)}>✓ Approuver</button>:<span className={styles.waitingStatus}>{alreadyApproved?'Votre validation est enregistrée':'En attente de Najib'}</span>}</td></tr>})}{!rows.length&&<tr><td colSpan={7}><div className={styles.documentEmpty}>Aucune carte n’a atteint 100 % pour le moment.</div></td></tr>}</tbody></table></div></section>;
+}
+function DocumentsView({token,returnReceipts,notify}:{token:string;returnReceipts:Row[];notify:(message:string)=>void}){
  const [period,setPeriod]=useState<'WEEK'|'MONTH'>('WEEK');const [start,setStart]=useState(new Date().toISOString().slice(0,10));const [busy,setBusy]=useState(false);
- const invoice=async()=>{setBusy(true);try{const response=await fetch(`${API}/documents/statement?period=${period}&start=${start}`,{headers:{Authorization:`Bearer ${token}`}});if(!response.ok)throw new Error();const doc=await response.json() as Record<string,unknown>;const transactions=(doc.transactions??[]) as Record<string,unknown>[];const html=`<div class="meta"><div><b>N° facture</b><br>${documentText(doc.documentNumber)}</div><div><b>Période</b><br>${documentText(new Date(String(doc.startDate)).toLocaleDateString('fr-FR'))} au ${documentText(new Date(String(doc.endDate)).toLocaleDateString('fr-FR'))}</div><div><b>Source</b><br>${documentText(doc.source)}</div><div><b>Nombre de transactions</b><br>${Number(doc.totalTransactions)}</div></div><table><thead><tr><th>Date</th><th>Carte</th><th>Bénéficiaire</th><th>Véhicule</th><th>Station</th><th>Produit</th><th>Litres</th><th>Montant TND</th></tr></thead><tbody>${transactions.map(row=>`<tr><td>${documentText(new Date(String(row.date)).toLocaleString('fr-FR'))}</td><td>${documentText(row.card)}</td><td>${documentText(row.beneficiary)}</td><td>${documentText(row.vehicle)}</td><td>${documentText(row.station)}</td><td>${documentText(row.product)}</td><td>${Number(row.liters).toFixed(3)}</td><td>${Number(row.amount).toFixed(3)}</td></tr>`).join('')}</tbody></table><p class="total"><b>Total : ${Number(doc.totalLiters).toFixed(3)} L · ${Number(doc.totalAmount).toFixed(3)} TND</b></p><p class="notice">Facture récapitulative interne établie à partir des transactions TotalEnergies importées. Les factures fiscales originales du fournisseur restent les pièces comptables de référence.</p>`;printOfficialDocument(period==='WEEK'?'Facture hebdomadaire':'Facture mensuelle',html);}catch{notify("Impossible de générer la facture");}finally{setBusy(false);}};
- const approve=async(row:Row)=>{const response=await fetch(`${API}/documents/receipts/${row.id}/approve`,{method:'PATCH',headers:{Authorization:`Bearer ${token}`}});if(!response.ok)return notify("Autorisation non enregistrée ou déjà effectuée");notify("Autorisation enregistrée");refresh();};
- const printCardReceipt=(row:Row)=>{if(row.statut!=='AUTHORIZED')return notify("Le reçu doit être autorisé par Zin et la DG");printOfficialDocument(`Reçu officiel de distribution ${documentText(row.numero)}`,`<div class="meta"><div><b>Carte</b><br>${documentText(row.carte)}</div><div><b>Bénéficiaire</b><br>${documentText(row.beneficiaire)}</div><div><b>Véhicule</b><br>${documentText(row.vehicule)}</div><div><b>Distribuée à</b><br>${documentText(row.distribueA)}</div><div><b>Autorisation Zin</b><br>${documentText(row.zin)}</div><div><b>Autorisation Direction Générale</b><br>${documentText(row.dg)}</div><div><b>Date d’émission</b><br>${documentText(row.date)}</div><div><b>Statut</b><br>AUTORISÉ</div></div><p>Le présent reçu certifie que cette carte carburant a été distribuée dans le cadre du workflow officiel de Delta Carburant et autorisée conjointement par Zin Finance et la Direction Générale.</p><div class="signatures"><div>Visa Zin Finance</div><div>Visa Direction Générale</div></div>`);};
- return <section className={styles.fullPanel}><div className={styles.importNotice}><b>Documents Delta Carburant</b><span>Les factures récapitulent les transactions Total de la semaine ou du mois. Un reçu de carte n’est imprimable qu’après l’autorisation conjointe de Zin et de la DG.</span></div><div className={styles.bulkBar}><select value={period} onChange={e=>setPeriod(e.target.value as 'WEEK'|'MONTH')}><option value="WEEK">Facture hebdomadaire</option><option value="MONTH">Facture mensuelle</option></select><input type="date" value={start} onChange={e=>setStart(e.target.value)}/><button onClick={invoice} disabled={busy}>{busy?'Génération…':'Générer / imprimer PDF'}</button></div><div className={styles.tableWrap}><table><thead><tr>{["N° reçu","Carte","Bénéficiaire","Véhicule","Distribuée à","Zin","DG","Statut","Action"].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{receipts.map(row=><tr key={row.id}><td>{row.numero}</td><td>{row.carte}</td><td>{row.beneficiaire}</td><td>{row.vehicule}</td><td>{row.distribueA}</td><td>{row.zin}</td><td>{row.dg}</td><td>{row.statut==='AUTHORIZED'?'Autorisé':'Double validation en attente'}</td><td>{row.statut==='AUTHORIZED'?<button className={styles.smallBtn} onClick={()=>printCardReceipt(row)}>Imprimer reçu PDF</button>:user.role!=='NAJIB_ASSIGNER'?<button className={styles.smallBtn} onClick={()=>approve(row)}>Autoriser</button>:<span>En attente de Zin / DG</span>}</td></tr>)}</tbody></table></div></section>;
+ const invoice=async()=>{setBusy(true);try{const response=await fetch(`${API}/documents/statement?period=${period}&start=${start}`,{headers:{Authorization:`Bearer ${token}`}});if(!response.ok)throw new Error();const doc=await response.json() as Record<string,unknown>;const transactions=(doc.transactions??[]) as Record<string,unknown>[];const money=(value:unknown)=>Number(value).toLocaleString('fr-FR',{minimumFractionDigits:3,maximumFractionDigits:3});const html=`<div class="meta"><div><b>N° de facture</b>${documentText(doc.documentNumber)}</div><div><b>Période de facturation</b>${documentText(new Date(String(doc.startDate)).toLocaleDateString('fr-FR'))} — ${documentText(new Date(String(doc.endDate)).toLocaleDateString('fr-FR'))}</div><div><b>Source des données</b>${documentText(doc.source)}</div><div><b>Date d’émission</b>${new Date().toLocaleDateString('fr-FR')}</div></div><div class="summary"><div><span>Transactions contrôlées</span><strong>${Number(doc.totalTransactions).toLocaleString('fr-FR')}</strong></div><div><span>Volume total</span><strong>${money(doc.totalLiters)} L</strong></div><div><span>Montant total TTC</span><strong>${money(doc.totalAmount)} TND</strong></div></div><table><thead><tr><th>Date et heure</th><th>Carte</th><th>Bénéficiaire</th><th>Véhicule</th><th>Station</th><th>Produit</th><th class="numeric">Litres</th><th class="numeric">Montant TND</th></tr></thead><tbody>${transactions.map(row=>`<tr><td>${documentText(new Date(String(row.date)).toLocaleString('fr-FR'))}</td><td>${documentText(row.card)}</td><td>${documentText(row.beneficiary)}</td><td>${documentText(row.vehicle)}</td><td>${documentText(row.station)}</td><td>${documentText(row.product)}</td><td class="numeric">${money(row.liters)}</td><td class="numeric"><b>${money(row.amount)}</b></td></tr>`).join('')}</tbody></table><p class="total">Total général TTC&nbsp;&nbsp; <b>${money(doc.totalAmount)} TND</b></p><p class="notice"><b>Note :</b> facture récapitulative interne établie à partir des transactions TotalEnergies importées. Les factures fiscales originales du fournisseur restent les pièces comptables de référence.</p>`;printOfficialDocument(period==='WEEK'?'Facture hebdomadaire':'Facture mensuelle',html);}catch{notify("Impossible de générer la facture");}finally{setBusy(false);}};
+ const printReturn=(row:Row)=>printOfficialDocument(`Reçu de restitution ${documentText(row.numero)}`,`<div class="meta"><div><b>N° reçu</b><br>${documentText(row.numero)}</div><div><b>Carte restituée</b><br>${documentText(row.carte)}</div><div><b>Restituée par</b><br>${documentText(row.restituePar)}</div><div><b>Reçue par</b><br>${documentText(row.recuPar)} — Responsable carburant Zin</div><div><b>Utilisation du plafond</b><br>${Number(row.taux).toFixed(1)} %</div><div><b>Date de restitution</b><br>${documentText(row.date)}</div></div><p>Delta Carburant certifie la restitution physique de la carte ci-dessus au responsable carburant Zin après utilisation de 100 % de son plafond.</p><div class="signatures"><div>Signature Delta Carburant</div><div>Signature Responsable carburant Zin</div></div>`);
+ return <section className={`${styles.fullPanel} ${styles.documentsPanel}`}><div className={styles.documentsHero}><div className={styles.documentsHeroIcon}>▤</div><div><small>RAPPROCHEMENT TOTAL</small><h2>Factures et reçus</h2><p>Imprimez les factures de rapprochement et les reçus de restitution des cartes.</p></div></div><div className={styles.invoiceBuilder}><div className={styles.invoiceBuilderTitle}><span>01</span><div><b>Générer une facture</b><small>Aucune autorisation nécessaire : sélectionnez la période puis imprimez</small></div></div><label><span>Période</span><select value={period} onChange={e=>setPeriod(e.target.value as 'WEEK'|'MONTH')}><option value="WEEK">Hebdomadaire</option><option value="MONTH">Mensuelle</option></select></label><label><span>Date de référence</span><input type="date" value={start} onChange={e=>setStart(e.target.value)}/></label><button onClick={invoice} disabled={busy}><span>{busy?'◌':'▣'}</span>{busy?'Génération en cours…':'Générer et imprimer'}</button></div><div className={styles.receiptsHeading}><div><small>02 · RESTITUTIONS</small><h3>Reçus des cartes restituées à Zin</h3><p>Ces reçus sont visibles par Najib, Zin et la DG.</p></div></div><div className={styles.tableWrap}><table><thead><tr>{["N° reçu","Carte","Restituée par","Reçue par Zin","Plafond utilisé","Date","Action"].map(label=><th key={label}>{label}</th>)}</tr></thead><tbody>{returnReceipts.map(row=><tr key={row.id}><td><b>{row.numero}</b></td><td>{row.carte}</td><td>{row.restituePar}</td><td>{row.recuPar}</td><td>{Number(row.taux).toFixed(1)} %</td><td>{row.date}</td><td><button className={styles.documentPrintBtn} onClick={()=>printReturn(row)}>▣ Imprimer</button></td></tr>)}{!returnReceipts.length&&<tr><td colSpan={7}><div className={styles.documentEmpty}>Aucune carte restituée pour le moment.</div></td></tr>}</tbody></table></div></section>;
 }
 function DataView({
   view,
@@ -3290,7 +3321,7 @@ function ModalForm({
   const [requestType, setRequestType] = useState<"NEW_CARD" | "LIMIT_CHANGE" | "CARD_FUNDING" | "CUSTODY_CHANGE">("NEW_CARD");
   const [custodyTarget,setCustodyTarget]=useState<"SAFE"|"DISTRIBUTED">("DISTRIBUTED");
   const [requestCardId, setRequestCardId] = useState("");
-  const requestCards = cards.filter((item) => requestType==="CUSTODY_CHANGE" ? (custodyTarget==="SAFE" ? item.status!=="SAFE" : item.status==="SAFE") : ["ACTIVE","TO_ASSIGN"].includes(item.status));
+  const requestCards = cards.filter((item) => requestType==="NEW_CARD"||requestType==="CARD_FUNDING" ? item.status==="SAFE" : requestType==="CUSTODY_CHANGE" ? (custodyTarget==="SAFE" ? item.status!=="SAFE" : item.status==="SAFE") : ["ACTIVE","TO_ASSIGN"].includes(item.status));
   const requestCard = requestCards.find((item) => item.id === requestCardId);
   const eligibleFundingSources=requestCards.filter(item=>item.status==="ACTIVE"&&item.id!==requestCardId&&Number(item.monthly_limit)>0&&Number(item.consumption_rate??0)>=60);
   const [action, setAction] = useState(
@@ -3488,20 +3519,17 @@ function ModalForm({
                   </select>
                 </label>
                 {requestType === "CUSTODY_CHANGE" && <label className={styles.fullField}>État demandé<select name="etatCarte" value={custodyTarget} onChange={event=>{setCustodyTarget(event.target.value as "SAFE"|"DISTRIBUTED");setRequestCardId("");}}><option value="DISTRIBUTED">Sortir du coffre et distribuer sous ma responsabilité</option><option value="SAFE">Remettre en coffre et retirer de ma responsabilité</option></select></label>}
-                {requestType === "LIMIT_CHANGE" || requestType === "CARD_FUNDING" || requestType === "CUSTODY_CHANGE" ? (
+                {requestType === "NEW_CARD" || requestType === "LIMIT_CHANGE" || requestType === "CARD_FUNDING" || requestType === "CUSTODY_CHANGE" ? (
                   <>
                     <label className={styles.fullField}>
-                      {requestType === "CARD_FUNDING" ? "Carte à alimenter disponible dans votre espace" : requestType==="CUSTODY_CHANGE"?(custodyTarget==="SAFE"?"Carte sous votre responsabilité":"Carte disponible en coffre"):"Carte disponible dans la base"}
+                      {requestType === "NEW_CARD" ? "Nouvelle carte disponible en coffre" : requestType === "CARD_FUNDING" ? "Carte disponible en coffre à alimenter" : requestType==="CUSTODY_CHANGE"?(custodyTarget==="SAFE"?"Carte sous votre responsabilité":"Carte disponible en coffre"):"Carte disponible dans la base"}
                       <select name="carteId" required value={requestCardId} onChange={(event) => setRequestCardId(event.target.value)}>
                         <option value="" disabled>Sélectionner une carte active</option>
                         {requestCards.map((item) => <option value={item.id} key={item.id}>{item.masked_card_number} · plafond actuel {item.monthly_limit.toLocaleString("fr-FR")}</option>)}
                       </select>
                     </label>
-                    {requestType === "CARD_FUNDING" && <><label className={styles.fullField}>Carte source ayant consommé au moins 60 % ce mois-ci<select name="carteSourceId" required defaultValue=""><option value="" disabled>{eligibleFundingSources.length?"Sélectionner la carte source":"Aucune carte admissible"}</option>{eligibleFundingSources.map(item=><option value={item.id} key={item.id}>{item.masked_card_number} · consommation {Number(item.consumption_rate??0).toFixed(0)} %</option>)}</select></label>{!eligibleFundingSources.length&&<div className={styles.workflowInfo}><b>Alimentation indisponible</b><span>Vos cartes avec un plafond valide n’ont pas encore dépassé 60 % de consommation ce mois-ci. Attendez le dépassement du seuil ou demandez à Zin / la DG de définir le plafond.</span></div>}</>}
+                    {(requestType==="NEW_CARD"||requestType==="CARD_FUNDING")?<><label>Bénéficiaire<input name="beneficiaire" required /></label><label>Département<input name="departement" required /></label><label>Voiture / immatriculation<select name="voiture" required defaultValue=""><option value="" disabled>Sélectionner une matricule</option>{selectableVehicles.map(vehicle=><option value={String(vehicle.immatriculation)} key={String(vehicle.id)}>{String(vehicle.immatriculation)} · {String(vehicle.type)}</option>)}</select></label></>:<><input type="hidden" name="beneficiaire" value={requestCard?.beneficiary ?? "Najib"} /><input type="hidden" name="departement" value={requestCard?.department ?? "Hors parc"} /><input type="hidden" name="voiture" value={requestCard?.registration ?? "Sans véhicule"} /></>}
                     {requestCard && <div className={styles.workflowInfo}><b>Plafond actuel</b><span>{requestCard.monthly_limit.toLocaleString("fr-FR")}</span></div>}
-                    <input type="hidden" name="beneficiaire" value={requestCard?.beneficiary ?? "Najib"} />
-                    <input type="hidden" name="departement" value={requestCard?.department ?? "Hors parc"} />
-                    <input type="hidden" name="voiture" value={requestCard?.registration ?? "Sans véhicule"} />
                   </>
                 ) : (
                   <>

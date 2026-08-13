@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { DatabaseService } from '../database/database.service';
 type Actor = { sub: string; email: string };
 type Correction = { station?: string; liters?: number; amount?: number; reason: string };
-type Allocation = { driverId: string; vehicleId: string; amount: number; mileage: number; liters?: number; note?: string };
+type Allocation = { driverId?: string; beneficiaryName: string; vehicleId: string; amount: number; mileage: number; liters?: number; note?: string };
 type ImportRow = { date:string; cardNumber:string; vehicle?:string; beneficiary?:string; station:string; product:string; liters:number; amount:number; previousMileage?:number; mileage?:number; authorizationCode?:string; externalId?:string };
 @Injectable()
 export class TransactionsService {
@@ -414,23 +414,23 @@ export class TransactionsService {
     const allocationTotal = await client.query(`SELECT coalesce(sum(allocated_amount),0) AS allocated
       FROM transaction_allocation WHERE fuel_transaction_id=$1 AND workflow_status IN('PENDING','APPROVED')`, [id]);
     if (Number(allocationTotal.rows[0].allocated)+dto.amount > Number(source.amount_incl_tax)) throw new BadRequestException('La répartition dépasse le montant de la transaction Total');
-    const target = await client.query(`SELECT d.id AS driver_id,d.full_name,d.company_id AS driver_company,
-      v.id AS vehicle_id,v.company_id AS vehicle_company,v.registration_display
-      FROM driver d CROSS JOIN vehicle v WHERE d.id=$1 AND d.active AND d.deleted_at IS NULL
-      AND v.id=$2 AND v.active AND v.deleted_at IS NULL
-      AND (v.managed_by=$3 OR EXISTS(SELECT 1 FROM transaction_allocation own WHERE own.vehicle_id=v.id AND own.allocated_by=$3))`,[dto.driverId,dto.vehicleId,actor.sub]);
-    if(!target.rows[0])throw new BadRequestException('Sélectionnez un chauffeur Total enregistré et un véhicule du parc de Najib');
-    if(target.rows[0].driver_company!==source.company_id||target.rows[0].vehicle_company!==source.company_id)
-      throw new BadRequestException('Le chauffeur et le véhicule doivent appartenir à DC');
+    const target = await client.query(`SELECT v.id AS vehicle_id,v.company_id AS vehicle_company,v.registration_display
+      FROM vehicle v WHERE v.id=$1 AND v.active AND v.deleted_at IS NULL
+      AND (v.managed_by=$2 OR EXISTS(SELECT 1 FROM transaction_allocation own WHERE own.vehicle_id=v.id AND own.allocated_by=$2))`,[dto.vehicleId,actor.sub]);
+    if(!target.rows[0])throw new BadRequestException('Sélectionnez un véhicule du parc de Najib');
+    if(target.rows[0].vehicle_company!==source.company_id)
+      throw new BadRequestException('Le véhicule doit appartenir à DC');
+    const beneficiaryName=dto.beneficiaryName?.trim();
+    if(!beneficiaryName)throw new BadRequestException('Le nom du bénéficiaire est obligatoire');
     const lastMileage=await client.query(`SELECT coalesce(max(mileage),0)::float AS mileage FROM mileage_reading
       WHERE vehicle_id=$1 AND status IN ('PENDING','VALIDATED')`,[dto.vehicleId]);
     if(!Number.isFinite(dto.mileage)||dto.mileage<Number(lastMileage.rows[0].mileage))
       throw new BadRequestException(`Le kilométrage réel doit être supérieur ou égal au dernier relevé (${Number(lastMileage.rows[0].mileage)} km)`);
     const department=await client.query(`INSERT INTO department(company_id,name) VALUES($1,'Sous-traitants poseurs') ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id`,[source.company_id]);
-    const beneficiary=await client.query(`INSERT INTO beneficiary(company_id,department_id,display_name) VALUES($1,$2,$3) ON CONFLICT(company_id,display_name) DO UPDATE SET active=true RETURNING id`,[source.company_id,department.rows[0].id,target.rows[0].full_name]);
+    const beneficiary=await client.query(`INSERT INTO beneficiary(company_id,department_id,display_name) VALUES($1,$2,$3) ON CONFLICT(company_id,display_name) DO UPDATE SET active=true,department_id=excluded.department_id RETURNING id`,[source.company_id,department.rows[0].id,beneficiaryName]);
     const result = await client.query(`INSERT INTO transaction_allocation(fuel_transaction_id,beneficiary_id,vehicle_id,driver_id,
       allocated_amount,allocated_liters,reported_mileage,note,allocated_by,workflow_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'PENDING') RETURNING *`,
-      [id,beneficiary.rows[0].id,dto.vehicleId,dto.driverId,dto.amount,dto.liters??null,dto.mileage,dto.note??null,actor.sub]);
+      [id,beneficiary.rows[0].id,dto.vehicleId,dto.driverId??null,dto.amount,dto.liters??null,dto.mileage,dto.note??null,actor.sub]);
     await client.query(`INSERT INTO mileage_reading(vehicle_id,beneficiary_id,reading_date,mileage,status,source,created_by,
       week_start,previous_mileage,expected_mileage,detected_distance,anomaly) VALUES($1,$2,now(),$3,'PENDING','TRANSACTION_ALLOCATION',$4,date_trunc('week',current_date)::date,$5,$3,0,false)`,
       [dto.vehicleId,beneficiary.rows[0].id,dto.mileage,actor.sub,Number(lastMileage.rows[0].mileage)]);

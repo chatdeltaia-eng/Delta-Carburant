@@ -36,6 +36,9 @@ export class RequestsController {
   @Patch(':id/decision') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE')
   decide(@Param('id', ParseUUIDPipe) id: string, @Body() dto: DecisionDto,
     @Req() req: { user: { sub: string; email: string } }) { return this.requests.decide(id, dto, req.user); }
+  @Patch(':id/handover') @Roles('NAJIB_ASSIGNER')
+  handover(@Param('id', ParseUUIDPipe) id: string,
+    @Req() req: { user: { sub: string; email: string; role: string } }) { return this.requests.confirmPhysicalHandover(id, req.user); }
   @Patch(':id/archive') @Roles('ZIN_FINANCE')
   archive(@Param('id', ParseUUIDPipe) id: string,
     @Req() req: { user: { sub: string; email: string; role: string } }) { return this.requests.archive(id, req.user); }

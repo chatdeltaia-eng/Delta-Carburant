@@ -8,14 +8,28 @@ type CreateRequest = { requestType: 'NEW_CARD'|'LIMIT_CHANGE'|'CARD_FUNDING'|'CU
 export class RequestsService {
   private readonly logger = new Logger(RequestsService.name);
   constructor(private readonly db: DatabaseService, private readonly notifications: NotificationsService) {}
-  list(actor: Actor) {
+  private async expirePhysicalHandovers() {
+    await this.db.query(`WITH expired AS (
+      UPDATE card_request SET handover_expired_at=now(),status='CANCELLED'::request_status,
+        decision_date=now(),decision_reason='Délai de restitution physique de 1 h 30 expiré',updated_at=now()
+      WHERE request_type='ASSIGNMENT_CHANGE' AND requested_card_status='SAFE'
+        AND handover_deadline IS NOT NULL AND handover_deadline<=now()
+        AND handover_signed_at IS NULL AND handover_expired_at IS NULL
+      RETURNING id,fuel_card_id,requested_by
+    ) UPDATE fuel_card fc SET status='ACTIVE',responsible_user_id=e.requested_by
+      FROM expired e WHERE fc.id=e.fuel_card_id`);
+  }
+  async list(actor: Actor) {
+    await this.expirePhysicalHandovers();
     const ownOnly = actor.role === 'NAJIB_ASSIGNER';
     return this.db.query(`SELECT cr.id,cr.request_number AS "requestNumber",CASE WHEN cr.request_type='REACTIVATION' THEN 'CARD_FUNDING' ELSE cr.request_type::text END AS "requestType",cr.status,cr.requested_limit AS "requestedLimit",
       cr.reason,cr.decision_reason AS "decisionReason",cr.created_at AS "createdAt",cr.updated_at AS "updatedAt",cr.decision_date AS "decisionDate",cr.receipt_number AS "receiptNumber",cr.receipt_issued_at AS "receiptIssuedAt",
       b.display_name AS beneficiary,d.name AS department,v.registration_display AS vehicle,
       fc.masked_card_number AS "cardNumber",source.masked_card_number AS "sourceCardNumber",fc.monthly_limit AS "currentLimit", requester.role::text AS "requestedByRole",requester.display_name AS "requestedByName",
       approver.role::text AS "decisionByRole",approver.display_name AS "decisionByName",cr.requested_card_status AS "requestedCardStatus",
-      (cr.zin_approved_at IS NOT NULL) AS "zinApproved",(cr.dg_approved_at IS NOT NULL) AS "dgApproved", latest.action AS "cardAction",
+      (cr.zin_approved_at IS NOT NULL) AS "zinApproved",(cr.dg_approved_at IS NOT NULL) AS "dgApproved",
+      cr.handover_deadline AS "handoverDeadline",cr.handover_signed_at AS "handoverSignedAt",
+      cr.handover_expired_at AS "handoverExpiredAt", latest.action AS "cardAction",
       latest.new_values->>'status' AS "cardStatusAction",latest.created_at AS "cardActionAt",
       action_user.role::text AS "cardActionByRole"
       FROM card_request cr JOIN beneficiary b ON b.id=cr.beneficiary_id
@@ -43,6 +57,7 @@ export class RequestsService {
     return row;
   }
   async create(dto: CreateRequest, actor: Actor) {
+    await this.expirePhysicalHandovers();
     if (dto.requestType === 'LIMIT_CHANGE' && !dto.fuelCardId) throw new BadRequestException('La carte concernée est obligatoire');
     if (dto.requestType === 'NEW_CARD' && !dto.fuelCardId) throw new BadRequestException('Choisissez une carte disponible en coffre');
     if (dto.requestType === 'CARD_FUNDING' && !dto.fuelCardId) throw new BadRequestException('Choisissez une carte disponible en coffre à alimenter');
@@ -70,7 +85,7 @@ export class RequestsService {
         const exhausted=await client.query(`SELECT fc.masked_card_number FROM fuel_card fc WHERE fc.responsible_user_id=$1
           AND fc.deleted_at IS NULL AND fc.status NOT IN('SAFE','RETURNED') AND fc.monthly_limit>0
           AND 100*coalesce((SELECT sum(ft.amount_incl_tax) FROM fuel_transaction ft WHERE ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL AND ft.transaction_date>=date_trunc('month',current_date)),0)/fc.monthly_limit>=100`,[actor.sub]);
-        if(exhausted.rows.length)throw new BadRequestException(`Restituez d’abord à Zin la ou les cartes ayant atteint 100 % : ${exhausted.rows.map(card=>card.masked_card_number).join(', ')}`);
+        if(exhausted.rows.length)throw new BadRequestException(`Demande bloquée : restituez et signez d’abord la remise des cartes à 100 % : ${exhausted.rows.map(card=>card.masked_card_number).join(', ')}`);
       }
       if (dto.requestType === 'NEW_CARD') {
         const safe=await client.query(`SELECT id FROM fuel_card WHERE id=$1 AND status='SAFE' AND responsible_user_id IS NULL AND deleted_at IS NULL`,[dto.fuelCardId]);
@@ -134,7 +149,7 @@ export class RequestsService {
       const request = requestResult.rows[0];
       if (!request || !['SUBMITTED','UNDER_REVIEW'].includes(request.status)) throw new NotFoundException('Demande introuvable ou déjà traitée');
       let fuelCardId: string | null = request.fuel_card_id;
-      const doubleApproval=['ASSIGNMENT_CHANGE','REACTIVATION'].includes(request.request_type);
+      const doubleApproval=['ASSIGNMENT_CHANGE','REACTIVATION','NEW_CARD'].includes(request.request_type);
       if(doubleApproval&&dto.decision==='APPROVED'){
         if(request.request_type==='ASSIGNMENT_CHANGE'&&request.requested_card_status==='SAFE'&&actor.role==='SUPER_ADMIN')throw new BadRequestException('La restitution exige les validations personnelles de Zin et de la DG');
         if(actor.role==='ZIN_FINANCE'){
@@ -183,24 +198,16 @@ export class RequestsService {
               AND ft.transaction_date>=date_trunc('month',current_date) AND ft.transaction_date<date_trunc('month',current_date)+interval '1 month'
             WHERE fc.id=$1 GROUP BY fc.id`,[request.fuel_card_id]);
           const rate=Number(usage.rows[0]?.rate??0);if(rate<100)throw new BadRequestException(`La carte ${usage.rows[0]?.masked_card_number} ne peut être restituée qu’après utilisation de 100 % de son plafond (${rate.toFixed(1)} % actuellement)`);
-          await client.query(`UPDATE fuel_card SET status='SAFE',responsible_user_id=NULL WHERE id=$1`,[request.fuel_card_id]);
-          await client.query(`UPDATE card_assignment SET ends_at=now() WHERE fuel_card_id=$1 AND ends_at IS NULL`,[request.fuel_card_id]);
-          const zinReceiver=request.zin_approved_by??(actor.role==='ZIN_FINANCE'?actor.sub:null);if(!zinReceiver)throw new BadRequestException('La réception de la carte doit être validée par Zin');
-          const receiptValues=[`RES-${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${request.request_number.replace(/\D/g,'').slice(-10)}`,id,request.fuel_card_id,request.requested_by,zinReceiver,rate];
-          await client.query(`INSERT INTO card_return_receipt(receipt_number,card_request_id,fuel_card_id,returned_by,received_by,consumption_rate,consumption_month)
-            VALUES($1,$2,$3,$4,$5,least(100,$6::numeric),date_trunc('month',current_date)::date)
-            ON CONFLICT(card_request_id) DO UPDATE SET received_by=excluded.received_by`,receiptValues);
-          // Les colonnes de preuve ont été ajoutées après le workflow initial.
-          // Les remplir séparément garde la validation compatible pendant un
-          // déploiement progressif où l'API et la migration ne démarrent pas au
-          // même instant.
-          const proofColumns=await client.query(`SELECT count(*)::int AS count FROM information_schema.columns
-            WHERE table_schema=current_schema() AND table_name='card_return_receipt'
-              AND column_name=ANY($1::text[])`,[['monthly_limit','consumed_amount','consumed_liters','transaction_count']]);
-          if(Number(proofColumns.rows[0]?.count)===4){
-            await client.query(`UPDATE card_return_receipt SET monthly_limit=$2,consumed_amount=$3,consumed_liters=$4,transaction_count=$5
-              WHERE card_request_id=$1`,[id,Number(usage.rows[0]?.monthly_limit??0),Number(usage.rows[0]?.consumed??0),Number(usage.rows[0]?.liters??0),Number(usage.rows[0]?.transaction_count??0)]);
-          }
+          // Après les deux validations, la carte reste chez Najib pendant 90
+          // minutes. Le coffre et le reçu ne changent qu'à sa signature de
+          // remise physique via confirmPhysicalHandover().
+          await client.query(`UPDATE card_request SET handover_deadline=coalesce(handover_deadline,now()+interval '90 minutes'),
+            status='UNDER_REVIEW'::request_status,updated_at=now() WHERE id=$1`,[id]);
+          await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id)
+            VALUES($1,'Restitution physique à signer',$2,'returns','card_request',$3)`,[request.requested_by,
+            `Vous avez 1 h 30 pour remettre la carte ${usage.rows[0]?.masked_card_number} à Zin et signer la restitution.`,id]);
+          return {id,status:'UNDER_REVIEW',fuelCardId:request.fuel_card_id,pendingPhysicalHandover:true,
+            handoverDeadline:new Date(Date.now()+90*60*1000).toISOString()};
         }else{
           await client.query(`UPDATE fuel_card SET status='DISTRIBUTED',responsible_user_id=$2,card_category='OFF_PARK' WHERE id=$1`,[request.fuel_card_id,request.requested_by]);
         }
@@ -239,5 +246,32 @@ export class RequestsService {
       throw error;
     }
     return row;
+  }
+
+  async confirmPhysicalHandover(id:string,actor:Actor){
+    await this.expirePhysicalHandovers();
+    return this.db.transaction(async client=>{
+      const found=await client.query(`SELECT cr.*,fc.monthly_limit,fc.masked_card_number FROM card_request cr
+        JOIN fuel_card fc ON fc.id=cr.fuel_card_id WHERE cr.id=$1 AND cr.requested_by=$2 FOR UPDATE OF cr,fc`,[id,actor.sub]);
+      const request=found.rows[0];
+      if(!request)throw new NotFoundException('Restitution introuvable');
+      if(request.handover_signed_at)throw new BadRequestException('La remise physique est déjà signée');
+      if(request.handover_expired_at||!request.handover_deadline||new Date(request.handover_deadline).getTime()<=Date.now())
+        throw new BadRequestException('Le délai de 1 h 30 est expiré : la carte reste à Najib avec son plafond actuel');
+      if(!request.zin_approved_at||!request.dg_approved_at)throw new BadRequestException('Les validations Zin et DG sont obligatoires avant la remise');
+      const usage=await client.query(`SELECT coalesce(sum(ft.amount_incl_tax),0) consumed,coalesce(sum(ft.quantity_liters),0) liters,count(ft.id)::int transaction_count
+        FROM fuel_transaction ft WHERE ft.fuel_card_id=$1 AND ft.deleted_at IS NULL AND ft.transaction_date>=date_trunc('month',current_date)`,[request.fuel_card_id]);
+      const consumed=Number(usage.rows[0].consumed),limit=Number(request.monthly_limit),rate=limit>0?100*consumed/limit:0;
+      await client.query(`UPDATE fuel_card SET status='SAFE',responsible_user_id=NULL WHERE id=$1`,[request.fuel_card_id]);
+      await client.query(`UPDATE card_assignment SET ends_at=now() WHERE fuel_card_id=$1 AND ends_at IS NULL`,[request.fuel_card_id]);
+      await client.query(`UPDATE card_request SET handover_signed_at=now(),handover_signed_by=$2,status='APPROVED'::request_status,
+        approved_by=$3,decision_date=now(),decision_reason='Carte physiquement remise et signée par Najib',updated_at=now() WHERE id=$1`,[id,actor.sub,request.dg_approved_by]);
+      const receipt=await client.query(`INSERT INTO card_return_receipt(receipt_number,card_request_id,fuel_card_id,returned_by,received_by,
+        consumption_rate,consumption_month,monthly_limit,consumed_amount,consumed_liters,transaction_count)
+        VALUES($1,$2,$3,$4,$5,least(100,$6::numeric),date_trunc('month',current_date)::date,$7,$8,$9,$10)
+        ON CONFLICT(card_request_id) DO UPDATE SET returned_at=now(),received_by=excluded.received_by RETURNING id,receipt_number AS "receiptNumber"`,
+        [`RES-${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${request.request_number.replace(/\D/g,'').slice(-10)}`,id,request.fuel_card_id,actor.sub,request.zin_approved_by,rate,limit,consumed,Number(usage.rows[0].liters),Number(usage.rows[0].transaction_count)]);
+      return {...receipt.rows[0],status:'APPROVED',cardStatus:'SAFE'};
+    });
   }
 }

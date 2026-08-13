@@ -12,7 +12,8 @@ class CorrectTransactionDto {
   @IsString() reason!: string;
 }
 class AllocateTransactionDto {
-  @IsUUID() driverId!: string;
+  @IsOptional() @IsUUID() driverId?: string;
+  @IsString() @MinLength(2) beneficiaryName!: string;
   @IsUUID() vehicleId!: string;
   @IsNumber() @Min(0.001) amount!: number;
   @IsNumber() @Min(0) mileage!: number;

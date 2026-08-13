@@ -196,6 +196,9 @@ const toRequestRow = (row: Record<string, unknown>): Row => ({
   suivi: requestTracking(row),
   zinValide: row.zinApproved ? "Oui" : "Non",
   dgValide: row.dgApproved ? "Oui" : "Non",
+  remiseEcheance: String(row.handoverDeadline ?? ""),
+  remiseSignee: row.handoverSignedAt ? "Oui" : "Non",
+  remiseExpiree: row.handoverExpiredAt ? "Oui" : "Non",
   recu: String(row.receiptNumber ?? "—"),
 });
 const initialCards: Card[] = [];
@@ -1613,26 +1616,24 @@ export default function Home() {
     e.preventDefault();
     if (!allocationRow || !user || user.role !== "NAJIB_ASSIGNER") return;
     const f = new FormData(e.currentTarget);
-    const driverId = String(f.get("driverId") ?? "").trim();
+    const beneficiaryName = String(f.get("beneficiaryName") ?? "").trim();
     const vehicleId = String(f.get("vehicleId") ?? "").trim();
     const amount = parseNumeric(f.get("amount"));
     const originalAmount = parseNumeric(allocationRow.montant);
     const alreadyAllocated = parseNumeric(allocationRow.montantReparti);
     const remaining = Math.max(0, originalAmount - alreadyAllocated);
-    if (!driverId) return notify("Le chauffeur Total enregistré est obligatoire");
+    if (!beneficiaryName) return notify("Le nom du bénéficiaire est obligatoire");
     if (!vehicleId) return notify("Le véhicule est obligatoire");
     if (amount <= 0 || amount > remaining) return notify("Le montant réparti doit être positif et ne peut pas dépasser le reste");
     if(!token)return notify("Session distante expirée");
-    const selectedDriver=data.drivers.find(row=>String(row.id)===driverId);
     const selectedVehicle=data.vehicles.find(row=>String(row.id)===vehicleId);
     const mileageValue=window.prompt(`Kilométrage réel obligatoire du véhicule ${String(selectedVehicle?.immatriculation??"")} après cette transaction`,String(selectedVehicle?.kilometrage??""));
     if(mileageValue===null)return;
     const mileage=parseNumeric(mileageValue);
     if(!Number.isFinite(mileage)||mileage<Number(selectedVehicle?.kilometrage??0))return notify(`Le kilométrage doit être supérieur ou égal à ${Number(selectedVehicle?.kilometrage??0)} km`);
-    let pendingAllocationId="";try{const response=await fetch(`${API}/transactions/${allocationRow.id}/allocations`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({driverId,vehicleId,amount,mileage,note:"Répartition de consommation par Najib"})});if(!response.ok)throw new Error(await response.text());const created=await response.json();pendingAllocationId=String(created.id);}catch(error){return notify(error instanceof Error?error.message:"La répartition n’a pas été enregistrée dans la base");}
-    const driverName=String(selectedDriver?.nomComplet??`${selectedDriver?.prenom??""} ${selectedDriver?.nom??""}`).trim();
+    let pendingAllocationId="";try{const response=await fetch(`${API}/transactions/${allocationRow.id}/allocations`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({beneficiaryName,vehicleId,amount,mileage,note:"Répartition de consommation par Najib"})});if(!response.ok)throw new Error(await response.text());const created=await response.json();pendingAllocationId=String(created.id);}catch(error){return notify(error instanceof Error?error.message:"La répartition n’a pas été enregistrée dans la base");}
     const vehicle=String(selectedVehicle?.immatriculation??"");
-    const allocation = `${driverName} — ${vehicle} — ${amount.toFixed(3)} DT — ${mileage} km`;
+    const allocation = `${beneficiaryName} — ${vehicle} — ${amount.toFixed(3)} DT — ${mileage} km`;
     const next = { ...data, transactions: data.transactions.map((item) => item.id === allocationRow.id ? {
       ...item,
       montantReparti: alreadyAllocated + amount,
@@ -1964,7 +1965,6 @@ export default function Home() {
         const original = parseNumeric(allocationRow.montant);
         const allocated = parseNumeric(allocationRow.montantReparti);
         const remaining = Math.max(0, original - allocated);
-        const activeDrivers=data.drivers.filter(row=>String(row.statut)==="Actif");
         const availableVehicles = data.vehicles.filter(
           (row) => String(row.immatriculation ?? "").trim() && String(row.immatriculation) !== "À COMPLÉTER",
         );
@@ -1985,12 +1985,9 @@ export default function Home() {
               </div>
               <div className={styles.formGrid}>
                 <label>
-                  Chauffeur / poseur Total
-                  <select name="driverId" required defaultValue="">
-                    <option value="" disabled>Choisir un chauffeur enregistré</option>
-                    {activeDrivers.map(driver=><option value={String(driver.id)} key={String(driver.id)}>{String(driver.nomComplet)} · code {String(driver.codeChauffeur)}</option>)}
-                  </select>
-                  {!activeDrivers.length&&<small>Aucun chauffeur disponible : créez-le d’abord dans « Chauffeurs ».</small>}
+                  Bénéficiaire
+                  <input name="beneficiaryName" required minLength={2} placeholder="Nom du bénéficiaire" />
+                  <small>Najib peut créer directement le bénéficiaire, sans code chauffeur.</small>
                 </label>
                 <label>
                   Matricule du véhicule
@@ -2009,11 +2006,10 @@ export default function Home() {
                 </label>
                 <div className={styles.workflowInfo}>
                   <b>Traçabilité TotalEnergies conservée</b>
-                  <span>Le chauffeur doit exister dans la référence Total. Après validation de cette étape, la plateforme demande obligatoirement le kilométrage réel du véhicule.</span>
+                  <span>Le bénéficiaire, le véhicule, le montant et le kilométrage sont enregistrés ensemble. Le total réparti ne peut jamais dépasser la transaction Total.</span>
                 </div>
               </div>
               <div className={styles.modalActions}>
-                <button type="button" onClick={() => {setAllocationRow(null);setModal("driver");}}>Créer un chauffeur</button>
                 <button type="button" onClick={() => setAllocationRow(null)}>Annuler</button>
                 <button type="submit">Enregistrer la répartition</button>
               </div>
@@ -2623,6 +2619,8 @@ function ComplaintsView({token,user,rows,refresh,notify}:{token:string;user:User
  return <section className={styles.fullPanel}><div className={styles.importNotice}><b>Canal interne officiel</b><span>Najib, Zin et la DG peuvent ouvrir une réclamation, répondre, suivre son traitement et conserver la résolution dans l’historique.</span></div><Toolbar search="" setSearch={()=>{}} count={rows.length} button="Nouvelle réclamation" click={create}/><div className={styles.tableWrap}><table><thead><tr>{["N°","Date","Créateur","Destinataire","Objet","Priorité","Statut","Résolution","Action"].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.id}><td>{row.numero}</td><td>{row.date}</td><td>{row.createur}</td><td>{roleName[String(row.destinataire)]??row.destinataire}</td><td><b>{row.objet}</b><br/><small>{row.description}</small></td><td>{row.priorite}</td><td>{row.statut}</td><td>{row.resolution}</td><td><button className={styles.smallBtn} onClick={()=>respond(row)}>Répondre</button>{!['RESOLVED','CLOSED'].includes(String(row.statut))&&<><br/><button className={styles.smallBtn} onClick={()=>resolve(row)}>Résoudre</button></>}</td></tr>)}</tbody></table></div></section>;
 }
 function CardReturnsView({token,user,cards,requests,receipts,decide,refresh,notify}:{token:string;user:User;cards:Card[];requests:Row[];receipts:Row[];decide:(id:string,accepted:boolean)=>void|Promise<void>;refresh:()=>void;notify:(message:string)=>void}){
+ const [clock,setClock]=useState(Date.now());
+ useEffect(()=>{const timer=window.setInterval(()=>setClock(Date.now()),1000);return()=>window.clearInterval(timer);},[]);
  // Ce workflow appartient exclusivement à Najib. Zin et la DG contrôlent ses
  // restitutions, mais les cartes des autres responsables ne doivent jamais y
  // apparaître, même si elles ont atteint leur plafond.
@@ -2632,9 +2630,11 @@ function CardReturnsView({token,user,cards,requests,receipts,decide,refresh,noti
  const receiptFor=(card:Card)=>receipts.find(row=>row.carte===card.masked_card_number);
  const returnCard=async(card:Card)=>{if(pendingFor(card))return notify("Une demande de restitution est déjà en cours");const response=await fetch(`${API}/requests`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({requestType:'CUSTODY_CHANGE',requestedCardStatus:'SAFE',fuelCardId:card.id,beneficiary:card.beneficiary||'Najib',department:card.department||'Hors parc',vehicle:card.registration||'Sans véhicule',requestedLimit:0,reason:'Restitution obligatoire après utilisation de 100 % du plafond'})});if(!response.ok){const body=await response.json().catch(()=>({}));return notify(String(body.message??"La demande de restitution n’a pas été enregistrée"));}notify("Demande de restitution envoyée à Zin et à la DG");refresh();};
  const restoreCard=async(receipt:Row)=>{if(!window.confirm(`Restaurer la même carte ${receipt.carte} à Najib avec son plafond actuel de ${Number(receipt.plafondActuel??0).toFixed(3)} TND ?`))return;const response=await fetch(`${API}/documents/return-receipts/${receipt.id}/restore`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});const body=await response.json().catch(()=>({}));if(!response.ok)return notify(String(body.message??"La carte n’a pas pu être restaurée"));notify("La même carte a été restaurée à Najib, sans création d’une nouvelle carte");refresh();};
+ const signHandover=async(request:Row)=>{if(!window.confirm("Confirmer que la carte a été physiquement remise à Zin ? Cette action signe la restitution de Najib."))return;const response=await fetch(`${API}/requests/${request.id}/handover`,{method:'PATCH',headers:{Authorization:`Bearer ${token}`}});const body=await response.json().catch(()=>({}));if(!response.ok)return notify(String(body.message??"La remise n’a pas pu être signée"));notify("Carte remise : le reçu de preuve est maintenant disponible");refresh();};
+ const countdown=(value:unknown)=>{const remaining=Math.max(0,new Date(String(value)).getTime()-clock),seconds=Math.floor(remaining/1000);return `${String(Math.floor(seconds/3600)).padStart(2,'0')}:${String(Math.floor((seconds%3600)/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;};
  const printReceipt=(row:Row)=>printOfficialDocument(`Reçu de restitution ${documentText(row.numero)}`,`<div class="meta"><div><b>N° reçu</b>${documentText(row.numero)}</div><div><b>N° carte</b>${documentText(row.carte)}</div><div><b>Date de restitution</b>${documentText(row.date)}</div><div><b>Heure de restitution</b>${documentText(row.heure)}</div></div><div class="summary"><div><span>Plafond mensuel</span><strong>${Number(row.plafond??0).toFixed(3)} TND</strong></div><div><span>Consommation contrôlée</span><strong>${Number(row.consomme??0).toFixed(3)} TND</strong></div><div><span>Taux du plafond</span><strong>${Number(row.taux).toFixed(1)} %</strong></div></div><div class="meta"><div><b>Volume consommé</b>${Number(row.litres??0).toFixed(3)} litres</div><div><b>Transactions du mois</b>${Number(row.transactions??0)}</div><div><b>Mois de consommation</b>${documentText(row.mois)}</div><div><b>Statut</b>Restitution validée</div></div><p>Delta Carburant certifie que la carte indiquée a été physiquement restituée après contrôle de sa consommation mensuelle et double validation de Zin et de la Direction Générale.</p><div class="signatures"><div>Signature Najib<br><b>${documentText(row.restituePar)}</b></div><div>Signature Zin<br><b>${documentText(row.recuPar)}</b></div><div>Signature DG<br><b>${documentText(row.dg)}</b></div></div>`);
  const rows=[...eligible];for(const receipt of receipts)if(!rows.some(card=>card.masked_card_number===receipt.carte))rows.push({id:`receipt-${receipt.id}`,masked_card_number:String(receipt.carte),company_code:'DC',beneficiary:null,registration:null,monthly_limit:0,status:'SAFE',finance_status:'CONFIRMED',created_at:'',updated_at:'',card_category:'OFF_PARK',consumption_rate:Number(receipt.taux)});
- return <section className={styles.fullPanel}><div className={styles.importNotice}><b>Restitution, validations et reçu de preuve</b><span>Le reçu PDF apparaît ici, à côté des validations Najib, Zin et DG, uniquement après les validations de Zin et de la DG.</span></div><div className={styles.tableWrap}><table><thead><tr>{["Carte","Plafond mensuel","Consommation du mois","Utilisation","Najib","Validation Zin","Validation DG","Reçu PDF","Statut","Action"].map(label=><th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map(card=>{const request=pendingFor(card),receipt=receiptFor(card);const zinDone=request?.zinValide==='Oui',dgDone=request?.dgValide==='Oui';const alreadyApproved=(user.role==='ZIN_FINANCE'&&zinDone)||(user.role==='DIRECTION_GENERAL'&&dgDone);const limit=Number(receipt?.plafond??card.monthly_limit??0),currentLimit=Number(receipt?.plafondActuel??card.monthly_limit??0),consumed=Number(receipt?.consomme??card.consumed_amount??limit),canRestore=receipt&&!receipt.restaureeLe&&['ZIN_FINANCE','DIRECTION_GENERAL'].includes(user.role);return <tr key={card.id}><td><b>{card.masked_card_number}</b><small>{card.beneficiary||receipt?.restituePar||'—'} · {card.registration||'—'}</small></td><td><b>{limit.toFixed(3)} TND</b>{receipt&&currentLimit!==limit&&<small>Nouveau plafond : {currentLimit.toFixed(3)} TND</small>}</td><td><b>{consumed.toFixed(3)} TND</b><small>{receipt?`${Number(receipt.litres??0).toFixed(3)} L · ${Number(receipt.transactions??0)} transaction(s)`:"Mois courant"}</small></td><td><span className={styles.documentPending}>{Number(card.consumption_rate??receipt?.taux??0).toFixed(1)} %</span></td><td>{receipt?.restaureeLe?'✓ Carte restaurée':receipt?'✓ Restituée':request?'✓ Demandée':'À restituer'}</td><td>{receipt||zinDone?'✓ Validée':'○ En attente'}</td><td>{receipt||dgDone?'✓ Validée':'○ En attente'}</td><td>{receipt?<button className={styles.documentPrintBtn} onClick={()=>printReceipt(receipt)}>▣ Télécharger le reçu</button>:<span className={styles.waitingStatus}>{zinDone&&dgDone?'Création du reçu…':'Après les 2 validations'}</span>}</td><td>{receipt?.restaureeLe?<span className={styles.documentAuthorized}>✓ Restaurée à Najib</span>:receipt?<span className={styles.documentAuthorized}>✓ Au coffre</span>:request?<span className={styles.documentPending}>Validation en cours</span>:<span className={styles.documentPending}>Restitution requise</span>}</td><td>{receipt?<>{canRestore&&<button className={styles.documentApproveBtn} onClick={()=>restoreCard(receipt)}>↻ Restaurer à Najib</button>}{receipt.restaureeLe&&<small>Par {receipt.restaureePar} · {receipt.restaureeLe}</small>}</>:user.role==='NAJIB_ASSIGNER'?<button className={styles.documentApproveBtn} onClick={()=>returnCard(card)}>Restituer la carte</button>:request&&!alreadyApproved?<button className={styles.documentApproveBtn} onClick={()=>decide(String(request.id),true)}>✓ Approuver</button>:<span className={styles.waitingStatus}>{alreadyApproved?'Votre validation est enregistrée':'En attente de Najib'}</span>}</td></tr>})}{!rows.length&&<tr><td colSpan={10}><div className={styles.documentEmpty}>Aucune carte n’a atteint 100 % pour le moment.</div></td></tr>}</tbody></table></div></section>;
+ return <section className={styles.fullPanel}><div className={styles.importNotice}><b>Restitution physique en 1 h 30</b><span>Après l’accord de Zin et de la DG, Najib remet et signe la carte dans le délai affiché. Sans signature, elle reste automatiquement chez Najib avec le même plafond et la même consommation.</span></div><div className={styles.tableWrap}><table><thead><tr>{["Carte","Plafond mensuel","Consommation du mois","Utilisation","Najib / délai","Validation Zin","Validation DG","Reçu PDF","Statut","Action"].map(label=><th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map(card=>{const request=pendingFor(card),receipt=receiptFor(card);const zinDone=request?.zinValide==='Oui',dgDone=request?.dgValide==='Oui',awaitingHandover=Boolean(request&&zinDone&&dgDone&&request.remiseEcheance&&request.remiseSignee!=='Oui'&&request.remiseExpiree!=='Oui');const alreadyApproved=(user.role==='ZIN_FINANCE'&&zinDone)||(user.role==='DIRECTION_GENERAL'&&dgDone);const limit=Number(receipt?.plafond??card.monthly_limit??0),currentLimit=Number(receipt?.plafondActuel??card.monthly_limit??0),consumed=Number(receipt?.consomme??card.consumed_amount??limit),canRestore=receipt&&!receipt.restaureeLe&&['ZIN_FINANCE','DIRECTION_GENERAL'].includes(user.role);return <tr key={card.id}><td><b>{card.masked_card_number}</b><small>{card.beneficiary||receipt?.restituePar||'—'} · {card.registration||'—'}</small></td><td><b>{limit.toFixed(3)} TND</b>{receipt&&currentLimit!==limit&&<small>Nouveau plafond : {currentLimit.toFixed(3)} TND</small>}</td><td><b>{consumed.toFixed(3)} TND</b><small>{receipt?`${Number(receipt.litres??0).toFixed(3)} L · ${Number(receipt.transactions??0)} transaction(s)`:"Mois courant · valeur conservée"}</small></td><td><span className={styles.documentPending}>{Number(card.consumption_rate??receipt?.taux??0).toFixed(1)} %</span></td><td>{receipt?'✓ Remise signée':awaitingHandover?<><b>{countdown(request?.remiseEcheance)}</b><small>pour remettre à Zin</small></>:request?.remiseExpiree==='Oui'?'Délai expiré · carte chez Najib':request?'✓ Demandée':'À restituer'}</td><td>{receipt||zinDone?'✓ Validée':'○ En attente'}</td><td>{receipt||dgDone?'✓ Validée':'○ En attente'}</td><td>{receipt?<button className={styles.documentPrintBtn} onClick={()=>printReceipt(receipt)}>▣ Télécharger le reçu</button>:<span className={styles.waitingStatus}>{awaitingHandover?'Après la signature Najib':'Après validations et remise'}</span>}</td><td>{receipt?.restaureeLe?<span className={styles.documentAuthorized}>✓ Restaurée à Najib</span>:receipt?<span className={styles.documentAuthorized}>✓ Au coffre</span>:awaitingHandover?<span className={styles.documentPending}>Remise physique attendue</span>:request?.remiseExpiree==='Oui'?<span className={styles.documentPending}>Revenue à Najib · 100 % conservé</span>:request?<span className={styles.documentPending}>Validation en cours</span>:<span className={styles.documentPending}>Restitution requise</span>}</td><td>{receipt?<>{canRestore&&<button className={styles.documentApproveBtn} onClick={()=>restoreCard(receipt)}>↻ Restaurer à Najib</button>}{receipt.restaureeLe&&<small>Par {receipt.restaureePar} · {receipt.restaureeLe}</small>}</>:awaitingHandover&&user.role==='NAJIB_ASSIGNER'?<button className={styles.documentApproveBtn} onClick={()=>signHandover(request!)}>Signer la remise</button>:user.role==='NAJIB_ASSIGNER'&&!request?<button className={styles.documentApproveBtn} onClick={()=>returnCard(card)}>Restituer la carte</button>:request&&!alreadyApproved&&!awaitingHandover?<button className={styles.documentApproveBtn} onClick={()=>decide(String(request.id),true)}>✓ Approuver</button>:<span className={styles.waitingStatus}>{alreadyApproved?'Votre validation est enregistrée':'En attente de Najib'}</span>}</td></tr>})}{!rows.length&&<tr><td colSpan={10}><div className={styles.documentEmpty}>Aucune carte n’a atteint 100 % pour le moment.</div></td></tr>}</tbody></table></div></section>;
 }
 function DocumentsView({token,notify}:{token:string;notify:(message:string)=>void}){
  const [period,setPeriod]=useState<'WEEK'|'MONTH'>('WEEK');const [start,setStart]=useState(new Date().toISOString().slice(0,10));const [busy,setBusy]=useState(false);

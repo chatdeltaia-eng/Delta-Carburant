@@ -3544,6 +3544,13 @@ function Login({
 }) {
   const [email, setEmail] = useState("");
   const [showPassword,setShowPassword]=useState(false);
+  const [activeFeature,setActiveFeature]=useState(0);
+  const loginFeatures=[
+    {icon:"cards" as const,title:"Cartes & plafonds",caption:"Maîtrise budgétaire",description:"Visualisez les consommations, plafonds disponibles et seuils d’utilisation depuis un même cockpit.",tag:"Contrôle en temps réel"},
+    {icon:"vehicle" as const,title:"Parc automobile",caption:"Vue opérationnelle",description:"Suivez les véhicules, leurs affectations et leur activité avec une lecture immédiatement exploitable.",tag:"Parc centralisé"},
+    {icon:"transactions" as const,title:"Transactions Total",caption:"Flux automatisé",description:"Centralisez les transactions Total Mobility et contrôlez chaque mouvement sans import manuel.",tag:"Synchronisation directe"},
+    {icon:"alert" as const,title:"Alertes intelligentes",caption:"Pilotage des risques",description:"Identifiez rapidement les dépassements, écarts et opérations nécessitant une intervention.",tag:"Surveillance active"},
+  ];
   useEffect(()=>{
     if(window.location.search) window.history.replaceState({},"",window.location.pathname);
   },[]);
@@ -3602,11 +3609,13 @@ function Login({
           <span className={styles.loginEyebrow}>COCKPIT DE GESTION CARBURANT</span>
           <h2>Une vision complète.<br/><em>Des décisions plus rapides.</em></h2>
           <p>Pilotez les cartes, les plafonds, les véhicules, les transactions et les anomalies depuis une interface unique.</p>
-          <div className={styles.loginFeatureGrid}>
-            <article><span><AppIcon name="cards" size={19}/></span><div><b>Cartes & plafonds</b><small>Suivi instantané de l’utilisation</small></div></article>
-            <article><span><AppIcon name="vehicle" size={19}/></span><div><b>Parc automobile</b><small>Véhicules et affectations</small></div></article>
-            <article><span><AppIcon name="transactions" size={19}/></span><div><b>Transactions Total</b><small>Extraction et contrôle automatisés</small></div></article>
-            <article><span><AppIcon name="alert" size={19}/></span><div><b>Alertes intelligentes</b><small>Risques et anomalies centralisés</small></div></article>
+          <div className={styles.loginFeatureGrid} role="tablist" aria-label="Fonctionnalités de la plateforme">
+            {loginFeatures.map((feature,index)=><button key={feature.title} type="button" role="tab" aria-selected={activeFeature===index} className={activeFeature===index?styles.loginFeatureActive:""} onClick={()=>setActiveFeature(index)}><span><AppIcon name={feature.icon} size={19}/></span><div><b>{feature.title}</b><small>{feature.caption}</small></div><i/></button>)}
+          </div>
+          <div className={styles.loginProductPreview} aria-live="polite">
+            <div className={styles.loginPreviewHead}><span><AppIcon name={loginFeatures[activeFeature].icon} size={17}/>{loginFeatures[activeFeature].tag}</span><small>MODULE {String(activeFeature+1).padStart(2,"0")} / 04</small></div>
+            <p>{loginFeatures[activeFeature].description}</p>
+            <div className={styles.loginPreviewTrack}><i style={{width:`${(activeFeature+1)*25}%`}}/></div>
           </div>
         </div>
         <div className={styles.loginShowcaseFoot}><span>Direction Générale</span><span>Zin Finance</span><span>Gestionnaire Parc</span></div>

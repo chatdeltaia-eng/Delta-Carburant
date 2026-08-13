@@ -17,7 +17,9 @@ type Actor={sub:string;email:string;role:string};
   WHERE $2<>'NAJIB_ASSIGNER' OR r.distributed_to=$1 OR fc.responsible_user_id=$1 ORDER BY r.created_at DESC`,[actor.sub,actor.role]);}
  async returnReceipts(actor:Actor){return this.db.query(`SELECT rr.id,rr.receipt_number AS "receiptNumber",fc.masked_card_number AS card,
   returned.display_name AS "returnedBy",zin.display_name AS "receivedBy",dg.display_name AS "dgApprovedBy",
-  cr.zin_approved_at AS "zinApprovedAt",cr.dg_approved_at AS "dgApprovedAt",rr.returned_at AS "returnedAt",rr.consumption_rate::float AS "consumptionRate",rr.consumption_month AS "consumptionMonth"
+  cr.zin_approved_at AS "zinApprovedAt",cr.dg_approved_at AS "dgApprovedAt",rr.returned_at AS "returnedAt",rr.consumption_rate::float AS "consumptionRate",rr.consumption_month AS "consumptionMonth",
+  coalesce(rr.monthly_limit,fc.monthly_limit)::float AS "monthlyLimit",coalesce(rr.consumed_amount,0)::float AS "consumedAmount",
+  coalesce(rr.consumed_liters,0)::float AS "consumedLiters",coalesce(rr.transaction_count,0)::int AS "transactionCount"
   FROM card_return_receipt rr JOIN fuel_card fc ON fc.id=rr.fuel_card_id JOIN app_user returned ON returned.id=rr.returned_by
   JOIN app_user zin ON zin.id=rr.received_by JOIN card_request cr ON cr.id=rr.card_request_id JOIN app_user dg ON dg.id=cr.dg_approved_by
   WHERE $2<>'NAJIB_ASSIGNER' OR rr.returned_by=$1 ORDER BY rr.returned_at DESC`,[actor.sub,actor.role]);}

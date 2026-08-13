@@ -171,12 +171,19 @@ export class RequestsService {
         await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'CARD_FUNDING','fuel_card',$2,$3)`,[actor.email??actor.sub,request.fuel_card_id,{amount:request.requested_limit,sourceCardId:request.source_card_id}]);
       } else if(dto.decision==='APPROVED'&&request.request_type==='ASSIGNMENT_CHANGE') {
         if(request.requested_card_status==='SAFE'){
-          const usage=await client.query(`SELECT fc.monthly_limit,fc.masked_card_number,100*coalesce(sum(ft.amount_incl_tax),0)/nullif(fc.monthly_limit,0) AS rate FROM fuel_card fc LEFT JOIN fuel_transaction ft ON ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL AND ft.transaction_date>=date_trunc('month',current_date) WHERE fc.id=$1 GROUP BY fc.id`,[request.fuel_card_id]);
+          const usage=await client.query(`SELECT fc.monthly_limit,fc.masked_card_number,coalesce(sum(ft.amount_incl_tax),0) AS consumed,
+            coalesce(sum(ft.quantity_liters),0) AS liters,count(ft.id)::int AS transaction_count,
+            100*coalesce(sum(ft.amount_incl_tax),0)/nullif(fc.monthly_limit,0) AS rate
+            FROM fuel_card fc LEFT JOIN fuel_transaction ft ON ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL
+              AND ft.transaction_date>=date_trunc('month',current_date) AND ft.transaction_date<date_trunc('month',current_date)+interval '1 month'
+            WHERE fc.id=$1 GROUP BY fc.id`,[request.fuel_card_id]);
           const rate=Number(usage.rows[0]?.rate??0);if(rate<100)throw new BadRequestException(`La carte ${usage.rows[0]?.masked_card_number} ne peut être restituée qu’après utilisation de 100 % de son plafond (${rate.toFixed(1)} % actuellement)`);
           await client.query(`UPDATE fuel_card SET status='SAFE',responsible_user_id=NULL WHERE id=$1`,[request.fuel_card_id]);
           await client.query(`UPDATE card_assignment SET ends_at=now() WHERE fuel_card_id=$1 AND ends_at IS NULL`,[request.fuel_card_id]);
           const zinReceiver=request.zin_approved_by??(actor.role==='ZIN_FINANCE'?actor.sub:null);if(!zinReceiver)throw new BadRequestException('La réception de la carte doit être validée par Zin');
-          await client.query(`INSERT INTO card_return_receipt(receipt_number,card_request_id,fuel_card_id,returned_by,received_by,consumption_rate,consumption_month) VALUES($1,$2,$3,$4,$5,least(100,$6),date_trunc('month',current_date)::date) ON CONFLICT(card_request_id) DO NOTHING`,[`RES-${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${request.request_number.replace(/\D/g,'').slice(-10)}`,id,request.fuel_card_id,request.requested_by,zinReceiver,rate]);
+          await client.query(`INSERT INTO card_return_receipt(receipt_number,card_request_id,fuel_card_id,returned_by,received_by,consumption_rate,consumption_month,monthly_limit,consumed_amount,consumed_liters,transaction_count)
+            VALUES($1,$2,$3,$4,$5,least(100,$6),date_trunc('month',current_date)::date,$7,$8,$9,$10) ON CONFLICT(card_request_id) DO NOTHING`,
+            [`RES-${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${request.request_number.replace(/\D/g,'').slice(-10)}`,id,request.fuel_card_id,request.requested_by,zinReceiver,rate,Number(usage.rows[0]?.monthly_limit??0),Number(usage.rows[0]?.consumed??0),Number(usage.rows[0]?.liters??0),Number(usage.rows[0]?.transaction_count??0)]);
         }else{
           await client.query(`UPDATE fuel_card SET status='DISTRIBUTED',responsible_user_id=$2,card_category='OFF_PARK' WHERE id=$1`,[request.fuel_card_id,request.requested_by]);
         }

@@ -23,7 +23,9 @@ type Actor={sub:string;email:string;role:string};
   rr.restored_at AS "restoredAt",restored.display_name AS "restoredBy",fc.status AS "cardStatus",fc.monthly_limit::float AS "currentLimit"
   FROM card_return_receipt rr JOIN fuel_card fc ON fc.id=rr.fuel_card_id JOIN app_user returned ON returned.id=rr.returned_by
   JOIN app_user zin ON zin.id=rr.received_by JOIN card_request cr ON cr.id=rr.card_request_id JOIN app_user dg ON dg.id=cr.dg_approved_by LEFT JOIN app_user restored ON restored.id=rr.restored_by
-  WHERE $2<>'NAJIB_ASSIGNER' OR rr.returned_by=$1 ORDER BY rr.returned_at DESC`,[actor.sub,actor.role]);}
+  WHERE returned.role='NAJIB_ASSIGNER'
+    AND ($2<>'NAJIB_ASSIGNER' OR rr.returned_by=$1)
+  ORDER BY rr.returned_at DESC`,[actor.sub,actor.role]);}
  async restoreReturnedCard(id:string,actor:Actor){return this.db.transaction(async client=>{
   const found=await client.query(`SELECT rr.*,fc.status,fc.monthly_limit,fc.masked_card_number,cr.beneficiary_id,cr.vehicle_id
     FROM card_return_receipt rr JOIN fuel_card fc ON fc.id=rr.fuel_card_id JOIN card_request cr ON cr.id=rr.card_request_id

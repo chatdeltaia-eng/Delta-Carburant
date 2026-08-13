@@ -135,13 +135,15 @@ export class RequestsService {
       if(doubleApproval&&dto.decision==='APPROVED'){
         if(request.request_type==='ASSIGNMENT_CHANGE'&&request.requested_card_status==='SAFE'&&actor.role==='SUPER_ADMIN')throw new BadRequestException('La restitution exige les validations personnelles de Zin et de la DG');
         if(actor.role==='ZIN_FINANCE'){
-          if(request.zin_approved_at)throw new BadRequestException('Zin a déjà validé cette demande');
-          await client.query(`UPDATE card_request SET zin_approved_by=$2,zin_approved_at=now(),status='UNDER_REVIEW' WHERE id=$1`,[id,actor.sub]);
-          request.zin_approved_at=new Date();
+          if(!request.zin_approved_at){
+            await client.query(`UPDATE card_request SET zin_approved_by=$2,zin_approved_at=now(),status='UNDER_REVIEW' WHERE id=$1`,[id,actor.sub]);
+            request.zin_approved_by=actor.sub;request.zin_approved_at=new Date();
+          }
         }else if(actor.role==='DIRECTION_GENERAL'){
-          if(request.dg_approved_at)throw new BadRequestException('La DG a déjà validé cette demande');
-          await client.query(`UPDATE card_request SET dg_approved_by=$2,dg_approved_at=now(),status='UNDER_REVIEW' WHERE id=$1`,[id,actor.sub]);
-          request.dg_approved_at=new Date();
+          if(!request.dg_approved_at){
+            await client.query(`UPDATE card_request SET dg_approved_by=$2,dg_approved_at=now(),status='UNDER_REVIEW' WHERE id=$1`,[id,actor.sub]);
+            request.dg_approved_by=actor.sub;request.dg_approved_at=new Date();
+          }
         }else{
           await client.query(`UPDATE card_request SET zin_approved_by=$2,zin_approved_at=now(),dg_approved_by=$2,dg_approved_at=now() WHERE id=$1`,[id,actor.sub]);
           request.zin_approved_at=request.dg_approved_at=new Date();

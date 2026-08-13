@@ -78,6 +78,7 @@ type Card = {
   consumed_amount?:number;
   total_consumed_amount?:number;
   consumption_rate?:number;
+  responsible_role?:string;
   responsible_user_id?:string;
   company_id?:string;
 };
@@ -2610,7 +2611,11 @@ function ComplaintsView({token,user,rows,refresh,notify}:{token:string;user:User
  return <section className={styles.fullPanel}><div className={styles.importNotice}><b>Canal interne officiel</b><span>Najib, Zin et la DG peuvent ouvrir une réclamation, répondre, suivre son traitement et conserver la résolution dans l’historique.</span></div><Toolbar search="" setSearch={()=>{}} count={rows.length} button="Nouvelle réclamation" click={create}/><div className={styles.tableWrap}><table><thead><tr>{["N°","Date","Créateur","Destinataire","Objet","Priorité","Statut","Résolution","Action"].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.id}><td>{row.numero}</td><td>{row.date}</td><td>{row.createur}</td><td>{roleName[String(row.destinataire)]??row.destinataire}</td><td><b>{row.objet}</b><br/><small>{row.description}</small></td><td>{row.priorite}</td><td>{row.statut}</td><td>{row.resolution}</td><td><button className={styles.smallBtn} onClick={()=>respond(row)}>Répondre</button>{!['RESOLVED','CLOSED'].includes(String(row.statut))&&<><br/><button className={styles.smallBtn} onClick={()=>resolve(row)}>Résoudre</button></>}</td></tr>)}</tbody></table></div></section>;
 }
 function CardReturnsView({token,user,cards,requests,receipts,decide,refresh,notify}:{token:string;user:User;cards:Card[];requests:Row[];receipts:Row[];decide:(id:string,accepted:boolean)=>void|Promise<void>;refresh:()=>void;notify:(message:string)=>void}){
- const eligible=cards.filter(card=>Math.min(100,Number(card.consumption_rate??0))>=100||receipts.some(receipt=>receipt.carte===card.masked_card_number));
+ // Ce workflow appartient exclusivement à Najib. Zin et la DG contrôlent ses
+ // restitutions, mais les cartes des autres responsables ne doivent jamais y
+ // apparaître, même si elles ont atteint leur plafond.
+ const najibCards=cards.filter(card=>card.responsible_role==='NAJIB_ASSIGNER'||receipts.some(receipt=>receipt.carte===card.masked_card_number));
+ const eligible=najibCards.filter(card=>Math.min(100,Number(card.consumption_rate??0))>=100||receipts.some(receipt=>receipt.carte===card.masked_card_number));
  const pendingFor=(card:Card)=>requests.find(row=>row.type==='Mise en coffre'&&row.carte===card.masked_card_number&&row.statut==='EN_ATTENTE_ZIN');
  const receiptFor=(card:Card)=>receipts.find(row=>row.carte===card.masked_card_number);
  const returnCard=async(card:Card)=>{if(pendingFor(card))return notify("Une demande de restitution est déjà en cours");const response=await fetch(`${API}/requests`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({requestType:'CUSTODY_CHANGE',requestedCardStatus:'SAFE',fuelCardId:card.id,beneficiary:card.beneficiary||'Najib',department:card.department||'Hors parc',vehicle:card.registration||'Sans véhicule',requestedLimit:0,reason:'Restitution obligatoire après utilisation de 100 % du plafond'})});if(!response.ok){const body=await response.json().catch(()=>({}));return notify(String(body.message??"La demande de restitution n’a pas été enregistrée"));}notify("Demande de restitution envoyée à Zin et à la DG");refresh();};

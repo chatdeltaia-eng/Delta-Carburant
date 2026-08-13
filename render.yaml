@@ -5,7 +5,7 @@ services:
     dockerfilePath: ./Dockerfile.api
     region: frankfurt
     plan: free
-    autoDeployTrigger: off
+    autoDeployTrigger: commit
     healthCheckPath: /api/v1/health
     maxShutdownDelaySeconds: 60
     envVars:
@@ -41,7 +41,7 @@ services:
     runtime: node
     region: frankfurt
     plan: free
-    autoDeployTrigger: off
+    autoDeployTrigger: commit
     buildCommand: npm ci --include=dev --prefix apps/web && npm run build --prefix apps/web
     startCommand: npm run start --prefix apps/web
     healthCheckPath: /

@@ -19,10 +19,27 @@ type Actor={sub:string;email:string;role:string};
   returned.display_name AS "returnedBy",zin.display_name AS "receivedBy",dg.display_name AS "dgApprovedBy",
   cr.zin_approved_at AS "zinApprovedAt",cr.dg_approved_at AS "dgApprovedAt",rr.returned_at AS "returnedAt",rr.consumption_rate::float AS "consumptionRate",rr.consumption_month AS "consumptionMonth",
   coalesce(rr.monthly_limit,fc.monthly_limit)::float AS "monthlyLimit",coalesce(rr.consumed_amount,0)::float AS "consumedAmount",
-  coalesce(rr.consumed_liters,0)::float AS "consumedLiters",coalesce(rr.transaction_count,0)::int AS "transactionCount"
+  coalesce(rr.consumed_liters,0)::float AS "consumedLiters",coalesce(rr.transaction_count,0)::int AS "transactionCount",
+  rr.restored_at AS "restoredAt",restored.display_name AS "restoredBy",fc.status AS "cardStatus",fc.monthly_limit::float AS "currentLimit"
   FROM card_return_receipt rr JOIN fuel_card fc ON fc.id=rr.fuel_card_id JOIN app_user returned ON returned.id=rr.returned_by
-  JOIN app_user zin ON zin.id=rr.received_by JOIN card_request cr ON cr.id=rr.card_request_id JOIN app_user dg ON dg.id=cr.dg_approved_by
+  JOIN app_user zin ON zin.id=rr.received_by JOIN card_request cr ON cr.id=rr.card_request_id JOIN app_user dg ON dg.id=cr.dg_approved_by LEFT JOIN app_user restored ON restored.id=rr.restored_by
   WHERE $2<>'NAJIB_ASSIGNER' OR rr.returned_by=$1 ORDER BY rr.returned_at DESC`,[actor.sub,actor.role]);}
+ async restoreReturnedCard(id:string,actor:Actor){return this.db.transaction(async client=>{
+  const found=await client.query(`SELECT rr.*,fc.status,fc.monthly_limit,fc.masked_card_number,cr.beneficiary_id,cr.vehicle_id
+    FROM card_return_receipt rr JOIN fuel_card fc ON fc.id=rr.fuel_card_id JOIN card_request cr ON cr.id=rr.card_request_id
+    WHERE rr.id=$1 FOR UPDATE OF rr,fc`,[id]);const receipt=found.rows[0];
+  if(!receipt)throw new NotFoundException('Reçu de restitution introuvable');
+  if(receipt.restored_at)throw new BadRequestException('Cette carte a déjà été restaurée à Najib');
+  if(receipt.status!=='SAFE')throw new BadRequestException('La carte doit être au coffre avant sa restauration');
+  if(Number(receipt.monthly_limit)<=0)throw new BadRequestException('Le plafond de la carte doit être configuré avant sa restauration');
+  await client.query(`UPDATE fuel_card SET status='DISTRIBUTED',card_category='OFF_PARK',responsible_user_id=$2 WHERE id=$1`,[receipt.fuel_card_id,receipt.returned_by]);
+  await client.query(`INSERT INTO card_assignment(fuel_card_id,beneficiary_id,vehicle_id,workflow_status,requested_by,reviewed_by,reviewed_at)
+    VALUES($1,$2,$3,'APPROVED_ZIN',$4,$5,now())`,[receipt.fuel_card_id,receipt.beneficiary_id,receipt.vehicle_id,receipt.returned_by,actor.sub]);
+  await client.query(`UPDATE card_return_receipt SET restored_by=$2,restored_at=now(),restored_limit=$3 WHERE id=$1`,[id,actor.sub,receipt.monthly_limit]);
+  await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id) VALUES($1,'Carte restaurée à Najib',$2,'returns','fuel_card',$3)`,[receipt.returned_by,`La carte ${receipt.masked_card_number} vous a été restaurée avec un plafond de ${Number(receipt.monthly_limit).toFixed(3)} TND`,receipt.fuel_card_id]);
+  await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'RESTORE_RETURNED_CARD','fuel_card',$2,$3)`,[actor.email,receipt.fuel_card_id,{responsibleUserId:receipt.returned_by,monthlyLimit:Number(receipt.monthly_limit),returnReceiptId:id}]);
+  return {id,cardId:receipt.fuel_card_id,status:'DISTRIBUTED',restoredTo:receipt.returned_by,monthlyLimit:Number(receipt.monthly_limit)};
+ });}
  async approve(id:string,actor:Actor){return this.db.transaction(async client=>{const found=await client.query(`SELECT r.*,fc.masked_card_number FROM card_distribution_receipt r JOIN fuel_card fc ON fc.id=r.fuel_card_id WHERE r.id=$1 AND r.status<>'REVOKED' FOR UPDATE OF r`,[id]);if(!found.rows[0])throw new NotFoundException('Reçu introuvable');
   if(actor.role==='ZIN_FINANCE'){if(found.rows[0].zin_approved_at)throw new BadRequestException('Ce reçu est déjà autorisé par Zin');await client.query(`UPDATE card_distribution_receipt SET zin_approved_by=$2,zin_approved_at=now() WHERE id=$1`,[id,actor.sub]);}
   else if(actor.role==='DIRECTION_GENERAL'){if(found.rows[0].dg_approved_at)throw new BadRequestException('Ce reçu est déjà autorisé par la DG');await client.query(`UPDATE card_distribution_receipt SET dg_approved_by=$2,dg_approved_at=now() WHERE id=$1`,[id,actor.sub]);}

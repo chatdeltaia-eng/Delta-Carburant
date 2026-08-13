@@ -181,9 +181,21 @@ export class RequestsService {
           await client.query(`UPDATE fuel_card SET status='SAFE',responsible_user_id=NULL WHERE id=$1`,[request.fuel_card_id]);
           await client.query(`UPDATE card_assignment SET ends_at=now() WHERE fuel_card_id=$1 AND ends_at IS NULL`,[request.fuel_card_id]);
           const zinReceiver=request.zin_approved_by??(actor.role==='ZIN_FINANCE'?actor.sub:null);if(!zinReceiver)throw new BadRequestException('La réception de la carte doit être validée par Zin');
-          await client.query(`INSERT INTO card_return_receipt(receipt_number,card_request_id,fuel_card_id,returned_by,received_by,consumption_rate,consumption_month,monthly_limit,consumed_amount,consumed_liters,transaction_count)
-            VALUES($1,$2,$3,$4,$5,least(100,$6),date_trunc('month',current_date)::date,$7,$8,$9,$10) ON CONFLICT(card_request_id) DO NOTHING`,
-            [`RES-${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${request.request_number.replace(/\D/g,'').slice(-10)}`,id,request.fuel_card_id,request.requested_by,zinReceiver,rate,Number(usage.rows[0]?.monthly_limit??0),Number(usage.rows[0]?.consumed??0),Number(usage.rows[0]?.liters??0),Number(usage.rows[0]?.transaction_count??0)]);
+          const receiptValues=[`RES-${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${request.request_number.replace(/\D/g,'').slice(-10)}`,id,request.fuel_card_id,request.requested_by,zinReceiver,rate];
+          await client.query(`INSERT INTO card_return_receipt(receipt_number,card_request_id,fuel_card_id,returned_by,received_by,consumption_rate,consumption_month)
+            VALUES($1,$2,$3,$4,$5,least(100,$6::numeric),date_trunc('month',current_date)::date)
+            ON CONFLICT(card_request_id) DO UPDATE SET received_by=excluded.received_by`,receiptValues);
+          // Les colonnes de preuve ont été ajoutées après le workflow initial.
+          // Les remplir séparément garde la validation compatible pendant un
+          // déploiement progressif où l'API et la migration ne démarrent pas au
+          // même instant.
+          const proofColumns=await client.query(`SELECT count(*)::int AS count FROM information_schema.columns
+            WHERE table_schema=current_schema() AND table_name='card_return_receipt'
+              AND column_name=ANY($1::text[])`,[['monthly_limit','consumed_amount','consumed_liters','transaction_count']]);
+          if(Number(proofColumns.rows[0]?.count)===4){
+            await client.query(`UPDATE card_return_receipt SET monthly_limit=$2,consumed_amount=$3,consumed_liters=$4,transaction_count=$5
+              WHERE card_request_id=$1`,[id,Number(usage.rows[0]?.monthly_limit??0),Number(usage.rows[0]?.consumed??0),Number(usage.rows[0]?.liters??0),Number(usage.rows[0]?.transaction_count??0)]);
+          }
         }else{
           await client.query(`UPDATE fuel_card SET status='DISTRIBUTED',responsible_user_id=$2,card_category='OFF_PARK' WHERE id=$1`,[request.fuel_card_id,request.requested_by]);
         }

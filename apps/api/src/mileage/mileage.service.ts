@@ -5,7 +5,8 @@ type Actor={sub:string;email:string;role:string};
 export class MileageService {
  constructor(private readonly db:DatabaseService){}
  list(actor:Actor){const own=actor.role==='NAJIB_ASSIGNER';return this.db.query(`SELECT mr.id,mr.vehicle_id AS "vehicleId",v.registration_display AS vehicle,
-   v.driver_name AS driver,c.code AS company,mr.week_start AS week,mr.mileage,mr.previous_mileage AS "previousMileage",
+   v.driver_name AS driver,c.code AS company,v.brand,v.model,v.vehicle_type AS "vehicleType",v.first_registration_date AS "firstRegistrationDate",
+   mr.week_start AS week,mr.mileage,mr.previous_mileage AS "previousMileage",
    mr.expected_mileage AS "expectedMileage",mr.detected_distance AS "detectedDistance",mr.anomaly,mr.status,
    coalesce((SELECT sum(ft.quantity_liters) FROM fuel_transaction ft WHERE ft.vehicle_id=mr.vehicle_id AND ft.deleted_at IS NULL
      AND ft.transaction_date>coalesce((SELECT max(previous.reading_date) FROM mileage_reading previous WHERE previous.vehicle_id=mr.vehicle_id
@@ -16,6 +17,15 @@ export class MileageService {
        AND ft.transaction_date<=mr.reading_date),0)/(mr.mileage-mr.previous_mileage))::numeric,2)::float ELSE null END AS "litersPer100Km",
    mr.reference_liters_per_100km::float AS "referenceLitersPer100Km",mr.estimated_distance::float AS "estimatedDistance",
    mr.estimated_mileage::float AS "estimatedMileage",mr.reconciliation_message AS "reconciliationMessage",
+   coalesce((SELECT jsonb_agg(jsonb_build_object(
+     'id',ft.id,'date',ft.transaction_date,'card',fc.masked_card_number,'station',ft.station,'product',ft.product,
+     'liters',ft.quantity_liters,'amount',ft.amount_incl_tax,'beneficiary',coalesce(b.display_name,fc.holder_name,'—'))
+     ORDER BY ft.transaction_date,ft.created_at)
+     FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id LEFT JOIN beneficiary b ON b.id=ft.beneficiary_id
+     WHERE ft.vehicle_id=mr.vehicle_id AND ft.deleted_at IS NULL
+       AND ft.transaction_date>coalesce((SELECT max(previous.reading_date) FROM mileage_reading previous
+         WHERE previous.vehicle_id=mr.vehicle_id AND previous.status='VALIDATED' AND previous.reading_date<mr.reading_date),'1970-01-01')
+       AND ft.transaction_date<=mr.reading_date),'[]'::jsonb) AS transactions,
    mr.rejection_reason AS "rejectionReason",mr.created_at AS "createdAt",u.display_name AS responsible,
    reviewer.display_name AS reviewer FROM mileage_reading mr JOIN vehicle v ON v.id=mr.vehicle_id JOIN company c ON c.id=v.company_id
    LEFT JOIN app_user u ON u.id=mr.created_by LEFT JOIN app_user reviewer ON reviewer.id=mr.validated_by
@@ -26,8 +36,8 @@ export class MileageService {
      WHERE v.id=$1 AND v.deleted_at IS NULL AND v.active AND c.code='DC'
      AND ($3::boolean OR v.managed_by=$2 OR EXISTS(SELECT 1 FROM transaction_allocation ta WHERE ta.vehicle_id=v.id AND ta.allocated_by=$2))`,[dto.vehicleId,actor.sub,zin]);
    if(!allowed.rows[0]) throw new NotFoundException(zin?'Véhicule actif introuvable dans le parc DC':'Ce véhicule ne fait pas partie de votre périmètre hors parc');
-   const last=await client.query(`SELECT mileage,created_at FROM mileage_reading WHERE vehicle_id=$1 AND status='VALIDATED' ORDER BY reading_date DESC LIMIT 1`,[dto.vehicleId]);
-   const previous=Number(last.rows[0]?.mileage??0),since=last.rows[0]?.created_at??'1970-01-01';
+   const last=await client.query(`SELECT mileage,reading_date FROM mileage_reading WHERE vehicle_id=$1 AND status='VALIDATED' ORDER BY reading_date DESC LIMIT 1`,[dto.vehicleId]);
+   const previous=Number(last.rows[0]?.mileage??0),since=last.rows[0]?.reading_date??'1970-01-01';
    const fuel=await client.query(`SELECT coalesce(sum(ft.quantity_liters),0)::float AS liters FROM fuel_transaction ft
      WHERE ft.vehicle_id=$1 AND ft.deleted_at IS NULL AND ft.transaction_date>$2`,[dto.vehicleId,since]);
    const detected=Math.max(0,Number(dto.mileage)-previous);

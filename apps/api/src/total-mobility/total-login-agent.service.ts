@@ -142,7 +142,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async run(username: string, password: string) {
     await this.closeBrowser();
     this.browser = await playwright.launch({ headless: true });
-    const context = await this.browser.newContext({ locale: 'fr-FR' });
+    // Une hauteur suffisante est indispensable : les grilles Total sont
+    // virtualisées et ne rendent que les lignes visibles dans le DOM.
+    const context = await this.browser.newContext({
+      locale: 'fr-FR',
+      viewport: { width: 1920, height: 1200 },
+    });
     this.page = await context.newPage();
     this.captureTokens(this.page);
     this.setStatus('SIGNING_IN', 'Connexion automatique à Total Mobility…');
@@ -298,17 +303,23 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     try{
       await page.goto('https://customer.fleet.totalenergies.com/tn/drivers',{waitUntil:'domcontentloaded',timeout:60_000});
       await page.waitForTimeout(4_000);
-      const jsonDrivers=this.driversFromUnknown(captured);if(jsonDrivers.length)return this.uniqueDrivers(jsonDrivers);
+      const jsonDrivers=this.driversFromUnknown(captured);
+      // Force le rendu des dernières lignes d'une grille virtualisée.
+      await page.evaluate(async()=>{
+        const candidates=[document.scrollingElement,...Array.from(document.querySelectorAll<HTMLElement>('[role="grid"], .table-container, .mat-table, main'))].filter(Boolean) as HTMLElement[];
+        for(const element of candidates){element.scrollTop=element.scrollHeight;}
+        await new Promise(resolve=>setTimeout(resolve,700));
+      });
       // Le portail Total utilise selon sa version un tableau HTML, Angular
       // Material ou une grille ARIA. Il ne faut donc pas dépendre uniquement
       // de `table tbody tr`.
       const rowTexts=await page.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row')
         .evaluateAll(elements=>elements.map(row=>(row.textContent??'').replace(/\s+/g,' ').trim()).filter(Boolean));
-      const fromRows=this.driversFromVisibleRows(rowTexts);if(fromRows.length)return this.uniqueDrivers(fromRows);
+      const fromRows=this.driversFromVisibleRows(rowTexts);
       // Dernier recours robuste pour la grille virtuelle actuelle de Mobility
       // Business : lecture du texte visible (0001, prénom, nom, etc.).
       const bodyText=await page.locator('body').innerText();
-      return this.uniqueDrivers(this.driversFromVisibleText(bodyText));
+      return this.uniqueDrivers([...jsonDrivers,...fromRows,...this.driversFromVisibleText(bodyText)]);
     }finally{page.off('response',listener);}
   }
 

@@ -302,7 +302,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     page.on('response',listener);
     try{
       await this.selectConfiguredClient();
-      await page.goto('https://customer.fleet.totalenergies.com/tn/drivers',{waitUntil:'domcontentloaded',timeout:60_000});
+      await this.openDriversFromTotalMenu();
       await page.waitForTimeout(4_000);
       const jsonDrivers=this.driversFromUnknown(captured);
       // Force le rendu des dernières lignes, y compris lorsque Total charge le
@@ -332,6 +332,28 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
       return result;
     }finally{page.off('response',listener);}
+  }
+
+  private async openDriversFromTotalMenu(){
+    const page=this.page;if(!page)throw new Error('Le navigateur Total a été fermé');
+    if(/\/tn\/drivers(?:[/?#]|$)/i.test(page.url()))return;
+    // Total conserve le client sélectionné dans l'état de sa SPA. Un goto()
+    // complet vers /drivers détruit cet état et renvoie à customer-selection.
+    for(const frame of page.frames()){
+      const link=frame.locator('a[href*="/tn/drivers"], [routerlink*="drivers" i]').first();
+      if(await link.isVisible({timeout:800}).catch(()=>false)){
+        await link.click();
+        await page.waitForURL(/\/tn\/drivers(?:[/?#]|$)/i,{timeout:15_000});
+        return;
+      }
+      const menu=frame.getByText(/^\s*Gestion des chauffeurs\s*$/i).first();
+      if(await menu.isVisible({timeout:800}).catch(()=>false)){
+        await menu.click();
+        await page.waitForURL(/\/tn\/drivers(?:[/?#]|$)/i,{timeout:15_000});
+        return;
+      }
+    }
+    throw new Error(`Le menu « Gestion des chauffeurs » est introuvable après la sélection du client (${page.url()})`);
   }
 
   private async selectConfiguredClient(){

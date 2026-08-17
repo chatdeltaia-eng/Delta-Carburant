@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 
-type UpdateCard = { status?: string; financeStatus?: string; monthlyLimit?: number; thresholdAlertEnabled?: boolean };
+type UpdateCard = { status?: string; financeStatus?: string; monthlyLimit?: number; cardNumber?: string; beneficiary?: string; thresholdAlertEnabled?: boolean };
 type CreateCard = { cardNumber: string; monthlyLimit: number; beneficiaryId?: string; vehicleId?: string; cardCategory?: 'PERSONALIZED'|'OFF_PARK';responsibleUserId?:string;companyId?:string };
 type Actor = { sub: string; email: string; role: string };
 @Injectable()
@@ -146,18 +146,43 @@ export class CardsService {
         FROM fuel_card fc WHERE fc.id=$1 FOR UPDATE`, [id]);
       if (!before.rows[0]) throw new NotFoundException('Carte introuvable');
       const current = before.rows[0];
+      const cardNumber=change.cardNumber?.trim();
+      if(change.cardNumber!==undefined&&!cardNumber)throw new BadRequestException('Le numéro de carte est obligatoire');
+      const beneficiaryName=change.beneficiary?.trim();
+      if(change.beneficiary!==undefined&&!beneficiaryName)throw new BadRequestException('Le bénéficiaire est obligatoire');
+      if(cardNumber){
+        const duplicate=await client.query(`SELECT id FROM fuel_card WHERE card_number_hmac=hmac($1,$2,'sha256') AND id<>$3 AND deleted_at IS NULL`,
+          [cardNumber,process.env.CARD_HMAC_KEY ?? 'delta-development-hmac-key',id]);
+        if(duplicate.rows[0])throw new BadRequestException('Ce numéro de carte existe déjà');
+      }
       const result = await client.query(`UPDATE fuel_card SET status=coalesce($2::card_status,status),
-        monthly_limit=coalesce($3,monthly_limit), threshold_alert_enabled=coalesce($4,threshold_alert_enabled) WHERE id=$1
+        monthly_limit=coalesce($3,monthly_limit), threshold_alert_enabled=coalesce($4,threshold_alert_enabled),
+        card_number_ciphertext=CASE WHEN $5::text IS NULL THEN card_number_ciphertext ELSE pgp_sym_encrypt($5,$6,'cipher-algo=aes256') END,
+        card_number_hmac=CASE WHEN $5::text IS NULL THEN card_number_hmac ELSE hmac($5,$7,'sha256') END,
+        masked_card_number=coalesce($5,masked_card_number) WHERE id=$1
         RETURNING id,status,monthly_limit AS "monthlyLimit",
-        threshold_alert_enabled AS "thresholdAlertEnabled",version,updated_at AS "updatedAt"`,
-        [id, change.status ?? null, change.monthlyLimit ?? null, change.thresholdAlertEnabled ?? null]);
+        masked_card_number AS "cardNumber",threshold_alert_enabled AS "thresholdAlertEnabled",version,updated_at AS "updatedAt"`,
+        [id, change.status ?? null, change.monthlyLimit ?? null, change.thresholdAlertEnabled ?? null,cardNumber??null,
+          process.env.CARD_ENCRYPTION_KEY ?? 'delta-development-card-key',process.env.CARD_HMAC_KEY ?? 'delta-development-hmac-key']);
+      if(beneficiaryName){
+        const department=await client.query(`SELECT coalesce(b.department_id,(SELECT id FROM department WHERE company_id=$1 ORDER BY name LIMIT 1)) AS id
+          FROM fuel_card fc LEFT JOIN card_assignment ca ON ca.fuel_card_id=fc.id AND ca.ends_at IS NULL
+          LEFT JOIN beneficiary b ON b.id=ca.beneficiary_id WHERE fc.id=$2 LIMIT 1`,[current.company_id,id]);
+        let departmentId=department.rows[0]?.id;
+        if(!departmentId){const created=await client.query(`INSERT INTO department(company_id,name) VALUES($1,'Non renseigné') ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id`,[current.company_id]);departmentId=created.rows[0].id;}
+        const beneficiary=await client.query(`INSERT INTO beneficiary(company_id,department_id,display_name) VALUES($1,$2,$3)
+          ON CONFLICT(company_id,display_name) DO UPDATE SET active=true RETURNING id`,[current.company_id,departmentId,beneficiaryName]);
+        const assignment=await client.query(`UPDATE card_assignment SET beneficiary_id=$2 WHERE fuel_card_id=$1 AND ends_at IS NULL RETURNING id`,[id,beneficiary.rows[0].id]);
+        if(!assignment.rows[0])await client.query(`INSERT INTO card_assignment(fuel_card_id,beneficiary_id,workflow_status,requested_by,reviewed_by,reviewed_at)
+          VALUES($1,$2,'APPROVED_ZIN',$3,$3,now())`,[id,beneficiary.rows[0].id,actor.sub]);
+      }
       if (change.financeStatus) {
         const workflow = change.financeStatus === 'CONFIRMED' ? 'APPROVED_ZIN' : change.financeStatus === 'REJECTED' ? 'REJECTED_ZIN' : 'PENDING_ZIN';
         await client.query(`UPDATE card_assignment SET workflow_status=$2,reviewed_by=$3,reviewed_at=now()
           WHERE fuel_card_id=$1 AND ends_at IS NULL`, [id, workflow, actor.sub]);
       }
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,old_values,new_values)
-        VALUES ($1,'UPDATE','fuel_card',$2,$3,$4)`, [actor.email, id, current, result.rows[0]]);
+        VALUES ($1,'UPDATE','fuel_card',$2,$3,$4)`, [actor.email, id, current, {...result.rows[0],beneficiary:beneficiaryName}]);
       if (change.status && change.status !== current.status) {
         const actionLabel: Record<string, string> = {
           SUSPENDED: 'bloquée', ACTIVE: 'débloquée et réactivée', DISTRIBUTED: 'marquée comme distribuée', OPPOSED: 'mise en opposition',

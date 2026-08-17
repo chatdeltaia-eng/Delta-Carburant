@@ -141,6 +141,21 @@ function AppIcon({name,size=20}:{name:IconName;size?:number}) {
 // Browser requests stay on the same origin. Next.js proxies this path to the
 // API service, so the API hostname does not need to be exposed to clients.
 const API = "/api/v1";
+const frenchDate = (value: unknown, withTime = false) => {
+  if (value === null || value === undefined || value === "") return "—";
+  const raw = String(value).trim();
+  const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:T00:00:00(?:\.\d{3})?Z)?$/);
+  if (dateOnly) return `${dateOnly[3]}/${dateOnly[2]}/${dateOnly[1]}`;
+  const parsed = value instanceof Date ? value : new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  return withTime
+    ? parsed.toLocaleString("fr-FR", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" })
+    : parsed.toLocaleDateString("fr-FR", { day:"2-digit", month:"2-digit", year:"numeric" });
+};
+const tableValue = (value: string | number | undefined) =>
+  typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value)
+    ? frenchDate(value, !value.includes("T00:00:00"))
+    : value ?? "—";
 const requestStatus: Record<string, string> = {
   SUBMITTED: "EN_ATTENTE_ZIN",
   UNDER_REVIEW: "EN_ATTENTE_ZIN",
@@ -619,7 +634,7 @@ export default function Home() {
           transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => {const allocations=Array.isArray(row.allocations)?row.allocations as Record<string,unknown>[]:[];return { id:String(row.id),reviewId:String(row.reviewId??""),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),prixApplique:row.appliedPrice==null?"—":Number(row.appliedPrice),montantTheorique:row.expectedAmount==null?"—":Number(row.expectedAmount),ecartFacturation:row.billingDifference==null?"—":Number(row.billingDifference),controleFacturation:String(row.billingStatus??"PRICE_UNAVAILABLE"),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),repartition:allocations.map(item=>`${String(item.beneficiary)} — ${String(item.vehicle)} — ${Number(item.amount).toFixed(3)} DT${item.mileage?` — ${Number(item.mileage)} km`:""}`).join(" | "),observation:row.observation?`${String(row.observation)} — ${String(row.observationBy??"—")}`:"—",statut:row.reviewStatus==="PENDING"?(row.reviewIssue==="MISSING_BENEFICIARY"?"Bénéficiaire à identifier":"Véhicule inconnu à valider"):"Importée Total",fichier:String(row.file??"—") }}),
           anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => {const reviewLabels:Record<string,string>={MISSING_BENEFICIARY:"Bénéficiaire manquant",UNKNOWN_CARD:"Carte absente de la base",UNAVAILABLE_CARD:"Carte indisponible",UNKNOWN_VEHICLE:"Véhicule absent de la base",UNAVAILABLE_VEHICLE:"Véhicule indisponible"};return { id:String(row.id),kind:String(row.kind??"REVIEW"),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.kind)==="REVIEW"?(reviewLabels[String(row.type)]??"Transaction à vérifier"):String(row.description??row.type),carte:String(row.card??"—"),beneficiaire:"—",vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters??0),montant:Number(row.amount??0),gravite:String(row.severity)==="CRITICAL"?"Critique":String(row.severity)==="WARNING"?"Moyenne":String(row.severity)==="INFO"?"Information":"Haute",statut:String(row.kind)==="REVIEW"?"À vérifier":String(row.status)==="IN_REVIEW"?"En cours":"Ouverte" }}),
           vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>,index:number)=>({id:String(row.id),companyId:String(row.companyId??""),numero:Number(row.fleetNumber??0)||index+1,immatriculation:Boolean(row.registrationMissing)?"Sans matricule":String(row.registration),sansMatricule:Boolean(row.registrationMissing),type:String(row.vehicleType??row.model??"À compléter"),societe:String(row.company??"—"),mise_en_circulation:row.firstRegistrationDate?new Date(String(row.firstRegistrationDate)).toLocaleDateString("fr-FR"):"À compléter",reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??row.cardHolder??"—"),titulaire:String(row.cardHolder??row.driver??"—"),carte:String(row.cardNumber??"—"),garde:String(row.custody)==="IN_SAFE"?"En coffre · non distribuée":"Distribuée / active",observation:String(row.notes??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
-          mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:String(row.week??"—"),vehicule:String(row.vehicle),detailsVehicule:[row.brand,row.model,row.vehicleType].filter(Boolean).join(" · ")||"Informations à compléter",miseEnCirculation:row.firstRegistrationDate?new Date(String(row.firstRegistrationDate)).toLocaleDateString("fr-FR"):"—",societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),litresPeriode:Number(row.periodLiters??0),consommation100km:row.litersPer100Km==null?"—":Number(row.litersPer100Km),reference100km:row.referenceLitersPer100Km==null?"—":Number(row.referenceLitersPer100Km),distanceEstimee:row.estimatedDistance==null?"—":Number(row.estimatedDistance),attendu:Number(row.estimatedMileage??row.expectedMileage??0),rapprochement:String(row.reconciliationMessage??"—"),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—"),detailsTransactions:JSON.stringify(row.transactions??[])})),
+          mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:frenchDate(row.week),vehicule:String(row.vehicle),detailsVehicule:[row.brand,row.model,row.vehicleType].filter(Boolean).join(" · ")||"Informations à compléter",miseEnCirculation:frenchDate(row.firstRegistrationDate),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),litresPeriode:Number(row.periodLiters??0),consommation100km:row.litersPer100Km==null?"—":Number(row.litersPer100Km),reference100km:row.referenceLitersPer100Km==null?"—":Number(row.referenceLitersPer100Km),distanceEstimee:row.estimatedDistance==null?"—":Number(row.estimatedDistance),attendu:Number(row.estimatedMileage??row.expectedMileage??0),rapprochement:String(row.reconciliationMessage??"—"),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—"),detailsTransactions:JSON.stringify(row.transactions??[])})),
           drivers:(driversPayload.items??driversPayload).map((row:Record<string,unknown>)=>({id:String(row.id),companyId:String(row.companyId??""),nomComplet:String(row.fullName??"—"),numeroClient:String(row.customerNumber??"—"),nomClient:String(row.customerName??"—"),numeroChauffeur:String(row.driverNumber??"—"),prenom:String(row.firstName??"—"),nom:String(row.lastName??row.fullName??"—"),codeChauffeur:String(row.driverCode??"—"),vehicules:Array.isArray(row.vehicles)?(row.vehicles as {registration:string}[]).map(item=>item.registration).join(", "):"—",statut:Boolean(row.active)?"Actif":"Inactif"})),
           fuelPrices:(fuelPricesPayload.items??fuelPricesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),societe:String(row.company),produit:String(row.product),ancienPrix:Number(row.oldPrice),nouveauPrix:Number(row.newPrice),variation:`${Number(row.variationPercent).toFixed(2)} %`,date:new Date(String(row.effectiveDate)).toLocaleDateString("fr-FR"),auteur:String(row.createdBy??"—"),source:String(row.source)==="OFFICIAL_TUNISIA"?"Ministère tunisien":String(row.source)==="TOTAL_SUPPLIER"?"Tarif fournisseur Total":"Saisie manuelle"})),
           complaints:(complaintsPayload.items??complaintsPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numero:String(row.number),objet:String(row.subject),description:String(row.description),priorite:String(row.priority),statut:String(row.status),destinataire:String(row.targetRole),createur:String(row.creator),date:new Date(String(row.createdAt)).toLocaleString("fr-FR"),resolution:String(row.resolution??"—"),messages:JSON.stringify(row.messages??[])})),
@@ -776,7 +791,19 @@ export default function Home() {
     } else if (modal === "cardAction" && selected) {
       const action = String(f.get("action"));
       let change: Partial<Card> = { updated_at: today };
-      if (action === "assign") {
+      if(action==="editDetails"){
+        if(!canManage(user.role)||!token)return notify("Modification réservée à Zin et à la Direction");
+        const cardNumber=String(f.get("cardNumber")||"").trim();
+        const beneficiary=String(f.get("editBeneficiary")||"").trim();
+        const monthlyLimit=Number(f.get("monthlyLimit"));
+        if(!cardNumber||!beneficiary||!Number.isFinite(monthlyLimit)||monthlyLimit<0)return notify("Vérifiez le numéro, le bénéficiaire et le plafond");
+        try{
+          const response=await fetch(`${API}/cards/${selected.id}`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({cardNumber,beneficiary,monthlyLimit})});
+          const body=await response.json().catch(()=>({}));
+          if(!response.ok)throw new Error(String(body.message??"Modification impossible"));
+          change={...change,masked_card_number:cardNumber,beneficiary,monthly_limit:monthlyLimit};
+        }catch(error){return notify(error instanceof Error?error.message:"La carte n’a pas été modifiée");}
+      } else if (action === "assign") {
         if (!canAssign(user.role))
           return notify("Affectation réservée à Najib");
         if (selected.activation_locked && selected.old_card_id) {
@@ -2161,15 +2188,27 @@ function Dashboard({
   const periodCards=cards.map(card=>{const item=historyCards.find(row=>String(row.id)===card.id);return {...card,consumed_amount:Number(item?.consumed??0),consumption_rate:Math.min(100,Number(item?.rate??0))};});
   const [overviewSearch, setOverviewSearch] = useState("");
   const query = normalizedKey(overviewSearch);
-  const overviewCards = periodCards.filter((card) => !query || [
-    card.masked_card_number,
-    card.beneficiary,
-    card.department,
-    card.registration,
-    card.vehicle_model,
-    card.company_code,
-    status(card.status),
-  ].some((value) => normalizedKey(String(value ?? "")).includes(query)));
+  const overviewCards = periodCards
+    .filter((card) => !query || [
+      card.masked_card_number,
+      card.beneficiary,
+      card.department,
+      card.registration,
+      card.vehicle_model,
+      card.company_code,
+      status(card.status),
+    ].some((value) => normalizedKey(String(value ?? "")).includes(query)))
+    .sort((a,b)=>{
+      const rate=(card:Card)=>Math.min(100,Math.max(0,Number(card.consumption_rate??0)));
+      const closed=(card:Card)=>["SAFE","SUSPENDED","OPPOSED","REPLACED"].includes(card.status);
+      const aReached=rate(a)>=100;
+      const bReached=rate(b)>=100;
+      if(aReached!==bReached)return aReached?-1:1;
+      if(aReached&&closed(a)!==closed(b))return closed(a)?-1:1;
+      return rate(b)-rate(a)
+        || Number(b.consumed_amount??0)-Number(a.consumed_amount??0)
+        || a.masked_card_number.localeCompare(b.masked_card_number,"fr");
+    });
   const activeCards = cards.filter((card) => ["ACTIVE","DISTRIBUTED","ASSIGNED"].includes(card.status));
   const safeCards = cards.filter((card) => card.status === "SAFE");
   const activeMonthlyLimit = activeCards.reduce((sum, card) => sum + Number(card.monthly_limit ?? 0), 0);
@@ -2244,7 +2283,7 @@ function Dashboard({
         <div className={styles.overviewToolbar}>
           <div>
             <h2>Contrôle global des cartes et consommations</h2>
-            <p>{overviewCards.length} carte(s) affichée(s) sur {cards.length} · historique de {new Date(`${historyMonth}-01T12:00:00`).toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</p>
+            <p>{overviewCards.length} carte(s) affichée(s) sur {cards.length} · triées de 100 % à 0 % · historique de {new Date(`${historyMonth}-01T12:00:00`).toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</p>
           </div>
           <input
             value={overviewSearch}
@@ -2959,7 +2998,7 @@ function DataView({
             {paginatedRows.map((r) => (
               <tr key={r.id}>
                 {c.cols.map((k) => (
-                  <td key={k} className={k === "controleFacturation" ? (String(r[k]).startsWith("✓") ? styles.billingOk : String(r[k]).startsWith("⚠") ? styles.billingMismatch : styles.billingUnpriced) : undefined}>{view==="mileage"&&k==="detailsTransactions"?(()=>{let tx:Record<string,unknown>[]=[];try{tx=JSON.parse(String(r.detailsTransactions??"[]"));}catch{}return <details><summary>{tx.length} transaction(s)</summary><div style={{minWidth:520}}>{tx.length?tx.map((item,index)=><div key={String(item.id??index)} style={{padding:"7px 0",borderBottom:"1px solid #dbe5e1"}}><b>{new Date(String(item.date)).toLocaleString("fr-FR")} · {Number(item.liters??0).toFixed(3)} L</b><br/><small>Carte {String(item.card??"—")} · {String(item.station??"—")} · {String(item.product??"—")} · {Number(item.amount??0).toFixed(3)} TND · {String(item.beneficiary??"—")}</small></div>):<small>Aucune transaction entre les deux relevés.</small>}<p><b>Total utilisé dans le calcul : {Number(r.litresPeriode??0).toFixed(3)} litres</b></p></div></details>})():r[k] ?? "—"}</td>
+                  <td key={k} className={k === "controleFacturation" ? (String(r[k]).startsWith("✓") ? styles.billingOk : String(r[k]).startsWith("⚠") ? styles.billingMismatch : styles.billingUnpriced) : undefined}>{view==="mileage"&&k==="detailsTransactions"?(()=>{let tx:Record<string,unknown>[]=[];try{tx=JSON.parse(String(r.detailsTransactions??"[]"));}catch{}return <details><summary>{tx.length} transaction(s)</summary><div style={{minWidth:520}}>{tx.length?tx.map((item,index)=><div key={String(item.id??index)} style={{padding:"7px 0",borderBottom:"1px solid #dbe5e1"}}><b>{frenchDate(item.date, true)} · {Number(item.liters??0).toFixed(3)} L</b><br/><small>Carte {String(item.card??"—")} · {String(item.station??"—")} · {String(item.product??"—")} · {Number(item.amount??0).toFixed(3)} TND · {String(item.beneficiary??"—")}</small></div>):<small>Aucune transaction entre les deux relevés.</small>}<p><b>Total utilisé dans le calcul : {Number(r.litresPeriode??0).toFixed(3)} litres</b></p></div></details>})():tableValue(r[k])}</td>
                 ))}
                 <td>
                   {view === "requests" &&
@@ -3139,7 +3178,22 @@ function CardTable({
   const [pageSize,setPageSize]=useState(10);
   const pages=Math.max(1,Math.ceil(cards.length/pageSize));
   const currentPage=Math.min(page,pages);
-  const visibleCards=cards.slice((currentPage-1)*pageSize,currentPage*pageSize);
+  // Le tri est appliqué ici, avant la pagination, pour qu'il soit identique
+  // dans « Vue d'ensemble » et dans la liste complète des cartes.
+  const cardRate=(card:Card)=>card.monthly_limit>0
+    ? Math.min(100,Math.max(0,Math.round(Number(card.consumed_amount??0)/card.monthly_limit*100)))
+    : 0;
+  const isClosed=(card:Card)=>["SAFE","SUSPENDED","OPPOSED","REPLACED"].includes(card.status);
+  const orderedCards=[...cards].sort((a,b)=>{
+    const aRate=cardRate(a),bRate=cardRate(b);
+    const aReached=aRate>=100,bReached=bRate>=100;
+    if(aReached!==bReached)return aReached?-1:1;
+    if(aReached&&isClosed(a)!==isClosed(b))return isClosed(a)?-1:1;
+    return bRate-aRate
+      || Number(b.consumed_amount??0)-Number(a.consumed_amount??0)
+      || a.masked_card_number.localeCompare(b.masked_card_number,"fr");
+  });
+  const visibleCards=orderedCards.slice((currentPage-1)*pageSize,currentPage*pageSize);
   const allocationDetails = (cardTransactions: Row[]) =>
     cardTransactions.flatMap((transaction) =>
       String(transaction.repartition ?? "")
@@ -3190,7 +3244,7 @@ function CardTable({
               const totalConsumed = Number(c.total_consumed_amount ?? consumed);
               const allocations = allocationDetails(cardTransactions);
               const allocated = allocations.reduce((sum, item) => sum + item.amount, 0);
-              const rate = c.monthly_limit > 0 ? Math.min(100, Math.round(consumed / c.monthly_limit * 100)) : 0;
+              const rate = cardRate(c);
               const isNajibLimitWarning = user.role === "NAJIB_ASSIGNER" && rate >= 60;
               const isLimitReached = rate >= 100;
               const previous = c.old_card_id ? cards.find((item) => item.id === c.old_card_id) : undefined;
@@ -3275,7 +3329,7 @@ function CardTable({
                     <button className={styles.smallBtn} onClick={() => edit(c)}>
                       {canConfirm(user.role) && c.finance_status === "PENDING"
                         ? "Vérifier"
-                        : "Gérer"}
+                        : "Modifier"}
                     </button>
                   )}
                 </td>
@@ -3354,7 +3408,9 @@ function ModalForm({
   const [action, setAction] = useState(
     card && canAssign(user.role) && card.status === "TO_ASSIGN"
       ? "assign"
-      : "distributed",
+      : canManageCards(user.role)
+        ? "editDetails"
+        : "distributed",
   );
   const editFields: [string, string, string?][] =
     editingRow?.view === "vehicles"
@@ -3448,6 +3504,7 @@ function ModalForm({
                 )}
                 {canManageCards(user.role) && (
                   <>
+                    <option value="editDetails">Modifier les informations</option>
                     <option value="distributed">
                       Marquer comme distribuée
                     </option>
@@ -3469,6 +3526,13 @@ function ModalForm({
                 {isDirection(user.role) && <option value="delete">Archiver la carte</option>}
               </select>
             </label>
+            {action==="editDetails"&&(
+              <>
+                <label>Numéro de carte<input name="cardNumber" required defaultValue={card?.masked_card_number}/></label>
+                <label>Bénéficiaire<input name="editBeneficiary" required defaultValue={card?.beneficiary??""}/></label>
+                <label className={styles.fullField}>Plafond mensuel (TND)<input name="monthlyLimit" type="number" min="0" step="0.001" required defaultValue={card?.monthly_limit}/></label>
+              </>
+            )}
             {action === "assign" && (
               <>
                 <label>
@@ -3522,7 +3586,9 @@ function ModalForm({
             <div className={styles.workflowInfo}>
               <b>Règle appliquée</b>
               <span>
-                {action === "replace"
+                {action === "editDetails"
+                  ? "Le numéro, le bénéficiaire et le plafond sont modifiés dans la base et enregistrés dans le journal d’audit."
+                  : action === "replace"
                   ? "Le bénéficiaire et le véhicule sont transférés. Les transactions restent sur la carte utilisée et sont agrégées dans le même cycle de vie."
                   : action === "assign"
                     ? "Le responsable affecte la carte, puis Zin Finance ou la DG confirme."

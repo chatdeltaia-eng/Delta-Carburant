@@ -10,6 +10,8 @@ class UpdateCardDto {
   @IsOptional() @IsIn(statuses) status?: string;
   @IsOptional() @IsIn(['PENDING','CONFIRMED','REJECTED']) financeStatus?: string;
   @IsOptional() @IsNumber() @Min(0) monthlyLimit?: number;
+  @IsOptional() @IsString() cardNumber?: string;
+  @IsOptional() @IsString() beneficiary?: string;
   @IsOptional() @IsBoolean() thresholdAlertEnabled?: boolean;
 }
 class CreateCardDto {

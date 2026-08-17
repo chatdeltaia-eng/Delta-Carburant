@@ -1,7 +1,7 @@
 import { BadRequestException,Injectable,NotFoundException } from '@nestjs/common'; import { DatabaseService } from '../database/database.service';
 type D={companyId:string;customerNumber:string;customerName:string;driverNumber:string;firstName:string;lastName:string;driverCode:string;active?:boolean}; type A={sub:string;email:string;role:string;companyId?:string};
 @Injectable() export class DriversService{constructor(private readonly db:DatabaseService){}
- list(companyId:string,actor:{sub:string;role:string}){return this.db.query(`SELECT d.id,d.company_id AS "companyId",c.code AS company,d.full_name AS "fullName",d.customer_number AS "customerNumber",d.customer_name AS "customerName",d.driver_number AS "driverNumber",d.first_name AS "firstName",d.last_name AS "lastName",d.driver_code AS "driverCode",d.active,
+ list(companyId:string,actor:{sub:string;role:string}){return this.db.query(`SELECT d.id,d.company_id AS "companyId",c.code AS company,d.full_name AS "fullName",d.customer_number AS "customerNumber",d.customer_name AS "customerName",d.driver_number AS "driverNumber",d.first_name AS "firstName",d.last_name AS "lastName",d.driver_code AS "driverCode",d.active,d.total_mobility_checked_at AS "totalMobilityCheckedAt",
   coalesce(jsonb_agg(jsonb_build_object('id',v.id,'registration',v.registration_display)) FILTER(WHERE v.id IS NOT NULL),'[]') AS vehicles
   FROM driver d JOIN company c ON c.id=d.company_id LEFT JOIN vehicle v ON v.driver_id=d.id AND v.deleted_at IS NULL WHERE d.deleted_at IS NULL
   AND ($1='' OR d.company_id=$1::uuid) AND ($2::boolean=false OR EXISTS(SELECT 1 FROM fuel_card fc WHERE fc.company_id=d.company_id AND fc.responsible_user_id=$3 AND fc.deleted_at IS NULL))

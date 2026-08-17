@@ -66,6 +66,14 @@ export type RemoteCardStatus = {
   registration?: string;
   raw?: Record<string, unknown>;
 };
+export type RemoteDriver = {
+  driverNumber: string;
+  firstName: string;
+  lastName: string;
+  driverCode?: string;
+  status?: string;
+  raw?: Record<string, unknown>;
+};
 
 @Injectable()
 export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
@@ -169,6 +177,30 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
         VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{extracted:cards.length,matched}]);
       return {extracted:cards.length,matched,unmatched:cards.length-matched};
+    });
+  }
+  async importDrivers(drivers: RemoteDriver[], actor: Actor) {
+    if (!drivers.length) throw new BadRequestException('Aucun chauffeur trouvé dans « Gestion des chauffeurs » sur Total Mobility');
+    const [connection]=await this.db.query<{customer_number:string}>(`SELECT customer_number FROM total_mobility_connection WHERE enabled LIMIT 1`);
+    const [company]=await this.db.query<{id:string;code:string}>(`SELECT c.id,c.code FROM company c WHERE EXISTS(SELECT 1 FROM driver d WHERE d.company_id=c.id AND regexp_replace(coalesce(d.customer_number,''),'[^0-9]','','g')=regexp_replace($1,'[^0-9]','','g')) ORDER BY c.created_at LIMIT 1`,[connection?.customer_number??'']);
+    if(!company)throw new BadRequestException(`Aucune société de l'application ne correspond au client Total ${connection?.customer_number??'inconnu'}`);
+    return this.db.transaction(async client=>{
+      let created=0,updated=0;
+      for(const remote of drivers){
+        const number=String(remote.driverNumber).trim().padStart(4,'0');
+        if(!number)continue;
+        const firstName=String(remote.firstName??'').trim();
+        const lastName=String(remote.lastName??'').trim().toUpperCase();
+        const active=!/oppos|bloqu|inactif|inactive|suspend/i.test(String(remote.status??''));
+        const existing=await client.query(`SELECT id FROM driver WHERE company_id=$1 AND driver_number=$2 AND deleted_at IS NULL LIMIT 1`,[company.id,number]);
+        if(existing.rows[0]){
+          await client.query(`UPDATE driver SET first_name=$2,last_name=$3,full_name=trim($2||' '||$3),driver_code=coalesce(nullif($4,''),driver_code),customer_number=$5,customer_name=$6,active=$7,total_mobility_checked_at=now(),total_mobility_raw=$8,updated_at=now() WHERE id=$1`,[existing.rows[0].id,firstName,lastName,String(remote.driverCode??''),connection?.customer_number??'',company.code,active,remote.raw??{}]);updated++;
+        }else{
+          await client.query(`INSERT INTO driver(company_id,full_name,customer_number,customer_name,driver_number,first_name,last_name,driver_code,active,total_mobility_checked_at,total_mobility_raw) VALUES($1,trim($2||' '||$3),$4,$5,$6,$2,$3,$7,$8,now(),$9)`,[company.id,firstName,lastName,connection?.customer_number??'',company.code,number,String(remote.driverCode??number).padStart(4,'0'),active,remote.raw??{}]);created++;
+        }
+      }
+      await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'SYNC_TOTAL_DRIVERS','integration','TOTAL_MOBILITY_DRIVERS',$2)`,[actor.email,{company:company.code,received:drivers.length,created,updated}]);
+      return {received:drivers.length,created,updated,company:company.code};
     });
   }
   private normalizeCardNumber(value:string){return value.replace(/[^0-9]/g,'');}

@@ -13,7 +13,7 @@ import {
   type Page,
 } from 'playwright';
 import { TotalMobilityService } from './total-mobility.service';
-import type { RemoteCardStatus } from './total-mobility.service';
+import type { RemoteCardStatus, RemoteDriver } from './total-mobility.service';
 
 type Actor = { sub: string; email: string };
 type AgentState =
@@ -39,11 +39,13 @@ export class TotalLoginAgentService implements OnModuleDestroy {
   private page?: Page;
   private actor?: Actor;
   private refreshToken?: string;
+  private liveTimer?: NodeJS.Timeout;
   private statusValue: AgentStatus = this.status('IDLE', 'Agent Total prêt');
 
   constructor(private readonly total: TotalMobilityService) {}
 
   onModuleDestroy() {
+    if(this.liveTimer)clearInterval(this.liveTimer);
     void this.closeBrowser();
   }
 
@@ -219,15 +221,53 @@ export class TotalLoginAgentService implements OnModuleDestroy {
     );
     await this.total.reconnect(refreshToken, this.actor);
     const transactions = await this.total.syncNow(this.actor, '2026-08-01');
-    this.setStatus('EXTRACTING', 'Transactions actualisées. Ouverture de « Gérer les cartes »…');
+    this.setStatus('EXTRACTING', 'Transactions actualisées. Synchronisation des chauffeurs…');
+    const driverRows=await this.extractDrivers();
+    const drivers=await this.total.importDrivers(driverRows,this.actor);
+    this.setStatus('EXTRACTING', 'Chauffeurs actualisés. Ouverture de « Gérer les cartes »…');
     const cardRows = await this.extractCardStatuses();
     const cards = await this.total.importCardStatuses(cardRows, this.actor);
     this.statusValue = {
-      ...this.status('SUCCESS', 'Transactions et statuts des cartes Total actualisés'),
-      result: { ...transactions, cards },
+      ...this.status('SUCCESS', 'Transactions, chauffeurs et cartes Total actualisés'),
+      result: { ...transactions, drivers, cards },
     };
-    await this.closeBrowser();
+    this.scheduleLiveRefresh();
   }
+
+  private scheduleLiveRefresh(){
+    if(this.liveTimer)clearInterval(this.liveTimer);
+    const minutes=Math.max(1,Number(process.env.TOTAL_LIVE_SYNC_MINUTES??5));
+    this.liveTimer=setInterval(()=>void this.liveRefresh(),minutes*60_000);this.liveTimer.unref();
+  }
+  private async liveRefresh(){
+    if(!this.actor||!this.page||['STARTING','SIGNING_IN','CODE_REQUIRED','EXTRACTING'].includes(this.statusValue.state))return;
+    try{
+      this.setStatus('EXTRACTING','Actualisation temps réel Total : transactions, chauffeurs et cartes…');
+      const transactions=await this.total.syncNow(this.actor);
+      const drivers=await this.total.importDrivers(await this.extractDrivers(),this.actor);
+      const cards=await this.total.importCardStatuses(await this.extractCardStatuses(),this.actor);
+      this.statusValue={...this.status('SUCCESS','Données Total actualisées automatiquement'),result:{...transactions,drivers,cards,live:true}};
+    }catch(error){this.fail(error);}
+  }
+
+  private async extractDrivers():Promise<RemoteDriver[]>{
+    const page=this.page;if(!page)throw new Error('Le navigateur Total a été fermé avant l’extraction des chauffeurs');
+    const captured:unknown[]=[];
+    const listener=async(response:import('playwright').Response)=>{if(!/driver|chauffeur/i.test(response.url()))return;try{captured.push(await response.json());}catch{/* non JSON */}};
+    page.on('response',listener);
+    try{
+      await page.goto('https://customer.fleet.totalenergies.com/tn/drivers',{waitUntil:'domcontentloaded',timeout:60_000});
+      await page.waitForTimeout(4_000);
+      const jsonDrivers=this.driversFromUnknown(captured);if(jsonDrivers.length)return this.uniqueDrivers(jsonDrivers);
+      const rows=await page.locator('table tbody tr').evaluateAll(elements=>elements.map(row=>Array.from(row.querySelectorAll('td')).map(cell=>(cell.textContent??'').trim())));
+      return this.uniqueDrivers(rows.map(cells=>({driverNumber:cells[0]??'',firstName:cells[1]??'',lastName:cells[2]??'',raw:{cells}})).filter(row=>/\d+/.test(row.driverNumber)&&Boolean(row.firstName||row.lastName)));
+    }finally{page.off('response',listener);}
+  }
+
+  private driversFromUnknown(input:unknown):RemoteDriver[]{
+    const result:RemoteDriver[]=[];const visit=(value:unknown)=>{if(Array.isArray(value)){value.forEach(visit);return;}if(!value||typeof value!=='object')return;const row=value as Record<string,unknown>;const read=(pattern:RegExp)=>Object.entries(row).find(([key])=>pattern.test(key))?.[1];const number=read(/driver.*(number|no)|numero.*chauffeur|chauffeur.*numero/i);const first=read(/first.*name|prenom/i);const last=read(/last.*name|nom(?!.*client)/i);if((typeof number==='string'||typeof number==='number')&&(first||last))result.push({driverNumber:String(number),firstName:String(first??''),lastName:String(last??''),driverCode:String(read(/driver.*code|code.*chauffeur/i)??''),status:String(read(/status|statut|state/i)??''),raw:row});Object.values(row).forEach(visit);};visit(input);return result;
+  }
+  private uniqueDrivers(rows:RemoteDriver[]){const seen=new Set<string>();return rows.filter(row=>{const key=row.driverNumber.replace(/\D/g,'');if(!key||seen.has(key))return false;seen.add(key);row.driverNumber=key.padStart(4,'0');return true;});}
 
   private async extractCardStatuses(): Promise<RemoteCardStatus[]> {
     const page=this.page;
@@ -239,13 +279,7 @@ export class TotalLoginAgentService implements OnModuleDestroy {
     };
     page.on('response',listener);
     try{
-      const manage=await this.findVisible(page,[
-        'a:has-text("Gérer les cartes")','button:has-text("Gérer les cartes")',
-        'a:has-text("Manage cards")','button:has-text("Manage cards")',
-        '[href*="card" i]'
-      ],15_000);
-      if(!manage)throw new Error('Le menu « Gérer les cartes » est introuvable sur Total Mobility');
-      await manage.click();
+      await page.goto('https://customer.fleet.totalenergies.com/tn/cards/manage-card',{waitUntil:'domcontentloaded',timeout:60_000});
       await page.waitForTimeout(4_000);
       const fromJson=this.cardsFromUnknown(captured);
       if(fromJson.length)return this.uniqueCards(fromJson);

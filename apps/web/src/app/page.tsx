@@ -2421,17 +2421,30 @@ function DirectionReports({
   const [company, setCompany] = useState("Toutes"),
     [beneficiary, setBeneficiary] = useState("Tous"),
     [department, setDepartment] = useState("Tous"),
-    [cardStatus, setCardStatus] = useState("Tous");
+    [cardStatus, setCardStatus] = useState("Tous"),
+    [responsible, setResponsible] = useState("Tous"),
+    [vehicle, setVehicle] = useState("Tous"),
+    [product, setProduct] = useState("Tous"),
+    [station, setStation] = useState("Toutes"),
+    [period, setPeriod] = useState("CURRENT_MONTH");
   const filteredCards = cards.filter(
     (c) =>
       (company === "Toutes" || c.company_code === company) &&
       (beneficiary === "Tous" || c.beneficiary === beneficiary) &&
       (department === "Tous" || (c.department??"Non renseigné") === department) &&
+      (responsible === "Tous" || (c.responsible_name??"Non affecté") === responsible) &&
+      (vehicle === "Tous" || (c.registration??"Sans véhicule") === vehicle) &&
       (cardStatus === "Tous" || c.status === cardStatus),
   );
-  const filteredTx = transactions.filter((t) =>
-    filteredCards.some((c) => c.masked_card_number === String(t.carte)),
-  );
+  const periodStart=(()=>{const now=new Date();if(period==="ALL")return null;if(period==="LAST_90_DAYS")return new Date(now.getFullYear(),now.getMonth(),now.getDate()-89);if(period==="LAST_12_MONTHS")return new Date(now.getFullYear(),now.getMonth()-11,1);return new Date(now.getFullYear(),now.getMonth(),1)})();
+  const filteredTx = transactions.filter((t) => {
+    const day=transactionDay(t.date), txDate=day?new Date(`${day}T12:00:00`):null;
+    return filteredCards.some((c) => c.masked_card_number === String(t.carte)) &&
+      (product==="Tous"||String(t.produit)===product) &&
+      (station==="Toutes"||String(t.station)===station) &&
+      (vehicle==="Tous"||String(t.vehicule)===vehicle) &&
+      (!periodStart||(txDate!==null&&txDate>=periodStart));
+  });
   const liters = (rows: Row[]) =>
     rows.reduce((n, r) => n + parseNumeric(r.litres), 0);
   const active = filteredCards.filter((c) => c.status === "ACTIVE").length,
@@ -2472,7 +2485,11 @@ function DirectionReports({
   const topCards=[...filteredCards].filter(card=>card.status==="ACTIVE").sort((a,b)=>cardUsage(b)-cardUsage(a)).slice(0,10);
   const departments=[...new Set(cards.map(card=>card.department??"Non renseigné"))].sort();
   const statusOptions=[...new Set(cards.map(card=>card.status))];
-  const activeFilters = Number(company !== "Toutes") + Number(beneficiary !== "Tous")+Number(department!=="Tous")+Number(cardStatus!=="Tous");
+  const responsibles=[...new Set(cards.map(card=>card.responsible_name??"Non affecté"))].sort();
+  const vehicleOptions=[...new Set([...cards.map(card=>card.registration??"Sans véhicule"),...transactions.map(row=>String(row.vehicule??"—"))])].filter(value=>value!=="—").sort();
+  const products=[...new Set(transactions.map(row=>String(row.produit??"—")))].filter(value=>value!=="—").sort();
+  const stations=[...new Set(transactions.map(row=>String(row.station??"—")))].filter(value=>value!=="—").sort();
+  const activeFilters = Number(company !== "Toutes") + Number(beneficiary !== "Tous")+Number(department!=="Tous")+Number(cardStatus!=="Tous")+Number(responsible!=="Tous")+Number(vehicle!=="Tous")+Number(product!=="Tous")+Number(station!=="Toutes")+Number(period!=="CURRENT_MONTH");
   const monthAmount=filteredTx.reduce((sum,row)=>sum+parseNumeric(row.montant),0);
   const monthLiters=filteredTx.reduce((sum,row)=>sum+parseNumeric(row.litres),0);
   const vehicles=operationalData.vehicles??[];
@@ -2487,6 +2504,21 @@ function DirectionReports({
   const reviewedAnomalies=(operationalData.anomalies??[]).filter(row=>String(row.statut)==="À vérifier").length;
   const averageTransaction=filteredTx.length?monthAmount/filteredTx.length:0;
   const averageLiters=filteredTx.length?monthLiters/filteredTx.length:0;
+  const scopedMileage=(operationalData.mileage??[]).filter(row=>(vehicle==="Tous"||String(row.vehicule)===vehicle)&&(company==="Toutes"||String(row.societe)===company));
+  const totalDistance=scopedMileage.reduce((sum,row)=>sum+parseNumeric(row.distanceDetectee),0);
+  const mileageAnomalies=scopedMileage.filter(row=>String(row.anomalie)==="Oui").length;
+  const validatedMileage=scopedMileage.filter(row=>String(row.statut)==="VALIDEE_ZIN").length;
+  const mileageConsumption=scopedMileage.map(row=>parseNumeric(row.consommation100km)).filter(value=>value>0);
+  const averageConsumption100=mileageConsumption.length?mileageConsumption.reduce((sum,value)=>sum+value,0)/mileageConsumption.length:0;
+  const costPerKm=totalDistance>0?monthAmount/totalDistance:0;
+  const litersPer100=totalDistance>0?monthLiters/totalDistance*100:averageConsumption100;
+  const vehicleRegistrations=new Set((operationalData.vehicles??[]).filter(row=>(company==="Toutes"||String(row.societe)===company)&&(vehicle==="Tous"||String(row.immatriculation)===vehicle)).map(row=>String(row.immatriculation)));
+  const mileageVehicles=new Set(scopedMileage.map(row=>String(row.vehicule)));
+  const vehiclesWithoutMileage=[...vehicleRegistrations].filter(registration=>!mileageVehicles.has(registration));
+  const txByVehicle=Object.values(filteredTx.reduce<Record<string,{name:string;amount:number;liters:number;count:number}>>((acc,row)=>{const name=String(row.vehicule??"Non identifié");const item=acc[name]??{name,amount:0,liters:0,count:0};item.amount+=parseNumeric(row.montant);item.liters+=parseNumeric(row.litres);item.count++;acc[name]=item;return acc;},{})).sort((a,b)=>b.amount-a.amount);
+  const txByCompany=companies.map(code=>{const companyCards=cards.filter(card=>card.company_code===code);const numbers=new Set(companyCards.map(card=>card.masked_card_number));const rows=filteredTx.filter(row=>numbers.has(String(row.carte)));return {code,cards:companyCards.length,active:companyCards.filter(card=>card.status==="ACTIVE").length,transactions:rows.length,liters:liters(rows),amount:rows.reduce((sum,row)=>sum+parseNumeric(row.montant),0)};}).filter(row=>company==="Toutes"||row.code===company).sort((a,b)=>b.amount-a.amount);
+  const topFiveShare=monthAmount?100*txByVehicle.slice(0,5).reduce((sum,row)=>sum+row.amount,0)/monthAmount:0;
+  const pendingMileage=scopedMileage.filter(row=>String(row.statut)==="EN_ATTENTE_ZIN").length;
   return (
     <section className={styles.reportShell}>
       <div className={styles.reportTitle}>
@@ -2535,6 +2567,28 @@ function DirectionReports({
               <ReportKpi label="WORKFLOWS À TRAITER" value={pendingRequests+reviewedAnomalies} meta={`${pendingRequests} demandes · ${reviewedAnomalies} contrôles`} tone={pendingRequests+reviewedAnomalies?"warning":"good"}/>
             </div>
           </section>
+          <section className={styles.dgAnalysisSection}>
+            <div className={styles.flowKpiHeading}><div><small>PERFORMANCE DU PARC</small><h3>Kilométrage, rendement et maîtrise des coûts</h3></div><span>{scopedMileage.length} relevés analysés</span></div>
+            <div className={styles.dgAnalysisKpis}>
+              <ReportKpi label="DISTANCE CONTRÔLÉE" value={`${totalDistance.toLocaleString("fr-FR")} km`} meta={`${validatedMileage} relevés validés`} tone="volume"/>
+              <ReportKpi label="CONSOMMATION MOYENNE" value={litersPer100?`${litersPer100.toLocaleString("fr-FR",{maximumFractionDigits:2})} L/100 km`:"—"} meta="Selon relevés et transactions filtrés" tone={litersPer100>12?"warning":"good"}/>
+              <ReportKpi label="COÛT CARBURANT / KM" value={costPerKm?`${costPerKm.toLocaleString("fr-FR",{maximumFractionDigits:3})} TND/km`:"—"} meta="Montant Total / distance contrôlée" tone="money"/>
+              <ReportKpi label="QUALITÉ KILOMÉTRAGE" value={mileageAnomalies} meta={`${pendingMileage} en attente · ${vehiclesWithoutMileage.length} véhicules sans relevé`} tone={mileageAnomalies||vehiclesWithoutMileage.length?"danger":"good"}/>
+            </div>
+            <div className={styles.dgInsightGrid}>
+              <article><div className={styles.dgPanelHead}><div><small>CLASSEMENT VÉHICULES</small><h4>Coût et consommation par véhicule</h4></div><span>Top 10</span></div><div className={styles.dgVehicleTable}><div><b>Véhicule</b><b>Transactions</b><b>Litres</b><b>Montant</b></div>{txByVehicle.slice(0,10).map(row=><div key={row.name}><strong>{row.name}</strong><span>{row.count}</span><span>{row.liters.toLocaleString("fr-FR",{maximumFractionDigits:2})} L</span><span>{row.amount.toLocaleString("fr-FR",{maximumFractionDigits:3})} DT</span></div>)}{!txByVehicle.length&&<p className={styles.inlineEmpty}>Aucune transaction véhicule dans le périmètre.</p>}</div></article>
+              <article className={styles.dgDecisionPanel}><div className={styles.dgPanelHead}><div><small>LECTURE DIRECTION</small><h4>Points de décision prioritaires</h4></div></div>
+                <div className={overLimit.length?styles.decisionDanger:styles.decisionGood}><b>{overLimit.length} carte(s) au plafond</b><span>{overLimit.length?"Bloquer, alimenter ou récupérer après contrôle.":"Aucun dépassement de plafond détecté."}</span></div>
+                <div className={mileageAnomalies||vehiclesWithoutMileage.length?styles.decisionWarning:styles.decisionGood}><b>{mileageAnomalies} anomalie(s) kilométrique(s)</b><span>{vehiclesWithoutMileage.length} véhicule(s) sans relevé dans le périmètre.</span></div>
+                <div className={billingMismatches?styles.decisionDanger:styles.decisionGood}><b>{billingMismatches} écart(s) de facturation</b><span>Exposition financière : {billingExposure.toLocaleString("fr-FR",{maximumFractionDigits:3})} TND.</span></div>
+                <div className={topFiveShare>70?styles.decisionWarning:styles.decisionGood}><b>Concentration Top 5 : {topFiveShare.toFixed(1)} %</b><span>Part des cinq véhicules les plus coûteux dans la dépense filtrée.</span></div>
+              </article>
+            </div>
+          </section>
+          <section className={styles.dgCompanySection}>
+            <div className={styles.flowKpiHeading}><div><small>CONSOLIDATION GROUPE</small><h3>Situation complète par société</h3></div><span>{txByCompany.length} société(s)</span></div>
+            <div className={styles.dgCompanyTable}><div><b>Société</b><b>Cartes</b><b>Actives</b><b>Transactions</b><b>Volume</b><b>Dépense</b><b>Part groupe</b></div>{txByCompany.map(row=><div key={row.code}><strong>{row.code}</strong><span>{row.cards}</span><span>{row.active}</span><span>{row.transactions}</span><span>{row.liters.toLocaleString("fr-FR",{maximumFractionDigits:2})} L</span><span>{row.amount.toLocaleString("fr-FR",{maximumFractionDigits:3})} DT</span><span>{monthAmount?`${(100*row.amount/monthAmount).toFixed(1)} %`:"0 %"}</span></div>)}</div>
+          </section>
           <section className={styles.dgControlGrid}>
             <article><h3>Utilisation par carte</h3><div className={styles.dgCardTable}>
               <div className={styles.dgCardTableHead}><span>Carte / bénéficiaire</span><span>Consommé</span><span>Plafond</span><span>Utilisation</span><span>Solde</span></div>
@@ -2549,6 +2603,10 @@ function DirectionReports({
         </div>
         <aside className={styles.reportFilters}>
           <div className={styles.filterHeading}><span>⌁</span><div><h3>Filtres d’analyse</h3><small>{activeFilters ? `${activeFilters} filtre(s) actif(s)` : "Périmètre global"}</small></div></div>
+          <label>
+            Période
+            <select value={period} onChange={event=>setPeriod(event.target.value)}><option value="CURRENT_MONTH">Mois en cours</option><option value="LAST_90_DAYS">90 derniers jours</option><option value="LAST_12_MONTHS">12 derniers mois</option><option value="ALL">Toutes les données</option></select>
+          </label>
           <label>
             Société
             <select
@@ -2580,6 +2638,22 @@ function DirectionReports({
             </select>
           </label>
           <label>
+            Responsable de carte
+            <select value={responsible} onChange={event=>setResponsible(event.target.value)}><option>Tous</option>{responsibles.map(value=><option key={value}>{value}</option>)}</select>
+          </label>
+          <label>
+            Véhicule
+            <select value={vehicle} onChange={event=>setVehicle(event.target.value)}><option>Tous</option>{vehicleOptions.map(value=><option key={value}>{value}</option>)}</select>
+          </label>
+          <label>
+            Produit
+            <select value={product} onChange={event=>setProduct(event.target.value)}><option>Tous</option>{products.map(value=><option key={value}>{value}</option>)}</select>
+          </label>
+          <label>
+            Station
+            <select value={station} onChange={event=>setStation(event.target.value)}><option>Toutes</option>{stations.map(value=><option key={value}>{value}</option>)}</select>
+          </label>
+          <label>
             Statut
             <select value={cardStatus} onChange={event=>setCardStatus(event.target.value)}>
               <option>Tous</option>{statusOptions.map(value=><option value={value} key={value}>{status(value)}</option>)}
@@ -2591,6 +2665,11 @@ function DirectionReports({
               setBeneficiary("Tous");
               setDepartment("Tous");
               setCardStatus("Tous");
+              setResponsible("Tous");
+              setVehicle("Tous");
+              setProduct("Tous");
+              setStation("Toutes");
+              setPeriod("CURRENT_MONTH");
             }}
           >
             Effacer les filtres

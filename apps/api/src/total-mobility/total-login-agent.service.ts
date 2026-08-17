@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   OnModuleDestroy,
+  OnModuleInit,
 } from '@nestjs/common';
 import {
   chromium as playwright,
@@ -13,6 +14,7 @@ import {
   type Page,
 } from 'playwright';
 import { TotalMobilityService } from './total-mobility.service';
+import { DatabaseService } from '../database/database.service';
 import type { RemoteCardStatus, RemoteDriver, RemoteVehicle } from './total-mobility.service';
 
 type Actor = { sub: string; email: string };
@@ -33,20 +35,55 @@ type AgentStatus = {
 };
 
 @Injectable()
-export class TotalLoginAgentService implements OnModuleDestroy {
+export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TotalLoginAgentService.name);
   private browser?: Browser;
   private page?: Page;
   private actor?: Actor;
   private refreshToken?: string;
   private liveTimer?: NodeJS.Timeout;
+  private watchdogTimer?: NodeJS.Timeout;
   private statusValue: AgentStatus = this.status('IDLE', 'Agent Total prêt');
 
-  constructor(private readonly total: TotalMobilityService) {}
+  constructor(
+    private readonly total: TotalMobilityService,
+    private readonly db: DatabaseService,
+  ) {}
+
+  onModuleInit() {
+    // Render redémarre régulièrement les services. L'agent doit reprendre seul
+    // au lieu d'attendre qu'un utilisateur clique à nouveau sur « Démarrer ».
+    const delay = Math.max(60, Number(process.env.TOTAL_AGENT_RESTART_SECONDS ?? 300));
+    setTimeout(() => void this.autoStart(), 5_000).unref();
+    this.watchdogTimer = setInterval(() => void this.autoStart(), delay * 1_000);
+    this.watchdogTimer.unref();
+  }
 
   onModuleDestroy() {
     if(this.liveTimer)clearInterval(this.liveTimer);
+    if(this.watchdogTimer)clearInterval(this.watchdogTimer);
     void this.closeBrowser();
+  }
+
+  private async autoStart() {
+    if (!['IDLE', 'FAILED'].includes(this.statusValue.state)) return;
+    if (!process.env.TOTAL_USERNAME?.trim() || !process.env.TOTAL_PASSWORD) return;
+    const [connection] = await this.db.query<{ enabled: boolean }>(
+      `SELECT enabled FROM total_mobility_connection WHERE enabled LIMIT 1`,
+    );
+    if (!connection) return;
+    const [user] = await this.db.query<{ id: string; email: string }>(
+      `SELECT id,email FROM app_user
+       WHERE active AND role IN ('SUPER_ADMIN','DIRECTION_GENERAL')
+       ORDER BY CASE role WHEN 'SUPER_ADMIN' THEN 0 ELSE 1 END, created_at LIMIT 1`,
+    );
+    if (!user) return;
+    try {
+      this.logger.log('Redémarrage automatique de l’agent Total Mobility');
+      this.start({ sub: user.id, email: user.email });
+    } catch (error) {
+      this.logger.warn(`Agent Total non redémarré : ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   getStatus() {

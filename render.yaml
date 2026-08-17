@@ -51,6 +51,10 @@ services:
         sync: false
       - key: TOTAL_PASSWORD
         sync: false
+      - key: TOTAL_LIVE_SYNC_MINUTES
+        value: 5
+      - key: TOTAL_AGENT_RESTART_SECONDS
+        value: 300
 
   - type: web
     name: delta-carburant-web

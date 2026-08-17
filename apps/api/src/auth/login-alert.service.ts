@@ -21,7 +21,13 @@ export class LoginAlertService {
       const role = event.role === 'DIRECTION_GENERAL' || event.role === 'SUPER_ADMIN'
         ? 'Direction générale / Administrateur'
         : event.role === 'ZIN_FINANCE' ? 'Zin Finance' : event.role === 'NAJIB_ASSIGNER' ? 'Najib' : event.role;
-      await this.mailing.send([this.recipient.toLowerCase()], `Connexion Delta Carburant — ${event.name}`, `<div style="font-family:Arial,sans-serif;max-width:620px;padding:28px;color:#173b2b"><h2>Nouvelle session ouverte</h2><p>Utilisateur : <b>${this.escape(event.name)}</b></p><p>Rôle : ${this.escape(role)}<br>Compte : ${this.escape(event.email)}<br>Date : ${event.occurredAt.toLocaleString('fr-TN',{timeZone:'Africa/Tunis'})}<br>Adresse IP : ${this.escape(event.ip)}</p></div>`);
+      try {
+        await this.mailing.send([this.recipient.toLowerCase()], `Connexion Delta Carburant — ${event.name}`, `<div style="font-family:Arial,sans-serif;max-width:620px;padding:28px;color:#173b2b"><h2>Nouvelle session ouverte</h2><p>Utilisateur : <b>${this.escape(event.name)}</b></p><p>Rôle : ${this.escape(role)}<br>Compte : ${this.escape(event.email)}<br>Date : ${event.occurredAt.toLocaleString('fr-TN',{timeZone:'Africa/Tunis'})}<br>Adresse IP : ${this.escape(event.ip)}</p></div>`);
+      } catch (error) {
+        // A notification failure must never prevent an authenticated user from
+        // opening a session. Keep the SMTP error visible in the API logs.
+        this.logger.error(`Alerte SMTP de connexion non envoyée : ${error instanceof Error ? error.message : 'erreur inconnue'}`);
+      }
       return;
     }
     const apiKey = process.env.RESEND_API_KEY?.trim();

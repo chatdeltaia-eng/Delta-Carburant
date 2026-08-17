@@ -74,6 +74,16 @@ export type RemoteDriver = {
   status?: string;
   raw?: Record<string, unknown>;
 };
+export type RemoteVehicle = {
+  registration: string;
+  mileage?: number;
+  status?: string;
+  brand?: string;
+  model?: string;
+  driverNumber?: string;
+  driverName?: string;
+  raw?: Record<string, unknown>;
+};
 
 @Injectable()
 export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
@@ -201,6 +211,50 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       }
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'SYNC_TOTAL_DRIVERS','integration','TOTAL_MOBILITY_DRIVERS',$2)`,[actor.email,{company:company.code,received:drivers.length,created,updated}]);
       return {received:drivers.length,created,updated,company:company.code};
+    });
+  }
+  async importVehicles(vehicles: RemoteVehicle[], actor: Actor) {
+    if (!vehicles.length) throw new BadRequestException('Aucun véhicule trouvé dans Total Mobility');
+    const [connection]=await this.db.query<{customer_number:string}>(`SELECT customer_number FROM total_mobility_connection WHERE enabled LIMIT 1`);
+    const [company]=await this.db.query<{id:string;code:string}>(`SELECT c.id,c.code FROM company c WHERE EXISTS(SELECT 1 FROM driver d WHERE d.company_id=c.id AND regexp_replace(coalesce(d.customer_number,''),'[^0-9]','','g')=regexp_replace($1,'[^0-9]','','g')) ORDER BY c.created_at LIMIT 1`,[connection?.customer_number??'']);
+    if(!company)throw new BadRequestException(`Aucune société ne correspond au client Total ${connection?.customer_number??'inconnu'}`);
+    return this.db.transaction(async client=>{
+      let created=0,updated=0,mileageReadings=0,ignoredMileage=0;
+      for(const remote of vehicles){
+        const registration=String(remote.registration??'').trim().toUpperCase();
+        const normalized=registration.replace(/[^A-Z0-9]/g,'');
+        if(!normalized)continue;
+        const active=!/oppos|bloqu|inactif|inactive|suspend|sorti/i.test(String(remote.status??''));
+        const driverNumber=String(remote.driverNumber??'').replace(/\D/g,'').padStart(4,'0');
+        const driver=driverNumber?await client.query(`SELECT id,full_name FROM driver WHERE company_id=$1 AND driver_number=$2 AND deleted_at IS NULL LIMIT 1`,[company.id,driverNumber]):{rows:[]};
+        const existing=await client.query(`SELECT id,total_mobility_mileage FROM vehicle WHERE company_id=$1 AND registration_normalized=$2 AND deleted_at IS NULL LIMIT 1`,[company.id,normalized]);
+        let vehicleId:string;
+        if(existing.rows[0]){
+          vehicleId=existing.rows[0].id;
+          await client.query(`UPDATE vehicle SET brand=coalesce(nullif($2,''),brand),model=coalesce(nullif($3,''),model),active=$4,
+            driver_id=coalesce($5,driver_id),driver_name=coalesce(nullif($6,''),driver_name),total_mobility_status=$7,
+            total_mobility_mileage=CASE WHEN $8::numeric IS NULL THEN total_mobility_mileage ELSE greatest(coalesce(total_mobility_mileage,0),$8) END,
+            total_mobility_checked_at=now(),total_mobility_raw=$9,updated_at=now() WHERE id=$1`,
+            [vehicleId,remote.brand??'',remote.model??'',active,driver.rows[0]?.id??null,remote.driverName??driver.rows[0]?.full_name??'',remote.status??null,remote.mileage??null,remote.raw??{}]);updated++;
+        }else{
+          const inserted=await client.query(`INSERT INTO vehicle(company_id,registration_normalized,registration_display,brand,model,active,driver_id,driver_name,
+            total_mobility_status,total_mobility_mileage,total_mobility_checked_at,total_mobility_raw)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),$11) RETURNING id`,
+            [company.id,normalized,registration,remote.brand??null,remote.model??null,active,driver.rows[0]?.id??null,remote.driverName??driver.rows[0]?.full_name??null,remote.status??null,remote.mileage??null,remote.raw??{}]);
+          vehicleId=inserted.rows[0].id;created++;
+        }
+        const mileage=Number(remote.mileage);
+        if(Number.isFinite(mileage)&&mileage>0){
+          const latest=await client.query(`SELECT mileage::float FROM mileage_reading WHERE vehicle_id=$1 AND status='VALIDATED' ORDER BY reading_date DESC LIMIT 1`,[vehicleId]);
+          if(!latest.rows[0]||mileage>=Number(latest.rows[0].mileage)){
+            const inserted=await client.query(`INSERT INTO mileage_reading(vehicle_id,mileage,status,source,created_by,validated_by,validated_at)
+              VALUES($1,$2,'VALIDATED','TOTAL_MOBILITY',$3,$3,now()) ON CONFLICT DO NOTHING RETURNING id`,[vehicleId,mileage,actor.sub]);
+            mileageReadings+=inserted.rowCount??0;
+          }else ignoredMileage++;
+        }
+      }
+      await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'SYNC_TOTAL_VEHICLES','integration','TOTAL_MOBILITY_VEHICLES',$2)`,[actor.email,{company:company.code,received:vehicles.length,created,updated,mileageReadings,ignoredMileage}]);
+      return {received:vehicles.length,created,updated,mileageReadings,ignoredMileage,company:company.code};
     });
   }
   private normalizeCardNumber(value:string){return value.replace(/[^0-9]/g,'');}

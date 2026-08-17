@@ -11,7 +11,9 @@ export class VehiclesService {
     coalesce(rb.display_name,v.driver_name) AS driver,v.notes,c.code AS company,
     fc.id AS "cardId",fc.masked_card_number AS "cardNumber",fc.status AS "cardStatus",fc.holder_name AS "cardHolder",
     CASE WHEN fc.status='SAFE' THEN 'IN_SAFE' ELSE 'DISTRIBUTED' END AS custody,
-    coalesce((SELECT max(mr.mileage) FROM mileage_reading mr WHERE mr.vehicle_id=v.id AND mr.status IN ('PENDING','VALIDATED')),0)::float AS "lastMileage",
+    coalesce((SELECT max(mr.mileage) FROM mileage_reading mr WHERE mr.vehicle_id=v.id AND mr.status IN ('PENDING','VALIDATED')),v.total_mobility_mileage,0)::float AS "lastMileage",
+    v.total_mobility_mileage::float AS "totalMobilityMileage",v.total_mobility_status AS "totalMobilityStatus",
+    v.total_mobility_checked_at AS "totalMobilityCheckedAt",
     v.updated_at AS "updatedAt" FROM vehicle v JOIN company c ON c.id=v.company_id
     LEFT JOIN beneficiary rb ON rb.id=v.reference_beneficiary_id
     LEFT JOIN fuel_card fc ON fc.reference_vehicle_id=v.id AND fc.deleted_at IS NULL

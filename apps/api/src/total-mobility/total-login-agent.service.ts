@@ -13,7 +13,7 @@ import {
   type Page,
 } from 'playwright';
 import { TotalMobilityService } from './total-mobility.service';
-import type { RemoteCardStatus, RemoteDriver } from './total-mobility.service';
+import type { RemoteCardStatus, RemoteDriver, RemoteVehicle } from './total-mobility.service';
 
 type Actor = { sub: string; email: string };
 type AgentState =
@@ -224,12 +224,14 @@ export class TotalLoginAgentService implements OnModuleDestroy {
     this.setStatus('EXTRACTING', 'Transactions actualisées. Synchronisation des chauffeurs…');
     const driverRows=await this.extractDrivers();
     const drivers=await this.total.importDrivers(driverRows,this.actor);
-    this.setStatus('EXTRACTING', 'Chauffeurs actualisés. Ouverture de « Gérer les cartes »…');
+    this.setStatus('EXTRACTING', 'Chauffeurs actualisés. Synchronisation des véhicules et kilométrages…');
+    const vehicles=await this.total.importVehicles(await this.extractVehicles(),this.actor);
+    this.setStatus('EXTRACTING', 'Véhicules et kilométrages actualisés. Ouverture de « Gérer les cartes »…');
     const cardRows = await this.extractCardStatuses();
     const cards = await this.total.importCardStatuses(cardRows, this.actor);
     this.statusValue = {
-      ...this.status('SUCCESS', 'Transactions, chauffeurs et cartes Total actualisés'),
-      result: { ...transactions, drivers, cards },
+      ...this.status('SUCCESS', 'Transactions, chauffeurs, véhicules, kilométrages et cartes Total actualisés'),
+      result: { ...transactions, drivers, vehicles, cards },
     };
     this.scheduleLiveRefresh();
   }
@@ -242,11 +244,12 @@ export class TotalLoginAgentService implements OnModuleDestroy {
   private async liveRefresh(){
     if(!this.actor||!this.page||['STARTING','SIGNING_IN','CODE_REQUIRED','EXTRACTING'].includes(this.statusValue.state))return;
     try{
-      this.setStatus('EXTRACTING','Actualisation temps réel Total : transactions, chauffeurs et cartes…');
+      this.setStatus('EXTRACTING','Actualisation Total : transactions, chauffeurs, véhicules, kilomètres et cartes…');
       const transactions=await this.total.syncNow(this.actor);
       const drivers=await this.total.importDrivers(await this.extractDrivers(),this.actor);
+      const vehicles=await this.total.importVehicles(await this.extractVehicles(),this.actor);
       const cards=await this.total.importCardStatuses(await this.extractCardStatuses(),this.actor);
-      this.statusValue={...this.status('SUCCESS','Données Total actualisées automatiquement'),result:{...transactions,drivers,cards,live:true}};
+      this.statusValue={...this.status('SUCCESS','Données Total actualisées automatiquement'),result:{...transactions,drivers,vehicles,cards,live:true}};
     }catch(error){this.fail(error);}
   }
 
@@ -268,6 +271,27 @@ export class TotalLoginAgentService implements OnModuleDestroy {
     const result:RemoteDriver[]=[];const visit=(value:unknown)=>{if(Array.isArray(value)){value.forEach(visit);return;}if(!value||typeof value!=='object')return;const row=value as Record<string,unknown>;const read=(pattern:RegExp)=>Object.entries(row).find(([key])=>pattern.test(key))?.[1];const number=read(/driver.*(number|no)|numero.*chauffeur|chauffeur.*numero/i);const first=read(/first.*name|prenom/i);const last=read(/last.*name|nom(?!.*client)/i);if((typeof number==='string'||typeof number==='number')&&(first||last))result.push({driverNumber:String(number),firstName:String(first??''),lastName:String(last??''),driverCode:String(read(/driver.*code|code.*chauffeur/i)??''),status:String(read(/status|statut|state/i)??''),raw:row});Object.values(row).forEach(visit);};visit(input);return result;
   }
   private uniqueDrivers(rows:RemoteDriver[]){const seen=new Set<string>();return rows.filter(row=>{const key=row.driverNumber.replace(/\D/g,'');if(!key||seen.has(key))return false;seen.add(key);row.driverNumber=key.padStart(4,'0');return true;});}
+
+  private async extractVehicles():Promise<RemoteVehicle[]>{
+    const page=this.page;if(!page)throw new Error('Le navigateur Total a été fermé avant l’extraction des véhicules');
+    const captured:unknown[]=[];
+    const listener=async(response:import('playwright').Response)=>{if(!/vehicle|vehicule|véhicule|fleet|parc/i.test(response.url()))return;try{captured.push(await response.json());}catch{/* non JSON */}};
+    page.on('response',listener);
+    try{
+      const routes=['https://customer.fleet.totalenergies.com/tn/vehicles','https://customer.fleet.totalenergies.com/tn/fleet/vehicles'];
+      for(const route of routes){
+        await page.goto(route,{waitUntil:'domcontentloaded',timeout:60_000});await page.waitForTimeout(3_000);
+        const fromJson=this.vehiclesFromUnknown(captured);if(fromJson.length)return this.uniqueVehicles(fromJson);
+      }
+      const rows=await page.locator('table tbody tr').evaluateAll(elements=>elements.map(row=>Array.from(row.querySelectorAll('td')).map(cell=>(cell.textContent??'').trim())));
+      return this.uniqueVehicles(rows.map(cells=>({registration:cells.find(value=>/\d{1,4}\s*(?:TU|TN)\s*\d{1,4}/i.test(value))??'',mileage:Number((cells.find(value=>/\d[\d\s.,]*\s*km/i.test(value))??'').replace(/[^\d.,]/g,'').replace(',','.'))||undefined,status:cells.find(value=>/actif|active|inactif|inactive|bloqu|suspend/i.test(value)),raw:{cells}})).filter(row=>Boolean(row.registration)));
+    }finally{page.off('response',listener);}
+  }
+
+  private vehiclesFromUnknown(input:unknown):RemoteVehicle[]{
+    const result:RemoteVehicle[]=[];const visit=(value:unknown)=>{if(Array.isArray(value)){value.forEach(visit);return;}if(!value||typeof value!=='object')return;const row=value as Record<string,unknown>;const read=(pattern:RegExp)=>Object.entries(row).find(([key])=>pattern.test(key))?.[1];const registration=read(/registration|immatriculation|license.*plate|vehicle.*plate|matricule/i);if(typeof registration==='string'&&registration.trim()){const mileageRaw=read(/current.*mileage|mileage|odometer|kilometr/i);const mileage=Number(String(mileageRaw??'').replace(/\s/g,'').replace(',','.'));result.push({registration:String(registration),mileage:Number.isFinite(mileage)&&mileage>0?mileage:undefined,status:String(read(/status|statut|state/i)??''),brand:String(read(/brand|marque/i)??''),model:String(read(/model|modele|modèle/i)??''),driverNumber:String(read(/driver.*(number|no)|numero.*chauffeur/i)??''),driverName:String(read(/driver.*name|chauffeur|conducteur/i)??''),raw:row});}Object.values(row).forEach(visit);};visit(input);return result;
+  }
+  private uniqueVehicles(rows:RemoteVehicle[]){const seen=new Set<string>();return rows.filter(row=>{const key=row.registration.toUpperCase().replace(/[^A-Z0-9]/g,'');if(!key||seen.has(key))return false;seen.add(key);return true;});}
 
   private async extractCardStatuses(): Promise<RemoteCardStatus[]> {
     const page=this.page;

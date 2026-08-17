@@ -7,9 +7,16 @@ type Actor = { sub: string; email: string; role: string };
 @Injectable()
 export class CardsService {
   constructor(private readonly db: DatabaseService) {}
-  responsibles(companyId=''){return this.db.query(`SELECT u.id,u.display_name AS name,u.email,u.company_id AS "companyId",c.code AS company
+  responsibles(companyId=''){return this.db.query(`SELECT u.id,
+      CASE WHEN u.role='ZIN_FINANCE' THEN 'Zin Finance'
+           WHEN u.role='SUPER_ADMIN' AND lower(u.display_name) IN ('mahdi','mahdi bi','super admin','superadmin') THEN 'Mahdi BI'
+           ELSE u.display_name END AS name,
+      u.email,u.company_id AS "companyId",c.code AS company
     FROM app_user u LEFT JOIN company c ON c.id=u.company_id WHERE u.active
-    AND ($1='' OR u.company_id=$1::uuid) ORDER BY c.code,u.display_name`,[companyId]);}
+    AND ($1='' OR u.company_id=$1::uuid OR u.role IN ('ZIN_FINANCE','SUPER_ADMIN','DIRECTION_GENERAL'))
+    ORDER BY CASE WHEN u.role='SUPER_ADMIN' AND lower(u.display_name) IN ('mahdi','mahdi bi','super admin','superadmin') THEN 0
+                  WHEN u.role='ZIN_FINANCE' THEN 1 ELSE 2 END,
+             c.code,u.display_name`,[companyId]);}
   async recordActionResponsibility(id:string,dto:{actionType:string;responsibleUserId:string;observation?:string},actor:Actor){
     const actionType=dto.actionType.trim();if(!actionType)throw new BadRequestException('Le type d’action est obligatoire');
     const rows=await this.db.query(`INSERT INTO card_action_responsibility(fuel_card_id,action_type,responsible_user_id,performed_by,observation)

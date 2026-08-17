@@ -339,20 +339,43 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     if(/\/tn\/drivers(?:[/?#]|$)/i.test(page.url()))return;
     // Total conserve le client sélectionné dans l'état de sa SPA. Un goto()
     // complet vers /drivers détruit cet état et renvoie à customer-selection.
+    await page.waitForTimeout(2_500);
+    // Sur le tableau de bord, le tiroir est souvent réduit aux seules icônes.
+    // Ouvrir le hamburger avant de chercher le libellé du menu.
+    for(const frame of page.frames()){
+      const toggles=[
+        frame.locator('button[aria-label*="menu" i], button[title*="menu" i]').first(),
+        frame.locator('button:has(.q-icon)').filter({hasText:/^\s*menu\s*$/i}).first(),
+        frame.locator('.q-icon').filter({hasText:/^\s*menu\s*$/i}).first(),
+      ];
+      for(const toggle of toggles){
+        if(await toggle.isVisible({timeout:400}).catch(()=>false)){
+          await toggle.click();await frame.waitForTimeout(900);break;
+        }
+      }
+    }
     for(const frame of page.frames()){
       const link=frame.locator('a[href*="/tn/drivers"], [routerlink*="drivers" i]').first();
-      if(await link.isVisible({timeout:800}).catch(()=>false)){
+      if(await link.isVisible({timeout:2_000}).catch(()=>false)){
         await link.click();
         await page.waitForURL(/\/tn\/drivers(?:[/?#]|$)/i,{timeout:15_000});
         return;
       }
       const menu=frame.getByText(/^\s*Gestion des chauffeurs\s*$/i).first();
-      if(await menu.isVisible({timeout:800}).catch(()=>false)){
+      if(await menu.isVisible({timeout:2_000}).catch(()=>false)){
         await menu.click();
         await page.waitForURL(/\/tn\/drivers(?:[/?#]|$)/i,{timeout:15_000});
         return;
       }
     }
+    // Repli SPA sans rechargement HTTP : conserve le client dans la mémoire
+    // du portail tout en demandant au routeur d'afficher les chauffeurs.
+    await page.evaluate(()=>{
+      history.pushState({},'', '/tn/drivers');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    await page.waitForTimeout(2_000);
+    if(/\/tn\/drivers(?:[/?#]|$)/i.test(page.url()))return;
     throw new Error(`Le menu « Gestion des chauffeurs » est introuvable après la sélection du client (${page.url()})`);
   }
 

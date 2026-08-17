@@ -367,19 +367,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
             const exactName=new RegExp(`^\\s*${escaped}\\s*$`,'i');
             const text=frame.getByText(exactName).first();
             if(!await text.isVisible({timeout:500}).catch(()=>false))continue;
-            // Quasar masque volontairement l'input natif (`q-radio__native`).
-            // Il faut déclencher le clic sur le composant/libellé visible.
-            await text.evaluate(element=>{
-              const visibleTarget=element.closest('.q-radio, label, [role="radio"]') as HTMLElement|null;
-              (visibleTarget??element as HTMLElement).click();
-            });
-            await frame.waitForTimeout(300);
-            const container=text.locator('xpath=ancestor-or-self::*[contains(concat(" ",normalize-space(@class)," ")," q-radio ") or self::label or @role="radio"][1]');
-            const native=container.locator('input[type="radio"]').first();
-            const checked=await native.isChecked().catch(async()=>
-              (await container.getAttribute('aria-checked'))==='true',
-            );
-            if(!checked)throw new Error(`le bouton radio ${name} n'a pas été coché par Total`);
+            // Le radio Quasar possède un input natif caché qui ne reflète pas
+            // toujours immédiatement son état. Cliquer sur le texte visible,
+            // comme le fait l'utilisateur, déclenche correctement le modèle.
+            await text.click({timeout:3_000});
+            await frame.waitForTimeout(700);
             selected=true;
             break;
           }

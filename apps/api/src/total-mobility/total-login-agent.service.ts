@@ -305,22 +305,32 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       await page.goto('https://customer.fleet.totalenergies.com/tn/drivers',{waitUntil:'domcontentloaded',timeout:60_000});
       await page.waitForTimeout(4_000);
       const jsonDrivers=this.driversFromUnknown(captured);
-      // Force le rendu des dernières lignes d'une grille virtualisée.
-      await page.evaluate(async()=>{
-        const candidates=[document.scrollingElement,...Array.from(document.querySelectorAll<HTMLElement>('[role="grid"], .table-container, .mat-table, main'))].filter(Boolean) as HTMLElement[];
+      // Force le rendu des dernières lignes, y compris lorsque Total charge le
+      // module dans une iframe.
+      for(const frame of page.frames())await frame.evaluate(async()=>{
+        const candidates=[document.scrollingElement,...Array.from(document.querySelectorAll<HTMLElement>('[role="grid"], [role="table"], .table-container, .mat-table, main'))].filter(Boolean) as HTMLElement[];
         for(const element of candidates){element.scrollTop=element.scrollHeight;}
         await new Promise(resolve=>setTimeout(resolve,700));
-      });
+      }).catch(()=>undefined);
       // Le portail Total utilise selon sa version un tableau HTML, Angular
       // Material ou une grille ARIA. Il ne faut donc pas dépendre uniquement
       // de `table tbody tr`.
-      const rowTexts=await page.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row')
-        .evaluateAll(elements=>elements.map(row=>(row.textContent??'').replace(/\s+/g,' ').trim()).filter(Boolean));
+      const rowTexts:string[]=[];const bodyTexts:string[]=[];
+      for(const frame of page.frames()){
+        rowTexts.push(...await frame.locator('table tr, mat-row, [role="row"], .mat-mdc-row, .mat-row, [class*="row" i]')
+          .evaluateAll(elements=>elements.map(row=>(row.textContent??'').replace(/\s+/g,' ').trim()).filter(Boolean)).catch(()=>[]));
+        const text=await frame.locator('body').innerText().catch(()=>'');if(text)bodyTexts.push(text);
+      }
       const fromRows=this.driversFromVisibleRows(rowTexts);
       // Dernier recours robuste pour la grille virtuelle actuelle de Mobility
       // Business : lecture du texte visible (0001, prénom, nom, etc.).
-      const bodyText=await page.locator('body').innerText();
-      return this.uniqueDrivers([...jsonDrivers,...fromRows,...this.driversFromVisibleText(bodyText)]);
+      const visibleDrivers=bodyTexts.flatMap(text=>this.driversFromVisibleText(text));
+      const result=this.uniqueDrivers([...jsonDrivers,...fromRows,...visibleDrivers]);
+      if(!result.length){
+        const diagnostic=bodyTexts.join(' ').replace(/\s+/g,' ').slice(0,240);
+        throw new Error(`Total n'a renvoyé aucune ligne chauffeur sur ${page.url()}. Contenu visible : ${diagnostic||'vide'}`);
+      }
+      return result;
     }finally{page.off('response',listener);}
   }
 

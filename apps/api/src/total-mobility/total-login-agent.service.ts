@@ -346,21 +346,19 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     try{
       const chooser=page.getByText(/choisir un client/i).first();
       if(await chooser.isVisible({timeout:1_500}).catch(()=>false)){
-        await chooser.click();await page.waitForTimeout(1_000);
+        await chooser.click();await page.waitForTimeout(2_500);
       }
       const search=page.locator('input[type="search"], input[placeholder*="recherche" i], input[placeholder*="client" i]').filter({visible:true}).first();
+      const names=[connection.customer_name,connection.company_code]
+        .map(value=>value?.trim()).filter((value):value is string=>Boolean(value));
+      // Sur cette version du portail, la recherche accepte le nom commercial
+      // (« DELTA CUISINE »), pas le numéro client 10391.
       if(await search.isVisible({timeout:1_000}).catch(()=>false)){
-        await search.fill(customer);await page.waitForTimeout(700);
-      }
-      const customerChoice=page.getByText(new RegExp(customer.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),{exact:false}).last();
-      if(await customerChoice.isVisible({timeout:2_000}).catch(()=>false)){
-        await customerChoice.click();await page.waitForTimeout(1_500);
+        await search.fill(names[0]??'');await page.waitForTimeout(1_200);
       }
       // La page /customer-selection affiche généralement le nom du client et
       // non son numéro. Cliquer la carte complète afin de déclencher le choix.
       if(/customer-selection/i.test(page.url())){
-        const names=[connection.customer_name,connection.company_code]
-          .map(value=>value?.trim()).filter((value):value is string=>Boolean(value));
         for(const name of names){
           const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
           const card=page.locator('button, a, [role="button"], [class*="card" i], [class*="client" i]')
@@ -370,7 +368,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           }
           const label=page.getByText(new RegExp(`^\\s*${escaped}\\s*$`,'i')).first();
           if(await label.isVisible({timeout:800}).catch(()=>false)){
-            await label.click();await page.waitForTimeout(1_800);break;
+            await label.evaluate(element=>{
+              const target=element.closest('button, a, [role="button"], [class*="card" i], [class*="client" i]') as HTMLElement|null;
+              (target??element as HTMLElement).click();
+            });
+            await page.waitForTimeout(2_500);break;
           }
         }
       }

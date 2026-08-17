@@ -367,12 +367,19 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
             const exactName=new RegExp(`^\\s*${escaped}\\s*$`,'i');
             const text=frame.getByText(exactName).first();
             if(!await text.isVisible({timeout:500}).catch(()=>false))continue;
-            // MatRadioButton/Angular place généralement input[type=radio]
-            // dans le label ou dans son conteneur parent.
-            const radio=text.locator('xpath=ancestor-or-self::*[self::label or @role="radio" or .//input[@type="radio"]][1]')
-              .locator('input[type="radio"], [role="radio"]').first();
-            if(await radio.count())await radio.click({force:true});
-            else await text.click({force:true});
+            // Quasar masque volontairement l'input natif (`q-radio__native`).
+            // Il faut déclencher le clic sur le composant/libellé visible.
+            await text.evaluate(element=>{
+              const visibleTarget=element.closest('.q-radio, label, [role="radio"]') as HTMLElement|null;
+              (visibleTarget??element as HTMLElement).click();
+            });
+            await frame.waitForTimeout(300);
+            const container=text.locator('xpath=ancestor-or-self::*[contains(concat(" ",normalize-space(@class)," ")," q-radio ") or self::label or @role="radio"][1]');
+            const native=container.locator('input[type="radio"]').first();
+            const checked=await native.isChecked().catch(async()=>
+              (await container.getAttribute('aria-checked'))==='true',
+            );
+            if(!checked)throw new Error(`le bouton radio ${name} n'a pas été coché par Total`);
             selected=true;
             break;
           }

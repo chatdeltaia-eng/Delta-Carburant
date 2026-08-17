@@ -301,6 +301,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     const listener=async(response:import('playwright').Response)=>{if(!/driver|chauffeur/i.test(response.url()))return;try{captured.push(await response.json());}catch{/* non JSON */}};
     page.on('response',listener);
     try{
+      await this.selectConfiguredClient();
       await page.goto('https://customer.fleet.totalenergies.com/tn/drivers',{waitUntil:'domcontentloaded',timeout:60_000});
       await page.waitForTimeout(4_000);
       const jsonDrivers=this.driversFromUnknown(captured);
@@ -321,6 +322,37 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const bodyText=await page.locator('body').innerText();
       return this.uniqueDrivers([...jsonDrivers,...fromRows,...this.driversFromVisibleText(bodyText)]);
     }finally{page.off('response',listener);}
+  }
+
+  private async selectConfiguredClient(){
+    const page=this.page;if(!page)return;
+    const [connection]=await this.db.query<{customer_number:string;site_number:string}>(
+      `SELECT customer_number,site_number FROM total_mobility_connection WHERE enabled LIMIT 1`,
+    );
+    const customer=connection?.customer_number?.trim();if(!customer)return;
+    try{
+      const chooser=page.getByText(/choisir un client/i).first();
+      if(await chooser.isVisible({timeout:1_500}).catch(()=>false)){
+        await chooser.click();await page.waitForTimeout(1_000);
+      }
+      const search=page.locator('input[type="search"], input[placeholder*="recherche" i], input[placeholder*="client" i]').filter({visible:true}).first();
+      if(await search.isVisible({timeout:1_000}).catch(()=>false)){
+        await search.fill(customer);await page.waitForTimeout(700);
+      }
+      const customerChoice=page.getByText(new RegExp(customer.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),{exact:false}).last();
+      if(await customerChoice.isVisible({timeout:2_000}).catch(()=>false)){
+        await customerChoice.click();await page.waitForTimeout(1_500);
+      }
+      const site=connection.site_number?.trim();
+      if(site){
+        const siteChoice=page.getByText(new RegExp(site.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),{exact:false}).last();
+        if(await siteChoice.isVisible({timeout:800}).catch(()=>false)){
+          await siteChoice.click();await page.waitForTimeout(1_000);
+        }
+      }
+    }catch(error){
+      this.logger.warn(`Sélection automatique du client Total ${customer} non confirmée : ${error instanceof Error?error.message:String(error)}`);
+    }
   }
 
   private driversFromUnknown(input:unknown):RemoteDriver[]{

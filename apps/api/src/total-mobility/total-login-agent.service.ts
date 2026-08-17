@@ -336,8 +336,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private async selectConfiguredClient(){
     const page=this.page;if(!page)return;
-    const [connection]=await this.db.query<{customer_number:string;site_number:string}>(
-      `SELECT customer_number,site_number FROM total_mobility_connection WHERE enabled LIMIT 1`,
+    const [connection]=await this.db.query<{customer_number:string;site_number:string;customer_name:string|null;company_code:string|null}>(
+      `SELECT t.customer_number,t.site_number,
+        (SELECT d.customer_name FROM driver d WHERE regexp_replace(coalesce(d.customer_number,''),'[^0-9]','','g')=regexp_replace(t.customer_number,'[^0-9]','','g') AND d.deleted_at IS NULL AND d.customer_name<>'' ORDER BY d.created_at LIMIT 1) customer_name,
+        (SELECT c.code FROM company c JOIN driver d ON d.company_id=c.id WHERE regexp_replace(coalesce(d.customer_number,''),'[^0-9]','','g')=regexp_replace(t.customer_number,'[^0-9]','','g') AND d.deleted_at IS NULL ORDER BY d.created_at LIMIT 1) company_code
+       FROM total_mobility_connection t WHERE t.enabled LIMIT 1`,
     );
     const customer=connection?.customer_number?.trim();if(!customer)return;
     try{
@@ -352,6 +355,24 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const customerChoice=page.getByText(new RegExp(customer.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),{exact:false}).last();
       if(await customerChoice.isVisible({timeout:2_000}).catch(()=>false)){
         await customerChoice.click();await page.waitForTimeout(1_500);
+      }
+      // La page /customer-selection affiche généralement le nom du client et
+      // non son numéro. Cliquer la carte complète afin de déclencher le choix.
+      if(/customer-selection/i.test(page.url())){
+        const names=[connection.customer_name,connection.company_code]
+          .map(value=>value?.trim()).filter((value):value is string=>Boolean(value));
+        for(const name of names){
+          const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+          const card=page.locator('button, a, [role="button"], [class*="card" i], [class*="client" i]')
+            .filter({hasText:new RegExp(`^\\s*${escaped}\\s*$`,'i')}).first();
+          if(await card.isVisible({timeout:1_000}).catch(()=>false)){
+            await card.click();await page.waitForTimeout(1_800);break;
+          }
+          const label=page.getByText(new RegExp(`^\\s*${escaped}\\s*$`,'i')).first();
+          if(await label.isVisible({timeout:800}).catch(()=>false)){
+            await label.click();await page.waitForTimeout(1_800);break;
+          }
+        }
       }
       const site=connection.site_number?.trim();
       if(site){

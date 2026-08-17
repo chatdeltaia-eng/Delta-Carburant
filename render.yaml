@@ -30,7 +30,23 @@ services:
       - key: LOGIN_ALERT_FROM
         sync: false
       - key: LOGIN_ALERT_TO
-        value: Khaled.sfaxi@deltacuisine.com
+        value: khaled.sfaxi@deltacuisine.com
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: 587
+      - key: SMTP_SECURE
+        value: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: DIRECTION_MAIL_TO
+        value: khaled.sfaxi@deltacuisine.com
+      - key: APPLICATION_URL
+        sync: false
       - key: TOTAL_USERNAME
         sync: false
       - key: TOTAL_PASSWORD

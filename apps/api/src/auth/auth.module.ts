@@ -5,5 +5,6 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
 import { LoginAlertService } from './login-alert.service';
-@Module({ imports: [PassportModule, JwtModule.register({})], controllers: [AuthController], providers: [AuthService, JwtStrategy, LoginAlertService], exports: [JwtStrategy] })
+import { MailingModule } from '../mailing/mailing.module';
+@Module({ imports: [PassportModule, JwtModule.register({}), MailingModule], controllers: [AuthController], providers: [AuthService, JwtStrategy, LoginAlertService], exports: [JwtStrategy] })
 export class AuthModule {}

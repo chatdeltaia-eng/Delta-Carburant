@@ -8,18 +8,45 @@ type Actor = { sub: string; email: string; role: string };
 export class CardsService {
   constructor(private readonly db: DatabaseService) {}
   responsibles(companyId=''){return this.db.query(`SELECT u.id,u.display_name AS name,u.email,u.company_id AS "companyId",c.code AS company
-    FROM app_user u LEFT JOIN company c ON c.id=u.company_id WHERE u.active AND u.role='NAJIB_ASSIGNER'
+    FROM app_user u LEFT JOIN company c ON c.id=u.company_id WHERE u.active
     AND ($1='' OR u.company_id=$1::uuid) ORDER BY c.code,u.display_name`,[companyId]);}
+  async recordActionResponsibility(id:string,dto:{actionType:string;responsibleUserId:string;observation?:string},actor:Actor){
+    const actionType=dto.actionType.trim();if(!actionType)throw new BadRequestException('Le type d’action est obligatoire');
+    const rows=await this.db.query(`INSERT INTO card_action_responsibility(fuel_card_id,action_type,responsible_user_id,performed_by,observation)
+      SELECT fc.id,$2,u.id,$4,$5 FROM fuel_card fc JOIN app_user u ON u.id=$3 AND u.active
+      WHERE fc.id=$1 RETURNING id,created_at AS "createdAt"`,[id,actionType,dto.responsibleUserId,actor.sub,dto.observation?.trim()||null]);
+    if(!rows[0])throw new BadRequestException('Carte ou responsable introuvable');
+    await this.db.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'ASSIGN_ACTION_RESPONSIBLE','fuel_card',$2,$3)`,[actor.email,id,{actionType,responsibleUserId:dto.responsibleUserId,observation:dto.observation?.trim()||null}]);
+    return rows[0];
+  }
   companies(){return this.db.query(`SELECT id,code,name FROM company WHERE active ORDER BY code`);}
   safeInventory(companyId?:string){return this.db.query(`SELECT id,masked_card_number,monthly_limit,status,card_category,company_id FROM fuel_card
     WHERE status='SAFE' AND deleted_at IS NULL AND ($1::uuid IS NULL OR company_id=$1) ORDER BY masked_card_number`,[companyId??null]);}
-  async assignResponsible(id:string,responsibleUserId:string,actor:Actor){return this.db.transaction(async client=>{
-    const responsible=await client.query(`SELECT id,display_name FROM app_user WHERE id=$1 AND active AND role='NAJIB_ASSIGNER'`,[responsibleUserId]);
-    if(!responsible.rows[0])throw new BadRequestException('Responsable hors parc introuvable');
-    const card=await client.query(`UPDATE fuel_card SET responsible_user_id=$2,card_category='OFF_PARK' WHERE id=$1 AND deleted_at IS NULL RETURNING id,masked_card_number`,[id,responsibleUserId]);
-    if(!card.rows[0])throw new NotFoundException('Carte introuvable');
-    await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id) VALUES($1,'Carte hors parc attribuée',$2,'cards','fuel_card',$3)`,[responsibleUserId,`La carte ${card.rows[0].masked_card_number} vous a été attribuée`,id]);
-    await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'ASSIGN_RESPONSIBLE','fuel_card',$2,$3)`,[actor.email,id,{responsibleUserId}]);return card.rows[0];});}
+  async assignResponsible(id:string,responsibleUserId:string,actor:Actor){
+    const [scope]=await this.db.query(`SELECT fc.id,fc.masked_card_number,fc.card_category,fc.responsible_user_id,c.code AS company_code,
+      u.display_name,u.role::text,u.company_id AS user_company_id FROM fuel_card fc JOIN company c ON c.id=fc.company_id CROSS JOIN app_user u
+      WHERE fc.id=$1 AND fc.deleted_at IS NULL AND u.id=$2 AND u.active`,[id,responsibleUserId]);
+    if(!scope)throw new BadRequestException('Carte ou utilisateur responsable introuvable');
+    const name=String(scope.display_name).trim().toLowerCase(),company=String(scope.company_code).toUpperCase();
+    const sameCompany=scope.user_company_id&&(await this.db.query(`SELECT 1 FROM company WHERE id=$1 AND code=$2`,[scope.user_company_id,company])).length>0;
+    const allowed=scope.role==='ZIN_FINANCE'||scope.role==='DIRECTION_GENERAL'||scope.role==='SUPER_ADMIN'
+      ||(name==='aymen'&&company==='TCM')||(name==='mouine'&&company==='DC')||(name==='najib'&&['DC','DCD'].includes(company))
+      ||(!['aymen','mouine','najib'].includes(name)&&sameCompany);
+    if(!allowed){
+      await this.db.query(`INSERT INTO anomaly(fuel_card_id,anomaly_type,severity,status,description,assigned_to,metadata)
+        VALUES($1,'CARD_RESPONSIBLE_COMPANY_MISMATCH','HIGH','OPEN',$2,$3,$4)`,[id,`${scope.display_name} ne peut pas être responsable de la carte ${scope.masked_card_number} de la société ${company}`,actor.sub,{responsibleUserId,responsibleName:scope.display_name,company}]);
+      throw new BadRequestException(`Périmètre invalide : ${scope.display_name} ne peut pas gérer une carte ${company}. Une anomalie a été créée.`);
+    }
+    return this.db.transaction(async client=>{
+    const responsible=await client.query(`SELECT id,display_name FROM app_user WHERE id=$1 AND active`,[responsibleUserId]);
+    const before=await client.query(`SELECT fc.id,fc.masked_card_number,fc.card_category,fc.responsible_user_id,u.display_name AS responsible_name
+      FROM fuel_card fc LEFT JOIN app_user u ON u.id=fc.responsible_user_id WHERE fc.id=$1 AND fc.deleted_at IS NULL FOR UPDATE OF fc`,[id]);
+    if(!before.rows[0])throw new NotFoundException('Carte introuvable');
+    if(before.rows[0].responsible_user_id===responsibleUserId)throw new BadRequestException('Cet utilisateur est déjà responsable de la carte');
+    const card=await client.query(`UPDATE fuel_card SET responsible_user_id=$2 WHERE id=$1 RETURNING id,masked_card_number`,[id,responsibleUserId]);
+    await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id) VALUES($1,'Carte placée sous votre responsabilité',$2,'cards','fuel_card',$3)`,[responsibleUserId,`La carte ${card.rows[0].masked_card_number} vous a été transférée`,id]);
+    if(before.rows[0].responsible_user_id)await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id) VALUES($1,'Responsabilité de carte transférée',$2,'cards','fuel_card',$3)`,[before.rows[0].responsible_user_id,`La carte ${card.rows[0].masked_card_number} a été transférée à ${responsible.rows[0].display_name}`,id]);
+    await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,old_values,new_values) VALUES($1,'TRANSFER_CARD_RESPONSIBILITY','fuel_card',$2,$3,$4)`,[actor.email,id,{responsibleUserId:before.rows[0].responsible_user_id,responsibleName:before.rows[0].responsible_name},{responsibleUserId,responsibleName:responsible.rows[0].display_name}]);return {...card.rows[0],responsibleUserId,responsibleName:responsible.rows[0].display_name};});}
   async assignVehicle(id:string,dto:{beneficiary:string;vehicleId:string},actor:Actor){return this.db.transaction(async client=>{
     const card=await client.query(`SELECT id,company_id,masked_card_number FROM fuel_card WHERE id=$1 AND responsible_user_id=$2 AND deleted_at IS NULL FOR UPDATE`,[id,actor.sub]);if(!card.rows[0])throw new NotFoundException('Carte non attribuée à ce responsable');
     const vehicle=await client.query(`SELECT id,company_id,registration_display FROM vehicle WHERE id=$1 AND active AND deleted_at IS NULL`,[dto.vehicleId]);if(!vehicle.rows[0]||vehicle.rows[0].company_id!==card.rows[0].company_id)throw new BadRequestException('Le véhicule doit appartenir à la société de la carte');
@@ -77,7 +104,11 @@ export class CardsService {
       AND ($3='' OR v.status::text=$3)
       AND ($6::boolean=false OR v.responsible_user_id=$7) AND ($8='' OR v.company_id=$8::uuid)`;
     const items = await this.db.query(`SELECT v.*,
+      fc.total_mobility_status,fc.total_mobility_checked_at,
       responsible.role::text AS responsible_role,
+      responsible.display_name AS responsible_name,
+      latest_action.action_type AS latest_action_type,
+      latest_action.display_name AS latest_action_responsible,
       coalesce((SELECT sum(ft.amount_incl_tax) FROM fuel_transaction ft
         WHERE ft.fuel_card_id=v.id AND ft.deleted_at IS NULL
           AND ft.transaction_date>=date_trunc('month',current_date)
@@ -88,7 +119,8 @@ export class CardsService {
         FROM fuel_transaction ft WHERE ft.fuel_card_id=v.id AND ft.deleted_at IS NULL
           AND ft.transaction_date>=date_trunc('month',current_date)
           AND ft.transaction_date<date_trunc('month',current_date)+interval '1 month'),0) / v.monthly_limit)) ELSE 0 END AS consumption_rate
-      FROM v_fuel_card_list v LEFT JOIN app_user responsible ON responsible.id=v.responsible_user_id ${where}
+      FROM v_fuel_card_list v JOIN fuel_card fc ON fc.id=v.id LEFT JOIN app_user responsible ON responsible.id=v.responsible_user_id
+      LEFT JOIN LATERAL (SELECT ar.action_type,u.display_name FROM card_action_responsibility ar JOIN app_user u ON u.id=ar.responsible_user_id WHERE ar.fuel_card_id=v.id ORDER BY ar.created_at DESC LIMIT 1) latest_action ON true ${where}
       ORDER BY v.updated_at DESC LIMIT $4 OFFSET $5`, [search.trim(), term, status, limit, offset, actor.role==='NAJIB_ASSIGNER', actor.sub,companyId]);
     const countWhere = `WHERE ($1='' OR masked_card_number ILIKE $2 OR beneficiary ILIKE $2 OR registration ILIKE $2)
       AND ($3='' OR status::text=$3)

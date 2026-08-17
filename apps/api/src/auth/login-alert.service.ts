@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { MailingService } from '../mailing/mailing.service';
 
 type LoginAlert = {
   name: string;
@@ -13,8 +14,16 @@ type LoginAlert = {
 export class LoginAlertService {
   private readonly logger = new Logger(LoginAlertService.name);
   private readonly recipient = process.env.LOGIN_ALERT_TO?.trim() || 'Khaled.sfaxi@deltacuisine.com';
+  constructor(private readonly mailing: MailingService) {}
 
   async send(event: LoginAlert): Promise<void> {
+    if (this.mailing.configured()) {
+      const role = event.role === 'DIRECTION_GENERAL' || event.role === 'SUPER_ADMIN'
+        ? 'Direction générale / Administrateur'
+        : event.role === 'ZIN_FINANCE' ? 'Zin Finance' : event.role === 'NAJIB_ASSIGNER' ? 'Najib' : event.role;
+      await this.mailing.send([this.recipient.toLowerCase()], `Connexion Delta Carburant — ${event.name}`, `<div style="font-family:Arial,sans-serif;max-width:620px;padding:28px;color:#173b2b"><h2>Nouvelle session ouverte</h2><p>Utilisateur : <b>${this.escape(event.name)}</b></p><p>Rôle : ${this.escape(role)}<br>Compte : ${this.escape(event.email)}<br>Date : ${event.occurredAt.toLocaleString('fr-TN',{timeZone:'Africa/Tunis'})}<br>Adresse IP : ${this.escape(event.ip)}</p></div>`);
+      return;
+    }
     const apiKey = process.env.RESEND_API_KEY?.trim();
     const from = process.env.LOGIN_ALERT_FROM?.trim();
     if (!apiKey || !from) {

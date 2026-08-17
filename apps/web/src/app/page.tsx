@@ -28,7 +28,7 @@ function TopLayerDialog({ children, onClose }: { children: ReactNode; onClose: (
 
 type Role =
   "SUPER_ADMIN" | "DIRECTION_GENERAL" | "ZIN_FINANCE" | "NAJIB_ASSIGNER";
-type User = { name: string; role: Role; email: string };
+type User = { id: string; name: string; role: Role; email: string };
 type View =
   | "dashboard"
   | "reports"
@@ -79,8 +79,12 @@ type Card = {
   total_consumed_amount?:number;
   consumption_rate?:number;
   responsible_role?:string;
+  responsible_name?:string;
   responsible_user_id?:string;
   company_id?:string;
+  latest_action_type?:string;
+  latest_action_responsible?:string;
+  initial_action?:string;
 };
 type Row = { id: string; [key: string]: string | number };
 type Modal =
@@ -484,6 +488,8 @@ export default function Home() {
     [directionData,setDirectionData]=useState<Record<string,unknown>|null>(null),
     [responsibles,setResponsibles]=useState<{id:string;name:string;email:string}[]>([]),
     [companies,setCompanies]=useState<{id:string;code:string;name:string}[]>([]),
+    [selectedClientId,setSelectedClientId]=useState<string | null>(null),
+    [showClientChooser,setShowClientChooser]=useState(false),
     [notifications, setNotifications] = useState<Notification[]>([]),
     [showNotifications, setShowNotifications] = useState(false),
     [search, setSearch] = useState(""),
@@ -505,12 +511,15 @@ export default function Home() {
   useEffect(() => {
     const t = sessionStorage.getItem("delta_access"),
       u = sessionStorage.getItem("delta_user"),
+      clientId = sessionStorage.getItem("delta_client"),
       saved = localStorage.getItem("delta_app_data_v1");
     // Retire définitivement les anciennes données fictives des versions démo.
     localStorage.removeItem("delta_demo_data_v6");
     if (t && t !== "demo" && u) {
       setToken(t);
       setUser(JSON.parse(u));
+      setSelectedClientId(clientId);
+      setShowClientChooser(!clientId);
     } else if (t === "demo") {
       sessionStorage.clear();
     }
@@ -566,7 +575,7 @@ export default function Home() {
       fetch(`${API}/mileage`, { headers, cache: "no-store" }),
       fetch(`${API}/drivers`, { headers, cache: "no-store" }),
       fetch(`${API}/fuel-prices`, { headers, cache: "no-store" }),
-      canManage(user.role)?fetch(`${API}/cards/responsibles`,{headers,cache:"no-store"}):Promise.resolve(null),
+      fetch(`${API}/cards/responsibles`,{headers,cache:"no-store"}),
       fetch(`${API}/cards/companies`,{headers,cache:"no-store"}),
       user.role==="NAJIB_ASSIGNER"?fetch(`${API}/cards/safe-inventory`,{headers,cache:"no-store"}):Promise.resolve(null),
       fetch(`${API}/complaints`,{headers,cache:"no-store"}),
@@ -639,7 +648,7 @@ export default function Home() {
           fuelPrices:(fuelPricesPayload.items??fuelPricesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),societe:String(row.company),produit:String(row.product),ancienPrix:Number(row.oldPrice),nouveauPrix:Number(row.newPrice),variation:`${Number(row.variationPercent).toFixed(2)} %`,date:new Date(String(row.effectiveDate)).toLocaleDateString("fr-FR"),auteur:String(row.createdBy??"—"),source:String(row.source)==="OFFICIAL_TUNISIA"?"Ministère tunisien":String(row.source)==="TOTAL_SUPPLIER"?"Tarif fournisseur Total":"Saisie manuelle"})),
           complaints:(complaintsPayload.items??complaintsPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numero:String(row.number),objet:String(row.subject),description:String(row.description),priorite:String(row.priority),statut:String(row.status),destinataire:String(row.targetRole),createur:String(row.creator),date:new Date(String(row.createdAt)).toLocaleString("fr-FR"),resolution:String(row.resolution??"—"),messages:JSON.stringify(row.messages??[])})),
           receipts:(receiptsPayload.items??receiptsPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numero:String(row.receiptNumber),carte:String(row.card),beneficiaire:String(row.beneficiary),vehicule:String(row.vehicle),distribueA:String(row.distributedTo),statut:String(row.status),zin:String(row.zinApprovedBy??"En attente"),dg:String(row.dgApprovedBy??"En attente"),date:String(row.issuedAt?new Date(String(row.issuedAt)).toLocaleString("fr-FR"):"—")})),
-          returnReceipts:(returnReceiptsPayload.items??returnReceiptsPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numero:String(row.receiptNumber),carte:String(row.card),restituePar:String(row.returnedBy),recuPar:String(row.receivedBy),dg:String(row.dgApprovedBy),taux:Number(row.consumptionRate),plafond:Number(row.monthlyLimit),plafondActuel:Number(row.currentLimit),consomme:Number(row.consumedAmount),litres:Number(row.consumedLiters),transactions:Number(row.transactionCount),restaureeLe:row.restoredAt?new Date(String(row.restoredAt)).toLocaleString("fr-FR"):"",restaureePar:String(row.restoredBy??""),statutCarte:String(row.cardStatus??""),mois:new Date(String(row.consumptionMonth)).toLocaleDateString("fr-FR",{month:"long",year:"numeric"}),date:new Date(String(row.returnedAt)).toLocaleDateString("fr-FR"),heure:new Date(String(row.returnedAt)).toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"})})),
+          returnReceipts:(returnReceiptsPayload.items??returnReceiptsPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numero:String(row.receiptNumber),carte:String(row.card),restituePar:String(row.returnedBy),recuPar:String(row.receivedBy),dg:String(row.dgApprovedBy),taux:Number(row.consumptionRate),plafond:Number(row.monthlyLimit),plafondActuel:Number(row.currentLimit),consomme:Number(row.consumedAmount),litres:Number(row.consumedLiters),transactions:Number(row.transactionCount),restaureeLe:row.restoredAt?new Date(String(row.restoredAt)).toLocaleString("fr-FR"):"",restaureePar:String(row.restoredBy??""),statutCarte:String(row.cardStatus??""),moisCle:String(row.consumptionMonth).slice(0,7),mois:new Date(String(row.consumptionMonth)).toLocaleDateString("fr-FR",{month:"long",year:"numeric"}),date:new Date(String(row.returnedAt)).toLocaleDateString("fr-FR"),heure:new Date(String(row.returnedAt)).toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"})})),
         }));
         setDatabaseSummary(summaryPayload);
         setError("");
@@ -707,6 +716,8 @@ export default function Home() {
       setNotifications([]);
       setToken(x.accessToken);
       setUser(x.user);
+      setSelectedClientId(null);
+      setShowClientChooser(true);
     } catch {
       setError("Connexion à l’API impossible ou identifiants invalides");
     } finally {
@@ -740,6 +751,8 @@ export default function Home() {
     sessionStorage.clear();
     setToken(null);
     setUser(null);
+    setSelectedClientId(null);
+    setShowClientChooser(false);
     setNotifications([]);
     setShowNotifications(false);
     setSessionSeconds(null);
@@ -790,6 +803,14 @@ export default function Home() {
       );
     } else if (modal === "cardAction" && selected) {
       const action = String(f.get("action"));
+      const actionResponsibleUserId=String(f.get("actionResponsibleUserId")||"");
+      const actionObservation=String(f.get("actionObservation")||f.get("reason")||"").trim();
+      if(!actionResponsibleUserId)return notify("Sélectionnez obligatoirement le responsable de cette action");
+      const recordAction=async()=>{
+        if(!token)throw new Error("Session distante expirée");
+        const response=await fetch(`${API}/cards/${selected.id}/action-responsibility`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({actionType:action,responsibleUserId:actionResponsibleUserId,observation:actionObservation||undefined})});
+        if(!response.ok)throw new Error("Le responsable de l’action n’a pas été enregistré");
+      };
       let change: Partial<Card> = { updated_at: today };
       if(action==="editDetails"){
         if(!canManage(user.role)||!token)return notify("Modification réservée à Zin et à la Direction");
@@ -859,9 +880,9 @@ export default function Home() {
           return notify("Déblocage réservé à Zin et à la Direction");
         change = { ...change, status: "ACTIVE" };
       } else if(action==="responsible") {
-        if(!canManage(user.role)||!token)return notify("Attribution réservée à Zin et à la DG");
+        if(!canManage(user.role)||!token)return notify("Transfert réservé à Zin, Mahdi et à la DG");
         const responsibleUserId=String(f.get("responsibleUserId")||"");if(!responsibleUserId)return notify("Sélectionnez un responsable");
-        try{const response=await fetch(`${API}/cards/${selected.id}/responsible`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({responsibleUserId})});if(!response.ok)throw new Error(await response.text());change={...change,card_category:"OFF_PARK",responsible_user_id:responsibleUserId};}catch{return notify("L’attribution n’a pas été enregistrée");}
+        try{const response=await fetch(`${API}/cards/${selected.id}/responsible`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({responsibleUserId})});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(String(body.message??"Transfert impossible"));change={...change,responsible_user_id:responsibleUserId,responsible_name:String(body.responsibleName??responsibles.find(item=>item.id===responsibleUserId)?.name??"")};}catch(error){return notify(error instanceof Error?error.message:"Le transfert n’a pas été enregistré");}
       } else if (action === "replace") {
         if (!canManage(user.role))
           return notify("Remplacement réservé à Zin et à la Direction");
@@ -880,6 +901,7 @@ export default function Home() {
         } catch {
           return notify("Échec du remplacement distant : aucune carte n’a été modifiée");
         }
+        try{await recordAction();}catch(error){return notify(error instanceof Error?error.message:"Traçabilité non enregistrée");}
         const inherited = {
           beneficiary: selected.beneficiary,
           department: selected.department,
@@ -931,6 +953,7 @@ export default function Home() {
         } catch {
           return notify("Échec de l’archivage distant : la carte reste disponible");
         }
+        try{await recordAction();}catch(error){return notify(error instanceof Error?error.message:"Traçabilité non enregistrée");}
         const next = cards.filter((c) => c.id !== selected.id);
         setCards(next);
         persist(next, data);
@@ -954,8 +977,9 @@ export default function Home() {
           return notify("Échec de l’action distante : la carte n’a pas été modifiée");
         }
       }
+      try{await recordAction();}catch(error){return notify(error instanceof Error?error.message:"Traçabilité non enregistrée");}
       const next = cards.map((c) =>
-        c.id === selected.id ? { ...c, ...change } : c,
+        c.id === selected.id ? { ...c, ...change, latest_action_type:action, latest_action_responsible:responsibles.find(item=>item.id===actionResponsibleUserId)?.name??"Responsable" } : c,
       );
       if (action === "confirm" && selected.beneficiary) {
         const confirmed = next.find((c) => c.id === selected.id)!;
@@ -1095,6 +1119,7 @@ export default function Home() {
               vehicle: String(row.voiture),
               requestedLimit: parseNumeric(row.plafond),
               reason: String(row.motif),
+              responsibleUserId: String(row.responsableAction),
             }),
           });
           if (!response.ok) throw new Error(await response.text());
@@ -1674,9 +1699,14 @@ export default function Home() {
   }
   const consumptionRate = (card: Card) => Math.min(100,Number(card.consumption_rate??0));
   const cardsForUser =
-    user?.role === "NAJIB_ASSIGNER"
-      ? cards
-      : cards;
+    selectedClientId ? cards.filter(card=>card.company_id===selectedClientId) : cards;
+  const selectedClient=companies.find(company=>company.id===selectedClientId);
+  function chooseClient(companyId:string){
+    sessionStorage.setItem("delta_client",companyId);
+    setSelectedClientId(companyId);
+    setShowClientChooser(false);
+    setView("dashboard");
+  }
   function openNotifications(notification: Notification) {
     const next = notifications.map((n) =>
       n.id === notification.id ? { ...n, read: true } : n,
@@ -1809,8 +1839,16 @@ export default function Home() {
         : allNav.filter(([v]) => v !== "reports");
   const userNotifications = notifications.filter((n) => n.target === user.role),
     unread = userNotifications.filter((n) => !n.read).length;
+  const currentMonthKey=new Date().toISOString().slice(0,7);
+  const monthlyCardsToRecover=cardsForUser.filter(card=>
+    ["ACTIVE","DISTRIBUTED","ASSIGNED"].includes(card.status)&&
+    Boolean(card.responsible_user_id)&&
+    (user.role!=="NAJIB_ASSIGNER"||card.responsible_user_id===user.id)&&
+    !data.returnReceipts.some(receipt=>receipt.carte===card.masked_card_number&&receipt.moisCle===currentMonthKey)
+  );
   return (
     <div className={styles.app}>
+      {showClientChooser&&companies.length>0&&<div className={styles.clientChooserBackdrop} role="dialog" aria-modal="true" aria-labelledby="client-title"><section className={styles.clientChooser}><div className={styles.clientChooserBrand}><Image src="/brand/delta-logo.png" alt="Delta Carburant" width={110} height={110}/></div><small>BIENVENUE SUR DELTA CARBURANT</small><h2 id="client-title">Veuillez choisir un client pour continuer</h2><p>La situation, les cartes et les alertes seront affichées dans le contexte de la société sélectionnée.</p><div className={styles.clientList}>{companies.map((company,index)=><button type="button" key={company.id} onClick={()=>chooseClient(company.id)}><span>{String(index+1).padStart(2,"0")}</span><div><b>{company.name}</b><small>{company.code}</small></div><i>›</i></button>)}</div></section></div>}
       {sessionSeconds !== null && (
         <div className={styles.sessionOverlay} role="dialog" aria-modal="true" aria-labelledby="session-title">
           <section className={styles.sessionDialog}>
@@ -1874,6 +1912,10 @@ export default function Home() {
             <p>{viewMeta[view][1]}</p>
           </div>
           <div className={styles.headerActions}>
+            <button className={styles.clientSwitch} onClick={()=>setShowClientChooser(true)} title="Changer de client"><small>CLIENT</small><b>{selectedClient?.code??"Choisir"}</b><i>⌄</i></button>
+            <button className={styles.recoveryCounter} onClick={()=>setView("returns")} title="Cartes distribuées restant à récupérer ce mois">
+              <AppIcon name="transfer" size={18}/><span><b>{monthlyCardsToRecover.length}</b><small>à récupérer</small></span>
+            </button>
             <div className={styles.notificationBox}>
               <button
                 className={styles.bell}
@@ -2660,20 +2702,23 @@ function ComplaintsView({token,user,rows,refresh,notify}:{token:string;user:User
 function CardReturnsView({token,user,cards,requests,receipts,decide,refresh,notify}:{token:string;user:User;cards:Card[];requests:Row[];receipts:Row[];decide:(id:string,accepted:boolean)=>void|Promise<void>;refresh:()=>void;notify:(message:string)=>void}){
  const [clock,setClock]=useState(Date.now());
  useEffect(()=>{const timer=window.setInterval(()=>setClock(Date.now()),1000);return()=>window.clearInterval(timer);},[]);
- // Ce workflow appartient exclusivement à Najib. Zin et la DG contrôlent ses
- // restitutions, mais les cartes des autres responsables ne doivent jamais y
- // apparaître, même si elles ont atteint leur plafond.
- const najibCards=cards.filter(card=>card.responsible_role==='NAJIB_ASSIGNER'||receipts.some(receipt=>receipt.carte===card.masked_card_number));
- const eligible=najibCards.filter(card=>Math.min(100,Number(card.consumption_rate??0))>=100||receipts.some(receipt=>receipt.carte===card.masked_card_number));
+ const currentMonthKey=new Date().toISOString().slice(0,7);
+ // Toute carte distribuée doit revenir au coffre une fois par mois, quel que
+ // soit le rôle de son responsable (Najib, Zin, DG ou autre utilisateur).
+ const eligible=cards.filter(card=>
+   (["ACTIVE","DISTRIBUTED","ASSIGNED"].includes(card.status)&&Boolean(card.responsible_user_id))||
+   receipts.some(receipt=>receipt.carte===card.masked_card_number)
+ );
  const pendingFor=(card:Card)=>requests.find(row=>row.type==='Mise en coffre'&&row.carte===card.masked_card_number&&row.statut==='EN_ATTENTE_ZIN');
- const receiptFor=(card:Card)=>receipts.find(row=>row.carte===card.masked_card_number);
- const returnCard=async(card:Card)=>{if(pendingFor(card))return notify("Une demande de restitution est déjà en cours");const response=await fetch(`${API}/requests`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({requestType:'CUSTODY_CHANGE',requestedCardStatus:'SAFE',fuelCardId:card.id,beneficiary:card.beneficiary||'Najib',department:card.department||'Hors parc',vehicle:card.registration||'Sans véhicule',requestedLimit:0,reason:'Restitution obligatoire après utilisation de 100 % du plafond'})});if(!response.ok){const body=await response.json().catch(()=>({}));return notify(String(body.message??"La demande de restitution n’a pas été enregistrée"));}notify("Demande de restitution envoyée à Zin et à la DG");refresh();};
+ const receiptFor=(card:Card)=>receipts.find(row=>row.carte===card.masked_card_number&&row.moisCle===currentMonthKey);
+ const returnCard=async(card:Card)=>{if(pendingFor(card))return notify("Une demande de restitution est déjà en cours");if(card.responsible_user_id!==user.id)return notify("Seul le responsable actuel peut restituer cette carte");const response=await fetch(`${API}/requests`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({requestType:'CUSTODY_CHANGE',requestedCardStatus:'SAFE',fuelCardId:card.id,responsibleUserId:card.responsible_user_id,beneficiary:card.beneficiary||user.name,department:card.department||'Hors parc',vehicle:card.registration||'Sans véhicule',requestedLimit:0,reason:'Restitution mensuelle obligatoire de la carte distribuée'})});if(!response.ok){const body=await response.json().catch(()=>({}));return notify(String(body.message??"La demande de restitution n’a pas été enregistrée"));}notify("Demande de restitution envoyée à Zin et à la DG");refresh();};
+ const forceReturn=async(card:Card)=>{const reason=window.prompt(`Motif de l’ordre obligatoire de restitution de la carte ${card.masked_card_number}`,'Ordre de la Direction Générale');if(!reason)return;const response=await fetch(`${API}/requests/cards/${card.id}/force-return`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({reason})});const body=await response.json().catch(()=>({}));if(!response.ok)return notify(String(body.message??"L’ordre de restitution n’a pas été créé"));notify("Ordre obligatoire envoyé au responsable. Votre validation DG est déjà enregistrée.");refresh();};
  const restoreCard=async(receipt:Row)=>{if(!window.confirm(`Restaurer la même carte ${receipt.carte} à Najib avec son plafond actuel de ${Number(receipt.plafondActuel??0).toFixed(3)} TND ?`))return;const response=await fetch(`${API}/documents/return-receipts/${receipt.id}/restore`,{method:'POST',headers:{Authorization:`Bearer ${token}`}});const body=await response.json().catch(()=>({}));if(!response.ok)return notify(String(body.message??"La carte n’a pas pu être restaurée"));notify("La même carte a été restaurée à Najib, sans création d’une nouvelle carte");refresh();};
- const signHandover=async(request:Row)=>{if(!window.confirm("Confirmer que la carte a été physiquement remise à Zin ? Cette action signe la restitution de Najib."))return;const response=await fetch(`${API}/requests/${request.id}/handover`,{method:'PATCH',headers:{Authorization:`Bearer ${token}`}});const body=await response.json().catch(()=>({}));if(!response.ok)return notify(String(body.message??"La remise n’a pas pu être signée"));notify("Carte remise : le reçu de preuve est maintenant disponible");refresh();};
+ const signHandover=async(request:Row)=>{if(!window.confirm("Confirmer la remise physique de la carte à Zin et signer la restitution ?"))return;const response=await fetch(`${API}/requests/${request.id}/handover`,{method:'PATCH',headers:{Authorization:`Bearer ${token}`}});const body=await response.json().catch(()=>({}));if(!response.ok)return notify(String(body.message??"La remise n’a pas pu être signée"));notify("Carte remise : le reçu signé par le responsable et Zin est disponible");refresh();};
  const countdown=(value:unknown)=>{const remaining=Math.max(0,new Date(String(value)).getTime()-clock),seconds=Math.floor(remaining/1000);return `${String(Math.floor(seconds/3600)).padStart(2,'0')}:${String(Math.floor((seconds%3600)/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;};
- const printReceipt=(row:Row)=>printOfficialDocument(`Reçu de restitution ${documentText(row.numero)}`,`<div class="meta"><div><b>N° reçu</b>${documentText(row.numero)}</div><div><b>N° carte</b>${documentText(row.carte)}</div><div><b>Date de restitution</b>${documentText(row.date)}</div><div><b>Heure de restitution</b>${documentText(row.heure)}</div></div><div class="summary"><div><span>Plafond mensuel</span><strong>${Number(row.plafond??0).toFixed(3)} TND</strong></div><div><span>Consommation contrôlée</span><strong>${Number(row.consomme??0).toFixed(3)} TND</strong></div><div><span>Taux du plafond</span><strong>${Number(row.taux).toFixed(1)} %</strong></div></div><div class="meta"><div><b>Volume consommé</b>${Number(row.litres??0).toFixed(3)} litres</div><div><b>Transactions du mois</b>${Number(row.transactions??0)}</div><div><b>Mois de consommation</b>${documentText(row.mois)}</div><div><b>Statut</b>Restitution validée</div></div><p>Delta Carburant certifie que la carte indiquée a été physiquement restituée après contrôle de sa consommation mensuelle et double validation de Zin et de la Direction Générale.</p><div class="signatures"><div>Signature Najib<br><b>${documentText(row.restituePar)}</b></div><div>Signature Zin<br><b>${documentText(row.recuPar)}</b></div><div>Signature DG<br><b>${documentText(row.dg)}</b></div></div>`);
+ const printReceipt=(row:Row)=>printOfficialDocument(`Reçu de restitution ${documentText(row.numero)}`,`<div class="meta"><div><b>N° reçu</b>${documentText(row.numero)}</div><div><b>N° carte</b>${documentText(row.carte)}</div><div><b>Date de restitution</b>${documentText(row.date)}</div><div><b>Heure de restitution</b>${documentText(row.heure)}</div></div><div class="summary"><div><span>Plafond mensuel</span><strong>${Number(row.plafond??0).toFixed(3)} TND</strong></div><div><span>Consommation contrôlée</span><strong>${Number(row.consomme??0).toFixed(3)} TND</strong></div><div><span>Taux du plafond</span><strong>${Number(row.taux).toFixed(1)} %</strong></div></div><div class="meta"><div><b>Volume consommé</b>${Number(row.litres??0).toFixed(3)} litres</div><div><b>Transactions du mois</b>${Number(row.transactions??0)}</div><div><b>Mois de consommation</b>${documentText(row.mois)}</div><div><b>Statut</b>Restitution validée</div></div><p>Delta Carburant certifie la restitution physique mensuelle de cette carte. Le reçu porte uniquement les signatures de Najib / du responsable remettant et de Zin réceptionnaire.</p><div class="signatures"><div>Signature Najib / responsable<br><b>${documentText(row.restituePar)}</b></div><div>Signature Zin<br><b>${documentText(row.recuPar)}</b></div></div>`);
  const rows=[...eligible];for(const receipt of receipts)if(!rows.some(card=>card.masked_card_number===receipt.carte))rows.push({id:`receipt-${receipt.id}`,masked_card_number:String(receipt.carte),company_code:'DC',beneficiary:null,registration:null,monthly_limit:0,status:'SAFE',finance_status:'CONFIRMED',created_at:'',updated_at:'',card_category:'OFF_PARK',consumption_rate:Number(receipt.taux)});
- return <section className={styles.fullPanel}><div className={styles.importNotice}><b>Restitution physique en 1 h 30</b><span>Après l’accord de Zin et de la DG, Najib remet et signe la carte dans le délai affiché. Sans signature, elle reste automatiquement chez Najib avec le même plafond et la même consommation.</span></div><div className={styles.tableWrap}><table><thead><tr>{["Carte","Plafond mensuel","Consommation du mois","Utilisation","Najib / délai","Validation Zin","Validation DG","Reçu PDF","Statut","Action"].map(label=><th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map(card=>{const request=pendingFor(card),receipt=receiptFor(card);const zinDone=request?.zinValide==='Oui',dgDone=request?.dgValide==='Oui',awaitingHandover=Boolean(request&&zinDone&&dgDone&&request.remiseEcheance&&request.remiseSignee!=='Oui'&&request.remiseExpiree!=='Oui');const alreadyApproved=(user.role==='ZIN_FINANCE'&&zinDone)||(user.role==='DIRECTION_GENERAL'&&dgDone);const limit=Number(receipt?.plafond??card.monthly_limit??0),currentLimit=Number(receipt?.plafondActuel??card.monthly_limit??0),consumed=Number(receipt?.consomme??card.consumed_amount??limit),canRestore=receipt&&!receipt.restaureeLe&&['ZIN_FINANCE','DIRECTION_GENERAL'].includes(user.role);return <tr key={card.id}><td><b>{card.masked_card_number}</b><small>{card.beneficiary||receipt?.restituePar||'—'} · {card.registration||'—'}</small></td><td><b>{limit.toFixed(3)} TND</b>{receipt&&currentLimit!==limit&&<small>Nouveau plafond : {currentLimit.toFixed(3)} TND</small>}</td><td><b>{consumed.toFixed(3)} TND</b><small>{receipt?`${Number(receipt.litres??0).toFixed(3)} L · ${Number(receipt.transactions??0)} transaction(s)`:"Mois courant · valeur conservée"}</small></td><td><span className={styles.documentPending}>{Number(card.consumption_rate??receipt?.taux??0).toFixed(1)} %</span></td><td>{receipt?'✓ Remise signée':awaitingHandover?<><b>{countdown(request?.remiseEcheance)}</b><small>pour remettre à Zin</small></>:request?.remiseExpiree==='Oui'?'Délai expiré · carte chez Najib':request?'✓ Demandée':'À restituer'}</td><td>{receipt||zinDone?'✓ Validée':'○ En attente'}</td><td>{receipt||dgDone?'✓ Validée':'○ En attente'}</td><td>{receipt?<button className={styles.documentPrintBtn} onClick={()=>printReceipt(receipt)}>▣ Télécharger le reçu</button>:<span className={styles.waitingStatus}>{awaitingHandover?'Après la signature Najib':'Après validations et remise'}</span>}</td><td>{receipt?.restaureeLe?<span className={styles.documentAuthorized}>✓ Restaurée à Najib</span>:receipt?<span className={styles.documentAuthorized}>✓ Au coffre</span>:awaitingHandover?<span className={styles.documentPending}>Remise physique attendue</span>:request?.remiseExpiree==='Oui'?<span className={styles.documentPending}>Revenue à Najib · 100 % conservé</span>:request?<span className={styles.documentPending}>Validation en cours</span>:<span className={styles.documentPending}>Restitution requise</span>}</td><td>{receipt?<>{canRestore&&<button className={styles.documentApproveBtn} onClick={()=>restoreCard(receipt)}>↻ Restaurer à Najib</button>}{receipt.restaureeLe&&<small>Par {receipt.restaureePar} · {receipt.restaureeLe}</small>}</>:awaitingHandover&&user.role==='NAJIB_ASSIGNER'?<button className={styles.documentApproveBtn} onClick={()=>signHandover(request!)}>Signer la remise</button>:user.role==='NAJIB_ASSIGNER'&&!request?<button className={styles.documentApproveBtn} onClick={()=>returnCard(card)}>Restituer la carte</button>:request&&!alreadyApproved&&!awaitingHandover?<button className={styles.documentApproveBtn} onClick={()=>decide(String(request.id),true)}>✓ Approuver</button>:<span className={styles.waitingStatus}>{alreadyApproved?'Votre validation est enregistrée':'En attente de Najib'}</span>}</td></tr>})}{!rows.length&&<tr><td colSpan={10}><div className={styles.documentEmpty}>Aucune carte n’a atteint 100 % pour le moment.</div></td></tr>}</tbody></table></div></section>;
+ return <section className={styles.fullPanel}><div className={styles.importNotice}><b>Récupération mensuelle et conformité Total</b><span>Après validation avec le responsable, Zin ou la DG reçoit la carte et la met au coffre. Une action « Désactiver » reste alors ouverte jusqu’à confirmation du même statut dans « Gérer les cartes » sur Total Mobility.</span></div><div className={styles.tableWrap}><table><thead><tr>{["Carte","Plafond mensuel","Consommation du mois","Utilisation","Responsable / délai","Validation Zin","Validation DG","Reçu PDF","Statut","Action"].map(label=><th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map(card=>{const request=pendingFor(card),receipt=receiptFor(card);const zinDone=request?.zinValide==='Oui',dgDone=request?.dgValide==='Oui',awaitingHandover=Boolean(request&&zinDone&&dgDone&&request.remiseEcheance&&request.remiseSignee!=='Oui'&&request.remiseExpiree!=='Oui');const alreadyApproved=(user.role==='ZIN_FINANCE'&&zinDone)||(user.role==='DIRECTION_GENERAL'&&dgDone);const ownsCard=card.responsible_user_id===user.id;const canReceive=awaitingHandover&&['ZIN_FINANCE','DIRECTION_GENERAL'].includes(user.role);const limit=Number(receipt?.plafond??card.monthly_limit??0),currentLimit=Number(receipt?.plafondActuel??card.monthly_limit??0),consumed=Number(receipt?.consomme??card.consumed_amount??0),canRestore=receipt&&!receipt.restaureeLe&&['ZIN_FINANCE','DIRECTION_GENERAL'].includes(user.role);return <tr key={card.id}><td><b>{card.masked_card_number}</b><small>{card.beneficiary||receipt?.restituePar||'—'} · {card.registration||'—'}</small></td><td><b>{limit.toFixed(3)} TND</b>{receipt&&currentLimit!==limit&&<small>Nouveau plafond : {currentLimit.toFixed(3)} TND</small>}</td><td><b>{consumed.toFixed(3)} TND</b><small>{receipt?`${Number(receipt.litres??0).toFixed(3)} L · ${Number(receipt.transactions??0)} transaction(s)`:"Mois courant"}</small></td><td><span className={styles.documentPending}>{Number(card.consumption_rate??receipt?.taux??0).toFixed(1)} %</span></td><td>{receipt?'✓ Remise signée':awaitingHandover?<><b>{countdown(request?.remiseEcheance)}</b><small>pour remettre à Zin / DG</small></>:request?.remiseExpiree==='Oui'?'Délai expiré':request?'✓ Demandée':'À récupérer ce mois'}</td><td>{receipt||zinDone?'✓ Validée':'○ En attente'}</td><td>{receipt||dgDone?'✓ Validée':'○ En attente'}</td><td>{receipt?<button className={styles.documentPrintBtn} onClick={()=>printReceipt(receipt)}>▣ Télécharger le reçu</button>:<span className={styles.waitingStatus}>{awaitingHandover?'Après réception par Zin / DG':'Après validations et remise'}</span>}</td><td>{receipt?.restaureeLe?<span className={styles.documentAuthorized}>✓ Redistribuée</span>:receipt?<span className={styles.documentAuthorized}>✓ Au coffre · désactivation Total à contrôler</span>:awaitingHandover?<span className={styles.documentPending}>Remise physique attendue</span>:request?<span className={styles.documentPending}>Validation en cours</span>:<span className={styles.documentPending}>Restitution mensuelle requise</span>}</td><td>{receipt?<>{canRestore&&<button className={styles.documentApproveBtn} onClick={()=>restoreCard(receipt)}>↻ Redistribuer la carte</button>}{receipt.restaureeLe&&<small>Par {receipt.restaureePar} · {receipt.restaureeLe}</small>}</>:canReceive?<button className={styles.documentApproveBtn} onClick={()=>signHandover(request!)}>Recevoir et mettre au coffre</button>:awaitingHandover&&ownsCard?<span className={styles.waitingStatus}>Remettez la carte à Zin / DG</span>:ownsCard&&!request?<button className={styles.documentApproveBtn} onClick={()=>returnCard(card)}>Restituer ma carte</button>:user.role==='DIRECTION_GENERAL'&&!request?<button className={styles.documentApproveBtn} onClick={()=>forceReturn(card)}>Ordonner la restitution</button>:request&&!alreadyApproved&&!awaitingHandover&&['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'].includes(user.role)?<button className={styles.documentApproveBtn} onClick={()=>decide(String(request.id),true)}>✓ Approuver</button>:<span className={styles.waitingStatus}>{alreadyApproved?'Votre validation est enregistrée':'En attente du responsable'}</span>}</td></tr>})}{!rows.length&&<tr><td colSpan={10}><div className={styles.documentEmpty}>Aucune carte distribuée à récupérer ce mois.</div></td></tr>}</tbody></table></div></section>;
 }
 function DocumentsView({token,notify}:{token:string;notify:(message:string)=>void}){
  const [period,setPeriod]=useState<'WEEK'|'MONTH'>('WEEK');const [start,setStart]=useState(new Date().toISOString().slice(0,10));const [busy,setBusy]=useState(false);
@@ -3230,6 +3275,7 @@ function CardTable({
               <th>ANCIENNE → NOUVELLE</th>
               <th>PLAFOND / CONSOMMATION TOTALE</th>
               <th>STATUT</th>
+              <th>RESPONSABLE ACTUEL</th>
               <th>ACTION</th>
             </tr>
           </thead>
@@ -3314,6 +3360,10 @@ function CardTable({
                   {c.opposition_reason && <small>{c.opposition_reason}</small>}
                 </td>
                 <td>
+                  <b>{c.responsible_name??"Non attribuée"}</b>
+                  <small>{c.latest_action_type?`Dernière action : ${c.latest_action_type} · ${c.latest_action_responsible??"—"}`:"Aucune action tracée"}</small>
+                </td>
+                <td>
                   {user.role === "NAJIB_ASSIGNER" ? (
                     c.status === "TO_ASSIGN" && !locked ? (
                       <button
@@ -3326,17 +3376,17 @@ function CardTable({
                       <span>{locked ? `Verrouillée — ancienne carte à ${previousRate}%` : "En attente"}</span>
                     )
                   ) : (
-                    <button className={styles.smallBtn} onClick={() => edit(c)}>
+                    <div className={styles.cardActionButtons}><button className={styles.smallBtn} onClick={() => edit(c)}>
                       {canConfirm(user.role) && c.finance_status === "PENDING"
                         ? "Vérifier"
                         : "Modifier"}
-                    </button>
+                    </button>{canManage(user.role)&&<button className={styles.smallBtn} onClick={()=>edit({...c,initial_action:"responsible"})}>Responsable</button>}</div>
                   )}
                 </td>
               </tr>
               {user.role === "NAJIB_ASSIGNER" && c.card_category === "OFF_PARK" && (
                 <tr className={styles.allocationRow}>
-                  <td colSpan={7}>
+                  <td colSpan={8}>
                     <div className={styles.allocationDetails}>
                       <div className={styles.allocationSummary}>
                         <b>Détail de la répartition du responsable</b>
@@ -3406,11 +3456,11 @@ function ModalForm({
   const requestCard = requestCards.find((item) => item.id === requestCardId);
   const eligibleFundingSources=requestCards.filter(item=>item.status==="ACTIVE"&&item.id!==requestCardId&&Number(item.monthly_limit)>0&&Number(item.consumption_rate??0)>=60);
   const [action, setAction] = useState(
-    card && canAssign(user.role) && card.status === "TO_ASSIGN"
+    card?.initial_action??(card && canAssign(user.role) && card.status === "TO_ASSIGN"
       ? "assign"
       : canManageCards(user.role)
         ? "editDetails"
-        : "distributed",
+        : "distributed"),
   );
   const editFields: [string, string, string?][] =
     editingRow?.view === "vehicles"
@@ -3513,7 +3563,7 @@ function ModalForm({
                     <option value="replace">Lier une carte remplaçante</option>
                   </>
                 )}
-                {canManage(user.role)&&<option value="responsible">Attribuer à un responsable hors parc</option>}
+                {canManage(user.role)&&<option value="responsible">Changer / transférer le responsable</option>}
                 {canConfirm(user.role) && (
                   <>
                     <option value="oppose">Mettre en opposition</option>
@@ -3576,13 +3626,15 @@ function ModalForm({
                 </select>
               </label>
             )}
-            {action==="responsible"&&<label className={styles.fullField}>Responsable hors parc<select name="responsibleUserId" required defaultValue={card?.responsible_user_id??""}><option value="" disabled>Sélectionner un responsable</option>{responsibles.map(item=><option value={item.id} key={item.id}>{item.name} · {item.email}</option>)}</select></label>}
+            {action==="responsible"&&<><div className={styles.workflowInfo}><b>Responsable actuel</b><span>{responsibles.find(item=>item.id===card?.responsible_user_id)?.name??"Aucun responsable"}</span></div><label className={styles.fullField}>Nouveau responsable de la carte<select name="responsibleUserId" required defaultValue=""><option value="" disabled>Sélectionner un autre utilisateur</option>{responsibles.filter(item=>item.id!==card?.responsible_user_id).map(item=><option value={item.id} key={item.id}>{item.name} · {item.email}</option>)}</select></label></>}
+            <label className={styles.fullField}>Responsable de cette action<select name="actionResponsibleUserId" required defaultValue=""><option value="" disabled>Sélectionner le responsable obligatoire</option>{responsibles.map(item=><option value={item.id} key={item.id}>{item.name} · {item.email}</option>)}</select></label>
             {["LOST", "STOLEN", "oppose", "replace"].includes(action) && (
               <label className={styles.fullField}>
                 Motif / observation
                 <textarea name="reason" required />
               </label>
             )}
+            {!["LOST", "STOLEN", "oppose", "replace"].includes(action) && <label className={styles.fullField}>Observation de traçabilité (facultative)<textarea name="actionObservation" placeholder="Précision sur la distribution, restitution, alimentation ou autre action" /></label>}
             <div className={styles.workflowInfo}>
               <b>Règle appliquée</b>
               <span>
@@ -3633,6 +3685,7 @@ function ModalForm({
                 )}
                 {requestType!=="CUSTODY_CHANGE"?<label>Plafond demandé<input name="plafond" type="number" min={requestType === "LIMIT_CHANGE" ? (requestCard?.monthly_limit ?? 0) + 0.001 : 0} step="0.001" required /></label>:<input type="hidden" name="plafond" value="0"/>}
                 <label className={styles.fullField}>Motif de la demande<input name="motif" required minLength={3} /></label>
+                <label className={styles.fullField}>Responsable de l’alimentation / restitution / distribution<select name="responsableAction" required defaultValue=""><option value="" disabled>Sélectionner le responsable obligatoire</option>{responsibles.map(item=><option value={item.id} key={item.id}>{item.name} · {item.email}</option>)}</select></label>
               </>
             )}
             {fields[type].map((f) => (
@@ -3805,6 +3858,7 @@ function Login({
 type TotalMobilityStatus={customerNumber?:string;siteNumber?:string;enabled?:boolean;syncIntervalMinutes?:number;lastSuccessAt?:string;lastError?:string};
 type TotalMobilityRun={id:string;startedAt:string;status:string;fetchedRows:number;importedRows:number;duplicateRows:number;reviewRows?:number;errorMessage?:string;metadata?:{dateFrom?:string;dateTo?:string}};
 type TotalAgentStatus={state:"IDLE"|"STARTING"|"SIGNING_IN"|"CODE_REQUIRED"|"EXTRACTING"|"SUCCESS"|"FAILED";message:string;updatedAt:string;result?:{imported?:number}};
+type TotalCardReconciliation={id:string;cardNumber:string;applicationStatus:string;totalStatus?:string;checkedAt?:string;responsibleName?:string;conformity:"COMPLIANT"|"MISMATCH"|"NOT_EXTRACTED";pendingAction?:string};
 type TotalMobilityPayload={CustomerId?:string;CustomerNumber?:string;SiteNumber?:string;UserId?:string;usersname?:string};
 function readTotalMobilityPayload(raw:string):TotalMobilityPayload{
   const text=raw.trim();
@@ -3822,6 +3876,7 @@ function Settings({ reset,token,user,notify,onSynced }: { reset:()=>void;token:s
   const [busy,setBusy]=useState(false);
   const [agent,setAgent]=useState<TotalAgentStatus|null>(null);
   const [verificationCode,setVerificationCode]=useState("");
+  const [totalCards,setTotalCards]=useState<TotalCardReconciliation[]>([]);
   const direction=isDirection(user.role);
   async function reconnectWithAgent(){
     if(!token)return;
@@ -3835,14 +3890,15 @@ function Settings({ reset,token,user,notify,onSynced }: { reset:()=>void;token:s
   }
   async function submitVerificationCode(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!token)return;setBusy(true);try{const response=await fetch(`${API}/total-mobility/agent/code`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({code:verificationCode})});const body=await response.json().catch(()=>({})) as TotalAgentStatus&{message?:string|string[]};if(!response.ok)throw new Error(Array.isArray(body.message)?body.message.join(" · "):body.message||"Code refusé");setAgent(body);setVerificationCode("");}catch(error){notify(error instanceof Error?error.message:"Code Total refusé");}finally{setBusy(false);}}
   useEffect(()=>{if(!token||!agent||!["STARTING","SIGNING_IN","CODE_REQUIRED","EXTRACTING"].includes(agent.state))return;const poll=window.setInterval(()=>{void fetch(`${API}/total-mobility/agent/status`,{headers:{Authorization:`Bearer ${token}`}}).then(async response=>{if(!response.ok)return;const next=await response.json() as TotalAgentStatus;setAgent(next);if(next.state==="SUCCESS"){setBusy(false);notify(`Total connecté : ${next.result?.imported??0} transaction(s) actualisée(s).`);await loadTotal();onSynced();}else if(next.state==="FAILED"){setBusy(false);notify(next.message);}}).catch(()=>undefined);},1200);return()=>window.clearInterval(poll);},[agent,token]); // eslint-disable-line react-hooks/exhaustive-deps
-  async function loadTotal(){if(!token||!direction)return;try{const headers={Authorization:`Bearer ${token}`};const [a,b]=await Promise.all([fetch(`${API}/total-mobility/status`,{headers}),fetch(`${API}/total-mobility/runs`,{headers})]);if(a.ok)setTotal(await a.json());if(b.ok)setRuns(await b.json());}catch{/* Rechargement au prochain affichage. */}}
+  async function loadTotal(){if(!token||!direction)return;try{const headers={Authorization:`Bearer ${token}`};const [a,b,c]=await Promise.all([fetch(`${API}/total-mobility/status`,{headers}),fetch(`${API}/total-mobility/runs`,{headers}),fetch(`${API}/total-mobility/cards/reconciliation`,{headers})]);if(a.ok)setTotal(await a.json());if(b.ok)setRuns(await b.json());if(c.ok)setTotalCards(await c.json());}catch{/* Rechargement au prochain affichage. */}}
   useEffect(()=>{
     if(!token||!direction)return;
     const headers={Authorization:`Bearer ${token}`};
-    void Promise.all([fetch(`${API}/total-mobility/status`,{headers}),fetch(`${API}/total-mobility/runs`,{headers})])
-      .then(async([statusResponse,runsResponse])=>{
+    void Promise.all([fetch(`${API}/total-mobility/status`,{headers}),fetch(`${API}/total-mobility/runs`,{headers}),fetch(`${API}/total-mobility/cards/reconciliation`,{headers})])
+      .then(async([statusResponse,runsResponse,cardsResponse])=>{
         if(statusResponse.ok)setTotal(await statusResponse.json());
         if(runsResponse.ok)setRuns(await runsResponse.json());
+        if(cardsResponse.ok)setTotalCards(await cardsResponse.json());
       }).catch(()=>undefined);
   },[token,direction]);
   async function connect(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!token)return;const formElement=event.currentTarget;setBusy(true);try{const form=new FormData(formElement);const simplePayload=String(form.get("totalPayload")??"").trim();const copied=simplePayload?readTotalMobilityPayload(simplePayload):{};const configuration={customerId:copied.CustomerId||String(form.get("customerId")??""),customerNumber:copied.CustomerNumber||String(form.get("customerNumber")??""),siteNumber:copied.SiteNumber||String(form.get("siteNumber")??""),userId:copied.UserId||String(form.get("totalUserId")??""),username:copied.usersname||String(form.get("totalUsername")??""),refreshToken:String(form.get("refreshToken")??""),syncIntervalMinutes:Number(form.get("syncIntervalMinutes")??60)};if(!configuration.customerId||!configuration.customerNumber||!configuration.siteNumber)throw new Error("La configuration copiée ne contient pas les informations client Total. Utilisez « Copy value » sur Request Payload.");const response=await fetch(`${API}/total-mobility/connect`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify(configuration)});if(!response.ok){const raw=await response.text();let message="";try{const body=JSON.parse(raw) as {message?:string|string[]};message=Array.isArray(body.message)?body.message.join(" · "):body.message??"";}catch{message=raw;}throw new Error(message||`Connexion Total refusée (${response.status})`);}formElement.reset();notify("Total Mobility est connecté. Les transactions seront désormais extraites automatiquement, sans fichier CSV ou Excel.");await loadTotal();}catch(error){notify(error instanceof Error?error.message:"Connexion Total impossible");}finally{setBusy(false);}}
@@ -3864,6 +3920,7 @@ function Settings({ reset,token,user,notify,onSynced }: { reset:()=>void;token:s
           <button className={styles.connectorConnectButton} disabled={busy}>{busy?"Détection et vérification…":"Détecter et connecter automatiquement"}</button>
         </form></details>
         {runs.length>0&&<details className={styles.connectorRuns} open><summary>Journal des extractions Total</summary><div className={styles.tableWrap}><table><thead><tr><th>Date</th><th>Période</th><th>État</th><th>Reçues</th><th>Réécrites</th><th>Doublons</th><th>À contrôler</th></tr></thead><tbody>{runs.slice(0,10).map(run=><tr key={run.id}><td>{new Date(run.startedAt).toLocaleString("fr-FR")}</td><td>{run.metadata?.dateFrom==="2026-08-01"?"Depuis le 01/08/2026":run.metadata?.dateFrom??"Automatique"}</td><td><b>{run.status}</b>{run.errorMessage&&<small> — {run.errorMessage}</small>}</td><td>{run.fetchedRows}</td><td>{run.importedRows}</td><td>{run.duplicateRows}</td><td>{run.reviewRows??0}</td></tr>)}</tbody></table></div></details>}
+        {totalCards.length>0&&<details className={styles.connectorRuns} open><summary>Conformité des statuts des cartes ({totalCards.filter(card=>card.conformity==='MISMATCH').length} écart(s))</summary><div className={styles.tableWrap}><table><thead><tr><th>Carte</th><th>Responsable</th><th>Application</th><th>Total réel</th><th>Conformité</th><th>Action Total à faire</th></tr></thead><tbody>{totalCards.map(card=><tr key={card.id}><td><b>{card.cardNumber}</b></td><td>{card.responsibleName??'Coffre'}</td><td>{card.applicationStatus}</td><td>{card.totalStatus??'Non extrait'}</td><td><b>{card.conformity==='COMPLIANT'?'✓ Conforme':card.conformity==='MISMATCH'?'⚠ Écart':'○ À extraire'}</b></td><td>{card.pendingAction==='DEACTIVATE'?'Désactiver dans Gérer les cartes':card.pendingAction==='ACTIVATE'?'Activer dans Gérer les cartes':'—'}</td></tr>)}</tbody></table></div></details>}
       </article>}
       {agent&&["STARTING","SIGNING_IN","CODE_REQUIRED","EXTRACTING","FAILED","SUCCESS"].includes(agent.state)&&<div className={styles.overlay}><section className={`${styles.modal} ${styles.totalAgentModal}`}><div className={styles.modalHead}><div><h2>Agent Total Mobility</h2><p>Connexion et extraction sécurisées</p></div>{["FAILED","SUCCESS"].includes(agent.state)&&<button type="button" onClick={()=>setAgent(null)}>×</button>}</div><div className={styles.agentBody}><span className={`${styles.agentPulse} ${agent.state==="FAILED"?styles.agentFailed:""}`}>{agent.state==="SUCCESS"?"✓":agent.state==="FAILED"?"!":"●"}</span><h3>{agent.message}</h3>{agent.state==="CODE_REQUIRED"&&<form onSubmit={submitVerificationCode}><label>Code de vérification reçu<input autoFocus inputMode="numeric" autoComplete="one-time-code" value={verificationCode} onChange={event=>setVerificationCode(event.target.value.replace(/\D/g,"").slice(0,8))} placeholder="000000" minLength={4} required /></label><button disabled={busy||verificationCode.length<4}>Valider le code</button></form>}{!["CODE_REQUIRED","FAILED","SUCCESS"].includes(agent.state)&&<p>Gardez cette fenêtre ouverte. L’opération continue automatiquement.</p>}{agent.state==="FAILED"&&<p>Vérifiez les secrets Render ou réessayez. Si Total affiche un CAPTCHA, celui-ci doit être traité manuellement.</p>}{agent.state==="SUCCESS"&&<button onClick={()=>setAgent(null)}>Terminer</button>}</div></section></div>}
       <article>

@@ -59,6 +59,13 @@ type RemoteTransaction = {
   previousMileage?: string;
   transactionStatus?: string;
 };
+export type RemoteCardStatus = {
+  cardNumber: string;
+  status: string;
+  holderName?: string;
+  registration?: string;
+  raw?: Record<string, unknown>;
+};
 
 @Injectable()
 export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
@@ -121,6 +128,50 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
     imported_rows AS "importedRows",duplicate_rows AS "duplicateRows",review_rows AS "reviewRows",error_message AS "errorMessage",metadata
     FROM total_mobility_sync_run ORDER BY started_at DESC LIMIT 50`);
   }
+  async cardReconciliation() {
+    return this.db.query(`SELECT fc.id,fc.masked_card_number AS "cardNumber",fc.status AS "applicationStatus",
+      fc.total_mobility_status AS "totalStatus",fc.total_mobility_checked_at AS "checkedAt",
+      u.display_name AS "responsibleName",
+      CASE WHEN fc.total_mobility_checked_at IS NULL THEN 'NOT_EXTRACTED'
+        WHEN fc.status='SAFE' AND upper(coalesce(fc.total_mobility_status,'')) NOT IN ('INACTIVE','BLOCKED','SUSPENDED','OPPOSED','CANCELLED') THEN 'MISMATCH'
+        WHEN fc.status IN ('ACTIVE','DISTRIBUTED','ASSIGNED') AND upper(coalesce(fc.total_mobility_status,'')) NOT IN ('ACTIVE','ACTIVATED') THEN 'MISMATCH'
+        ELSE 'COMPLIANT' END AS conformity,
+      pending.id AS "pendingActionId",pending.action_type AS "pendingAction"
+      FROM fuel_card fc LEFT JOIN app_user u ON u.id=fc.responsible_user_id
+      LEFT JOIN LATERAL (SELECT a.id,a.action_type FROM total_mobility_card_action a
+        WHERE a.fuel_card_id=fc.id AND a.status='PENDING' ORDER BY a.requested_at DESC LIMIT 1) pending ON true
+      WHERE fc.deleted_at IS NULL ORDER BY conformity DESC,fc.masked_card_number`);
+  }
+  async importCardStatuses(cards: RemoteCardStatus[], actor: Actor) {
+    if (!cards.length) throw new BadRequestException('Aucun statut de carte trouvé dans « Gérer les cartes » sur Total Mobility');
+    return this.db.transaction(async client => {
+      let matched=0;
+      for (const card of cards) {
+        const number=this.normalizeCardNumber(card.cardNumber);
+        const remoteStatus=card.status.trim().toUpperCase();
+        if(!number||!remoteStatus)continue;
+        await client.query(`INSERT INTO total_mobility_card_snapshot(card_number,remote_status,holder_name,registration,raw_data)
+          VALUES($1,$2,$3,$4,$5)`,[number,remoteStatus,card.holderName??null,card.registration??null,card.raw??{}]);
+        const updated=await client.query(`UPDATE fuel_card SET total_mobility_status=$2,total_mobility_checked_at=now(),updated_at=now()
+          WHERE deleted_at IS NULL AND regexp_replace(masked_card_number,'[^0-9]','','g') LIKE '%'||right($1,4)
+          RETURNING id,status`,[number,remoteStatus]);
+        for(const local of updated.rows){
+          matched++;
+          const pending=await client.query(`SELECT id,action_type FROM total_mobility_card_action WHERE fuel_card_id=$1 AND status='PENDING'`,[local.id]);
+          for(const action of pending.rows){
+            const inactive=['INACTIVE','BLOCKED','SUSPENDED','OPPOSED','CANCELLED'].includes(remoteStatus);
+            const active=['ACTIVE','ACTIVATED'].includes(remoteStatus);
+            if((action.action_type==='DEACTIVATE'&&inactive)||(action.action_type==='ACTIVATE'&&active))
+              await client.query(`UPDATE total_mobility_card_action SET status='CONFIRMED',confirmed_at=now(),confirmed_by=$2,remote_status=$3 WHERE id=$1`,[action.id,actor.sub,remoteStatus]);
+          }
+        }
+      }
+      await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
+        VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{extracted:cards.length,matched}]);
+      return {extracted:cards.length,matched,unmatched:cards.length-matched};
+    });
+  }
+  private normalizeCardNumber(value:string){return value.replace(/[^0-9]/g,'');}
   async connect(dto: ConfigDto, actor: Actor) {
     const refreshToken = this.normalizeRefreshToken(dto.refreshToken);
     try {

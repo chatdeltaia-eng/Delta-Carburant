@@ -15,6 +15,7 @@ import { FuelPricesModule } from './fuel-prices/fuel-prices.module';
 import { TotalMobilityModule } from './total-mobility/total-mobility.module';
 import { ComplaintsModule } from './complaints/complaints.module';
 import { DocumentsModule } from './documents/documents.module';
+import { MailingModule } from './mailing/mailing.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { DocumentsModule } from './documents/documents.module';
     TotalMobilityModule,
     ComplaintsModule,
     DocumentsModule,
+    MailingModule,
   ],
   controllers: [AppController],
   providers: [AppService],

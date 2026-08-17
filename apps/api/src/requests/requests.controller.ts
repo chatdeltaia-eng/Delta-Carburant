@@ -15,6 +15,7 @@ class CreateRequestDto {
   @IsString() @MinLength(2) vehicle!: string;
   @IsNumber() @Min(0) requestedLimit!: number;
   @IsString() @MinLength(3) reason!: string;
+  @IsUUID() responsibleUserId!: string;
 }
 class DecisionDto {
   @IsIn(['APPROVED','REJECTED']) decision!: 'APPROVED' | 'REJECTED';
@@ -28,7 +29,7 @@ export class RequestsController {
   constructor(private readonly requests: RequestsService) {}
   @Get() @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE','NAJIB_ASSIGNER')
   list(@Req() req: { user: { sub: string; role: string } }) { return this.requests.list(req.user); }
-  @Post() @Roles('NAJIB_ASSIGNER')
+  @Post() @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE','NAJIB_ASSIGNER')
   create(@Body() dto: CreateRequestDto, @Req() req: { user: { sub: string; email: string; companyId?: string } }) { return this.requests.create(dto, req.user); }
   @Patch(':id/cancel') @Roles('NAJIB_ASSIGNER')
   cancel(@Param('id', ParseUUIDPipe) id: string,
@@ -36,9 +37,12 @@ export class RequestsController {
   @Patch(':id/decision') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE')
   decide(@Param('id', ParseUUIDPipe) id: string, @Body() dto: DecisionDto,
     @Req() req: { user: { sub: string; email: string } }) { return this.requests.decide(id, dto, req.user); }
-  @Patch(':id/handover') @Roles('NAJIB_ASSIGNER')
+  @Patch(':id/handover') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE','NAJIB_ASSIGNER')
   handover(@Param('id', ParseUUIDPipe) id: string,
     @Req() req: { user: { sub: string; email: string; role: string } }) { return this.requests.confirmPhysicalHandover(id, req.user); }
+  @Post('cards/:cardId/force-return') @Roles('DIRECTION_GENERAL')
+  forceReturn(@Param('cardId', ParseUUIDPipe) cardId:string,
+    @Body() dto:{reason?:string},@Req() req:{user:{sub:string;email:string;role:string}}){return this.requests.forceReturn(cardId,dto.reason,req.user);}
   @Patch(':id/archive') @Roles('ZIN_FINANCE')
   archive(@Param('id', ParseUUIDPipe) id: string,
     @Req() req: { user: { sub: string; email: string; role: string } }) { return this.requests.archive(id, req.user); }

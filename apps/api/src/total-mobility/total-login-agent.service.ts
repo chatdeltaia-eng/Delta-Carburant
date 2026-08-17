@@ -13,6 +13,7 @@ import {
   type Page,
 } from 'playwright';
 import { TotalMobilityService } from './total-mobility.service';
+import type { RemoteCardStatus } from './total-mobility.service';
 
 type Actor = { sub: string; email: string };
 type AgentState =
@@ -217,12 +218,64 @@ export class TotalLoginAgentService implements OnModuleDestroy {
       'Connexion réussie. Extraction des transactions…',
     );
     await this.total.reconnect(refreshToken, this.actor);
-    const result = await this.total.syncNow(this.actor, '2026-08-01');
+    const transactions = await this.total.syncNow(this.actor, '2026-08-01');
+    this.setStatus('EXTRACTING', 'Transactions actualisées. Ouverture de « Gérer les cartes »…');
+    const cardRows = await this.extractCardStatuses();
+    const cards = await this.total.importCardStatuses(cardRows, this.actor);
     this.statusValue = {
-      ...this.status('SUCCESS', 'Total connecté et transactions actualisées'),
-      result,
+      ...this.status('SUCCESS', 'Transactions et statuts des cartes Total actualisés'),
+      result: { ...transactions, cards },
     };
     await this.closeBrowser();
+  }
+
+  private async extractCardStatuses(): Promise<RemoteCardStatus[]> {
+    const page=this.page;
+    if(!page)throw new Error('Le navigateur Total a été fermé avant l’extraction des cartes');
+    const captured: unknown[]=[];
+    const listener=async(response: import('playwright').Response)=>{
+      if(!/card|carte|support/i.test(response.url()))return;
+      try{captured.push(await response.json());}catch{/* Réponse Total non JSON. */}
+    };
+    page.on('response',listener);
+    try{
+      const manage=await this.findVisible(page,[
+        'a:has-text("Gérer les cartes")','button:has-text("Gérer les cartes")',
+        'a:has-text("Manage cards")','button:has-text("Manage cards")',
+        '[href*="card" i]'
+      ],15_000);
+      if(!manage)throw new Error('Le menu « Gérer les cartes » est introuvable sur Total Mobility');
+      await manage.click();
+      await page.waitForTimeout(4_000);
+      const fromJson=this.cardsFromUnknown(captured);
+      if(fromJson.length)return this.uniqueCards(fromJson);
+      const rows=await page.locator('table tbody tr').evaluateAll(elements=>elements.map(row=>
+        Array.from(row.querySelectorAll('td')).map(cell=>(cell.textContent??'').trim())));
+      const fromTable=rows.map(cells=>({cardNumber:cells.find(value=>/\d{4,}/.test(value))??'',
+        status:cells.find(value=>/active|inactive|bloqu|suspend|oppos|actif|inactif/i.test(value))??'',
+        holderName:cells[1],registration:cells.find(value=>/\bTU\b|\d{2,4}\s*TU/i.test(value)),raw:{cells}}))
+        .filter(row=>row.cardNumber&&row.status);
+      return this.uniqueCards(fromTable);
+    }finally{page.off('response',listener);}
+  }
+
+  private cardsFromUnknown(input:unknown):RemoteCardStatus[]{
+    const result:RemoteCardStatus[]=[];
+    const visit=(value:unknown)=>{
+      if(Array.isArray(value)){value.forEach(visit);return;}
+      if(!value||typeof value!=='object')return;
+      const row=value as Record<string,unknown>;
+      const read=(pattern:RegExp)=>Object.entries(row).find(([key])=>pattern.test(key))?.[1];
+      const number=read(/card.*(number|no)|pan|numero.*carte/i);
+      const status=read(/card.*status|status.*card|statut|state/i);
+      if((typeof number==='string'||typeof number==='number')&&(typeof status==='string'||typeof status==='number'))
+        result.push({cardNumber:String(number),status:String(status),holderName:String(read(/holder|titulaire|beneficiary/i)??''),registration:String(read(/registration|immatriculation|plate/i)??''),raw:row});
+      Object.values(row).forEach(visit);
+    };
+    visit(input);return result;
+  }
+  private uniqueCards(cards:RemoteCardStatus[]){
+    const seen=new Set<string>();return cards.filter(card=>{const key=card.cardNumber.replace(/\D/g,'');if(!key||seen.has(key))return false;seen.add(key);return true;});
   }
 
   private async fillFirst(page: Page, selectors: string[], value: string) {

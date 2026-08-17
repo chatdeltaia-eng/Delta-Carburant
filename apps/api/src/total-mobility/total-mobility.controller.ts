@@ -74,6 +74,9 @@ export class TotalMobilityController {
   @Get('runs') runs() {
     return this.total.runs();
   }
+  @Get('cards/reconciliation') cardReconciliation() {
+    return this.total.cardReconciliation();
+  }
   @Post('connect') connect(
     @Body() dto: ConfigureTotalMobilityDto,
     @Req() req: { user: { sub: string; email: string } },

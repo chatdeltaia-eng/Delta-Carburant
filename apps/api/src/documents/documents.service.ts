@@ -23,22 +23,24 @@ type Actor={sub:string;email:string;role:string};
   rr.restored_at AS "restoredAt",restored.display_name AS "restoredBy",fc.status AS "cardStatus",fc.monthly_limit::float AS "currentLimit"
   FROM card_return_receipt rr JOIN fuel_card fc ON fc.id=rr.fuel_card_id JOIN app_user returned ON returned.id=rr.returned_by
   JOIN app_user zin ON zin.id=rr.received_by JOIN card_request cr ON cr.id=rr.card_request_id JOIN app_user dg ON dg.id=cr.dg_approved_by LEFT JOIN app_user restored ON restored.id=rr.restored_by
-  WHERE returned.role='NAJIB_ASSIGNER'
-    AND ($2<>'NAJIB_ASSIGNER' OR rr.returned_by=$1)
+  WHERE ($2<>'NAJIB_ASSIGNER' OR rr.returned_by=$1)
   ORDER BY rr.returned_at DESC`,[actor.sub,actor.role]);}
  async restoreReturnedCard(id:string,actor:Actor){return this.db.transaction(async client=>{
   const found=await client.query(`SELECT rr.*,fc.status,fc.monthly_limit,fc.masked_card_number,cr.beneficiary_id,cr.vehicle_id
     FROM card_return_receipt rr JOIN fuel_card fc ON fc.id=rr.fuel_card_id JOIN card_request cr ON cr.id=rr.card_request_id
     WHERE rr.id=$1 FOR UPDATE OF rr,fc`,[id]);const receipt=found.rows[0];
   if(!receipt)throw new NotFoundException('Reçu de restitution introuvable');
-  if(receipt.restored_at)throw new BadRequestException('Cette carte a déjà été restaurée à Najib');
+  if(receipt.restored_at)throw new BadRequestException('Cette carte a déjà été redistribuée à son responsable');
   if(receipt.status!=='SAFE')throw new BadRequestException('La carte doit être au coffre avant sa restauration');
   if(Number(receipt.monthly_limit)<=0)throw new BadRequestException('Le plafond de la carte doit être configuré avant sa restauration');
   await client.query(`UPDATE fuel_card SET status='ACTIVE',card_category='OFF_PARK',responsible_user_id=$2 WHERE id=$1`,[receipt.fuel_card_id,receipt.returned_by]);
+  await client.query(`INSERT INTO total_mobility_card_action(fuel_card_id,action_type,requested_by,reason)
+    VALUES($1,'ACTIVATE',$2,'Carte redistribuée dans Delta Carburant')
+    ON CONFLICT(fuel_card_id,action_type) WHERE status='PENDING' DO NOTHING`,[receipt.fuel_card_id,actor.sub]);
   await client.query(`INSERT INTO card_assignment(fuel_card_id,beneficiary_id,vehicle_id,workflow_status,requested_by,reviewed_by,reviewed_at)
     VALUES($1,$2,$3,'APPROVED_ZIN',$4,$5,now())`,[receipt.fuel_card_id,receipt.beneficiary_id,receipt.vehicle_id,receipt.returned_by,actor.sub]);
   await client.query(`UPDATE card_return_receipt SET restored_by=$2,restored_at=now(),restored_limit=$3 WHERE id=$1`,[id,actor.sub,receipt.monthly_limit]);
-  await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id) VALUES($1,'Carte restaurée à Najib',$2,'returns','fuel_card',$3)`,[receipt.returned_by,`La carte ${receipt.masked_card_number} vous a été restaurée avec un plafond de ${Number(receipt.monthly_limit).toFixed(3)} TND`,receipt.fuel_card_id]);
+  await client.query(`INSERT INTO notification(user_id,title,message,target_view,entity_type,entity_id) VALUES($1,'Carte redistribuée',$2,'returns','fuel_card',$3)`,[receipt.returned_by,`La carte ${receipt.masked_card_number} vous a été redistribuée avec un plafond de ${Number(receipt.monthly_limit).toFixed(3)} TND`,receipt.fuel_card_id]);
   await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'RESTORE_RETURNED_CARD','fuel_card',$2,$3)`,[actor.email,receipt.fuel_card_id,{responsibleUserId:receipt.returned_by,monthlyLimit:Number(receipt.monthly_limit),returnReceiptId:id}]);
   return {id,cardId:receipt.fuel_card_id,status:'ACTIVE',restoredTo:receipt.returned_by,monthlyLimit:Number(receipt.monthly_limit)};
  });}

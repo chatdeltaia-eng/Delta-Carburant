@@ -356,25 +356,45 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(await search.isVisible({timeout:1_000}).catch(()=>false)){
         await search.fill(names[0]??'');await page.waitForTimeout(1_200);
       }
-      // La page /customer-selection affiche généralement le nom du client et
-      // non son numéro. Cliquer la carte complète afin de déclencher le choix.
+      // La version tunisienne affiche des boutons radio suivis d'un bouton
+      // « Ok ». Cliquer seulement le texte/la carte ne valide pas le client et
+      // laisse l'agent bloqué sur /customer-selection.
       if(/customer-selection/i.test(page.url())){
-        for(const name of names){
-          const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-          const card=page.locator('button, a, [role="button"], [class*="card" i], [class*="client" i]')
-            .filter({hasText:new RegExp(`^\\s*${escaped}\\s*$`,'i')}).first();
-          if(await card.isVisible({timeout:1_000}).catch(()=>false)){
-            await card.click();await page.waitForTimeout(1_800);break;
+        let selected=false;
+        for(const frame of page.frames()){
+          for(const name of names){
+            const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+            const exactName=new RegExp(`^\\s*${escaped}\\s*$`,'i');
+            const text=frame.getByText(exactName).first();
+            if(!await text.isVisible({timeout:500}).catch(()=>false))continue;
+            // MatRadioButton/Angular place généralement input[type=radio]
+            // dans le label ou dans son conteneur parent.
+            const radio=text.locator('xpath=ancestor-or-self::*[self::label or @role="radio" or .//input[@type="radio"]][1]')
+              .locator('input[type="radio"], [role="radio"]').first();
+            if(await radio.count())await radio.click({force:true});
+            else await text.click({force:true});
+            selected=true;
+            break;
           }
-          const label=page.getByText(new RegExp(`^\\s*${escaped}\\s*$`,'i')).first();
-          if(await label.isVisible({timeout:800}).catch(()=>false)){
-            await label.evaluate(element=>{
-              const target=element.closest('button, a, [role="button"], [class*="card" i], [class*="client" i]') as HTMLElement|null;
-              (target??element as HTMLElement).click();
-            });
-            await page.waitForTimeout(2_500);break;
+          if(selected)break;
+        }
+        if(!selected)throw new Error(`client ${names.join(' / ')||customer} introuvable`);
+
+        let confirmed=false;
+        for(const frame of page.frames()){
+          const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).first();
+          if(await ok.isVisible({timeout:500}).catch(()=>false)){
+            await ok.click();confirmed=true;break;
+          }
+          const fallback=frame.locator('button, [role="button"], input[type="submit"]')
+            .filter({hasText:/^\s*ok\s*$/i}).first();
+          if(await fallback.isVisible({timeout:300}).catch(()=>false)){
+            await fallback.click();confirmed=true;break;
           }
         }
+        if(!confirmed)throw new Error('bouton Ok de sélection du client introuvable');
+        await page.waitForURL(url=>!url.pathname.includes('customer-selection'),{timeout:15_000});
+        await page.waitForLoadState('domcontentloaded').catch(()=>undefined);
       }
       const site=connection.site_number?.trim();
       if(site){
@@ -383,8 +403,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           await siteChoice.click();await page.waitForTimeout(1_000);
         }
       }
+      if(/customer-selection/i.test(page.url()))
+        throw new Error('Total est resté sur l’écran « Choisir un client » après validation');
     }catch(error){
-      this.logger.warn(`Sélection automatique du client Total ${customer} non confirmée : ${error instanceof Error?error.message:String(error)}`);
+      const message=`Sélection automatique du client Total ${customer} impossible : ${error instanceof Error?error.message:String(error)}`;
+      this.logger.error(message);
+      throw new Error(message);
     }
   }
 

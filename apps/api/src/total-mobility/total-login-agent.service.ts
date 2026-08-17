@@ -299,8 +299,16 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       await page.goto('https://customer.fleet.totalenergies.com/tn/drivers',{waitUntil:'domcontentloaded',timeout:60_000});
       await page.waitForTimeout(4_000);
       const jsonDrivers=this.driversFromUnknown(captured);if(jsonDrivers.length)return this.uniqueDrivers(jsonDrivers);
-      const rows=await page.locator('table tbody tr').evaluateAll(elements=>elements.map(row=>Array.from(row.querySelectorAll('td')).map(cell=>(cell.textContent??'').trim())));
-      return this.uniqueDrivers(rows.map(cells=>({driverNumber:cells[0]??'',firstName:cells[1]??'',lastName:cells[2]??'',raw:{cells}})).filter(row=>/\d+/.test(row.driverNumber)&&Boolean(row.firstName||row.lastName)));
+      // Le portail Total utilise selon sa version un tableau HTML, Angular
+      // Material ou une grille ARIA. Il ne faut donc pas dépendre uniquement
+      // de `table tbody tr`.
+      const rowTexts=await page.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row')
+        .evaluateAll(elements=>elements.map(row=>(row.textContent??'').replace(/\s+/g,' ').trim()).filter(Boolean));
+      const fromRows=this.driversFromVisibleRows(rowTexts);if(fromRows.length)return this.uniqueDrivers(fromRows);
+      // Dernier recours robuste pour la grille virtuelle actuelle de Mobility
+      // Business : lecture du texte visible (0001, prénom, nom, etc.).
+      const bodyText=await page.locator('body').innerText();
+      return this.uniqueDrivers(this.driversFromVisibleText(bodyText));
     }finally{page.off('response',listener);}
   }
 
@@ -308,6 +316,33 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     const result:RemoteDriver[]=[];const visit=(value:unknown)=>{if(Array.isArray(value)){value.forEach(visit);return;}if(!value||typeof value!=='object')return;const row=value as Record<string,unknown>;const read=(pattern:RegExp)=>Object.entries(row).find(([key])=>pattern.test(key))?.[1];const number=read(/driver.*(number|no)|numero.*chauffeur|chauffeur.*numero/i);const first=read(/first.*name|prenom/i);const last=read(/last.*name|nom(?!.*client)/i);if((typeof number==='string'||typeof number==='number')&&(first||last))result.push({driverNumber:String(number),firstName:String(first??''),lastName:String(last??''),driverCode:String(read(/driver.*code|code.*chauffeur/i)??''),status:String(read(/status|statut|state/i)??''),raw:row});Object.values(row).forEach(visit);};visit(input);return result;
   }
   private uniqueDrivers(rows:RemoteDriver[]){const seen=new Set<string>();return rows.filter(row=>{const key=row.driverNumber.replace(/\D/g,'');if(!key||seen.has(key))return false;seen.add(key);row.driverNumber=key.padStart(4,'0');return true;});}
+
+  private driversFromVisibleRows(rows:string[]):RemoteDriver[]{
+    const result:RemoteDriver[]=[];
+    for(const text of rows){
+      const match=text.match(/(?:^|\s)(\d{4})(?:\s+)([\p{L}'’-]+)(?:\s+)([\p{L}'’ -]+?)(?=\s+(?:modifier|mise en opposition|actif|inactif|\d{4})|$)/iu);
+      if(match)result.push({driverNumber:match[1],firstName:match[2],lastName:match[3].trim(),raw:{text}});
+    }
+    return result;
+  }
+
+  private driversFromVisibleText(text:string):RemoteDriver[]{
+    const lines=text.split(/\r?\n/).map(line=>line.replace(/\s+/g,' ').trim()).filter(Boolean);
+    const ignored=/^(numéro de chauffeur|prénom|nom|modifier chauffeurs|mise en opposition|lignes par page|recherche)$/i;
+    const result:RemoteDriver[]=[];
+    for(let index=0;index<lines.length;index++){
+      if(!/^\d{4}$/.test(lines[index]))continue;
+      const values:string[]=[];
+      for(let cursor=index+1;cursor<lines.length&&values.length<2;cursor++){
+        const value=lines[cursor];
+        if(/^\d{4}$/.test(value))break;
+        if(ignored.test(value)||/^\d+\s*[–-]\s*\d+/.test(value))continue;
+        if(/^[\p{L}'’ -]{2,}$/u.test(value))values.push(value);
+      }
+      if(values.length===2)result.push({driverNumber:lines[index],firstName:values[0],lastName:values[1],raw:{source:'visible-text'}});
+    }
+    return result;
+  }
 
   private async extractVehicles():Promise<RemoteVehicle[]>{
     const page=this.page;if(!page)throw new Error('Le navigateur Total a été fermé avant l’extraction des véhicules');

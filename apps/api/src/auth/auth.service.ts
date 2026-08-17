@@ -21,7 +21,9 @@ export class AuthService {
     await this.db.query('UPDATE app_user SET last_login_at=now(), failed_login_attempts=0 WHERE id=$1', [user.id]);
     await this.db.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
       VALUES($1,'LOGIN','user_session',$2,$3)`, [user.email, user.id, { role: user.role, ip: context.ip, userAgent: context.userAgent }]);
-    await this.loginAlert.send({ name: user.display_name, email: user.email, role: user.role, ip: context.ip, userAgent: context.userAgent, occurredAt: new Date() });
+    // Do not make authentication depend on an external SMTP server. The alert
+    // is best-effort and reports its own failures in the API logs.
+    void this.loginAlert.send({ name: user.display_name, email: user.email, role: user.role, ip: context.ip, userAgent: context.userAgent, occurredAt: new Date() });
     return { accessToken, refreshToken, user: { id: user.id, email: user.email, name: user.display_name, role: user.role } };
   }
   async refresh(token: string) {

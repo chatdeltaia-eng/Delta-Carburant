@@ -2029,6 +2029,7 @@ export default function Home() {
         {view === "dashboard" ? (
           <Dashboard
             token={token}
+            companyId={selectedClientId??""}
             summary={summary}
             cards={cardsForUser}
             transactions={data.transactions}
@@ -2265,6 +2266,7 @@ function WorkflowGuide({
 
 function Dashboard({
   token,
+  companyId,
   summary,
   cards,
   transactions,
@@ -2275,6 +2277,7 @@ function Dashboard({
   analytics,
 }: {
   token:string;
+  companyId:string;
   summary: Record<string, number>;
   cards: Card[];
   transactions: Row[];
@@ -2287,7 +2290,7 @@ function Dashboard({
   const currentMonth=new Date().toISOString().slice(0,7);
   const [historyMonth,setHistoryMonth]=useState(currentMonth);
   const [history,setHistory]=useState<Record<string,unknown>|null>(null);
-  useEffect(()=>{let cancelled=false;fetch(`${API}/dashboard/history?month=${historyMonth}`,{headers:{Authorization:`Bearer ${token}`},cache:'no-store'}).then(response=>response.ok?response.json():Promise.reject()).then(payload=>{if(!cancelled)setHistory(payload)}).catch(()=>{if(!cancelled)setHistory(null)});return()=>{cancelled=true}},[token,historyMonth]);
+  useEffect(()=>{let cancelled=false;const scope=companyId?`&companyId=${encodeURIComponent(companyId)}`:"";fetch(`${API}/dashboard/history?month=${historyMonth}${scope}`,{headers:{Authorization:`Bearer ${token}`},cache:'no-store'}).then(response=>response.ok?response.json():Promise.reject()).then(payload=>{if(!cancelled)setHistory(payload)}).catch(()=>{if(!cancelled)setHistory(null)});return()=>{cancelled=true}},[token,historyMonth,companyId]);
   const historyCards=(history?.cards??[]) as Record<string,unknown>[];
   const periodCards=cards.map(card=>{const item=historyCards.find(row=>String(row.id)===card.id);return {...card,consumed_amount:Number(item?.consumed??0),consumption_rate:Math.min(100,Number(item?.rate??0))};});
   const [overviewSearch, setOverviewSearch] = useState("");

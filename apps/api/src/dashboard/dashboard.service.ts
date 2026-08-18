@@ -48,7 +48,7 @@ export class DashboardService {
       GROUP BY status ORDER BY count DESC`, [ownCards, actor.sub,companyId]);
     return { ...totals, ...entities, statuses };
   }
-  async history(month:string,actor:{sub:string;role:string}){
+  async history(month:string,actor:{sub:string;role:string},companyId=''){
     const selected=/^\d{4}-(0[1-9]|1[0-2])$/.test(month)?`${month}-01`:new Date().toISOString().slice(0,7)+'-01';
     const own=actor.role==='NAJIB_ASSIGNER';
     const cards=await this.db.query(`SELECT fc.id,fc.masked_card_number AS card,fc.monthly_limit::float AS "monthlyLimit",
@@ -57,7 +57,8 @@ export class DashboardService {
       FROM fuel_card fc LEFT JOIN fuel_transaction ft ON ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL
         AND ft.transaction_date>=date_trunc('month',$1::date) AND ft.transaction_date<date_trunc('month',$1::date)+interval '1 month'
       WHERE fc.deleted_at IS NULL AND ($2::boolean=false OR fc.responsible_user_id=$3)
-      GROUP BY fc.id ORDER BY consumed DESC`,[selected,own,actor.sub]);
+        AND ($4='' OR fc.company_id=$4::uuid)
+      GROUP BY fc.id ORDER BY consumed DESC`,[selected,own,actor.sub,companyId]);
     return {month:selected.slice(0,7),amount:cards.reduce((sum,row)=>sum+Number(row.consumed),0),liters:cards.reduce((sum,row)=>sum+Number(row.liters),0),transactions:cards.reduce((sum,row)=>sum+Number(row.transactions),0),cards};
   }
   async direction() {

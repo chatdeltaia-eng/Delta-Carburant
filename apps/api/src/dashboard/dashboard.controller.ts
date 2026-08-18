@@ -9,7 +9,7 @@ import { DashboardService } from './dashboard.service';
 export class DashboardController {
   constructor(private readonly dashboard: DashboardService) {}
   @Get('summary') summary(@Query('companyId') companyId='',@Req() req: { user: { sub: string; role: string } }) { return this.dashboard.summary(req.user,companyId); }
-  @Get('history') history(@Query('month') month:string,@Req() req:{user:{sub:string;role:string}}){return this.dashboard.history(month,req.user);}
+  @Get('history') history(@Query('month') month:string,@Query('companyId') companyId='',@Req() req:{user:{sub:string;role:string}}){return this.dashboard.history(month,req.user,companyId);}
   @Get('direction') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') direction() { return this.dashboard.direction(); }
   @Get('anomalies') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') anomalies() { return this.dashboard.anomalies(); }
   @Patch('anomalies/:id/resolve') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE')

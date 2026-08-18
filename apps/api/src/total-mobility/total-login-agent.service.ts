@@ -548,12 +548,15 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     await page.goto('https://customer.fleet.totalenergies.com/tn/customer-selection',{waitUntil:'domcontentloaded',timeout:60_000});
     await page.waitForTimeout(2_500);
     const names:string[]=[];
+    const knownClients=['DELTA CUISINE','IKIT TN','DELTA CUISINE DISTRIBUTION','STE LES TECHNIQUES DE MARBRE'];
     for(const frame of page.frames()){
-      const candidates=await frame.locator('label, [role="radio"], .q-radio').evaluateAll(elements=>elements.map(element=>(element.textContent??'').replace(/\s+/g,' ').trim()).filter(Boolean)).catch(()=>[]);
+      const candidates=await frame.locator('label, [role="radio"], .q-radio, .q-item:has([role="radio"]), .q-item:has(input[type="radio"])').evaluateAll(elements=>elements.map(element=>(element.textContent??'').replace(/\s+/g,' ').trim()).filter(Boolean)).catch(()=>[]);
       for(const name of candidates){
         const clean=name.replace(/^\s*[○◉●]\s*/,'').trim();
         if(clean.length>2&&!/choisir|bienvenue|continuer|annuler|^ok$/i.test(clean)&&!names.includes(clean))names.push(clean);
       }
+      const body=(await frame.locator('body').innerText().catch(()=>''));
+      for(const known of knownClients)if(body.toUpperCase().includes(known)&&!names.includes(known))names.push(known);
     }
     if(!names.length)throw new Error('Aucun client Total trouvé dans « Choisir un client »');
     const results:unknown[]=[];
@@ -562,11 +565,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         await page.goto('https://customer.fleet.totalenergies.com/tn/customer-selection',{waitUntil:'domcontentloaded',timeout:60_000});
         await page.waitForTimeout(1_500);
       }
-      let selected=false;
-      for(const frame of page.frames()){
-        const text=frame.getByText(new RegExp(`^\\s*${name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}\\s*$`,'i')).first();
-        if(await text.isVisible({timeout:500}).catch(()=>false)){await text.click();selected=true;break;}
-      }
+      const selected=await this.selectTotalClientByName(name);
       if(!selected){results.push({client:name,error:'Client non sélectionnable'});continue;}
       let confirmed=false;
       for(const frame of page.frames()){
@@ -575,10 +574,41 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
       if(!confirmed){results.push({client:name,error:'Bouton Ok introuvable'});continue;}
       await page.waitForURL(url=>!url.pathname.includes('customer-selection'),{timeout:15_000});
-      const cards=await this.extractCardStatuses();
-      results.push(await this.total.importCardStatuses(cards,this.actor,name));
+      await page.waitForTimeout(1_500);
+      try{
+        const cards=await this.extractCardStatuses();
+        results.push(cards.length
+          ?await this.total.importCardStatuses(cards,this.actor,name)
+          :{client:name,extracted:0,created:0,matched:0,message:'Aucune carte disponible'});
+      }catch(error){
+        const message=error instanceof Error?error.message:String(error);
+        this.logger.warn(`Extraction des cartes Total pour ${name} : ${message}`);
+        results.push({client:name,error:message});
+      }
     }
     return results;
+  }
+
+  private async selectTotalClientByName(name:string){
+    const page=this.page;if(!page)return false;
+    const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    const exact=new RegExp(`^\\s*${escaped}\\s*$`,'i');
+    const contains=new RegExp(escaped,'i');
+    for(const frame of page.frames()){
+      const search=frame.locator('input[type="search"], input[placeholder*="recherche" i], input[placeholder*="client" i]').first();
+      if(await search.isVisible({timeout:250}).catch(()=>false)){
+        await search.fill(name);await frame.waitForTimeout(500);
+      }
+      const choices=[
+        frame.getByText(exact).first(),
+        frame.locator('label, [role="radio"], .q-radio, .q-item').filter({hasText:contains}).first(),
+      ];
+      for(const choice of choices){
+        if(!await choice.isVisible({timeout:500}).catch(()=>false))continue;
+        await choice.click({timeout:3_000});await frame.waitForTimeout(500);return true;
+      }
+    }
+    return false;
   }
 
   private cardsFromUnknown(input:unknown):RemoteCardStatus[]{

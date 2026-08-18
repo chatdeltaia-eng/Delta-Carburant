@@ -1796,6 +1796,17 @@ export default function Home() {
     }
   }
   async function decideMileage(id:string,accepted:boolean){if(!token)return notify("Session expirée");const reason=window.prompt(accepted?"Observation de validation (optionnelle)":"Motif du refus","");if(!accepted&&!reason?.trim())return notify("Le motif du refus est obligatoire");try{const response=await fetch(`${API}/mileage/${id}/decision`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({decision:accepted?"VALIDATED":"REJECTED",reason:reason||undefined})});if(!response.ok)throw new Error(await response.text());setData(current=>({...current,mileage:current.mileage.map(row=>row.id===id?{...row,statut:accepted?"VALIDEE_ZIN":"REFUSEE_ZIN"}:row)}));notify(accepted?"Kilométrage validé":"Kilométrage refusé");}catch{return notify("Décision kilométrique non enregistrée");}}
+  async function correctTransactionMileage(row:Row){
+    if(!token)return notify("Session expirée");
+    const expected=Number(row.attendu??row.kilometrage??0);
+    const value=window.prompt(`Kilométrage à confirmer pour ${String(row.vehicule)}\nEstimation selon les litres : ${expected.toFixed(0)} km\nSi la valeur est différente, contactez le chauffeur avant de la confirmer.`,String(row.kilometrage??expected));
+    if(value===null)return;
+    const mileage=Number(value.replace(",","."));
+    if(!Number.isFinite(mileage)||mileage<Number(row.precedent??0))return notify(`Le kilométrage doit être supérieur ou égal à ${Number(row.precedent??0)} km`);
+    const note=window.prompt("Confirmation / nom du chauffeur contacté","Kilométrage vérifié avec le chauffeur");
+    if(note===null)return;
+    try{const response=await fetch(`${API}/mileage/transaction/${String(row.id).replace("transaction:","")}`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({mileage,note})});if(!response.ok)throw new Error(await response.text());const result=await response.json();setRefreshTick(value=>value+1);notify(result.anomaly?`KM enregistré mais hors plage ${Number(result.minimumMileage).toFixed(0)}–${Number(result.maximumMileage).toFixed(0)} km : contactez le chauffeur.`:"Kilométrage conforme et enregistré");}catch(error){notify(error instanceof Error?error.message:"Kilométrage non enregistré");}
+  }
   async function decideAllocation(id:string,accepted:boolean){if(!token)return notify("Session expirée");const reason=window.prompt(accepted?"Observation de validation (optionnelle)":"Motif du refus","");if(!accepted&&!reason?.trim())return notify("Motif obligatoire");try{const response=await fetch(`${API}/transactions/allocations/${id}/decision`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({decision:accepted?"APPROVED":"REJECTED",reason:reason||undefined})});if(!response.ok)throw new Error(await response.text());setData(current=>({...current,transactions:current.transactions.map(row=>row.repartitionEnAttente===id?{...row,repartitionEnAttente:""}:row)}));notify(accepted?"Répartition validée":"Répartition refusée");}catch{return notify("Décision non enregistrée");}}
   if (!token || !user)
     return <Login onSubmit={login} loading={loading} error={error} />;
@@ -2021,6 +2032,7 @@ export default function Home() {
             resolve={resolveAnomaly}
             decideReview={decideTransactionReview}
             decideMileage={decideMileage}
+            correctTransactionMileage={correctTransactionMileage}
             decideAllocation={decideAllocation}
             decideRequest={decideRequest}
             cancelRequest={cancelRequest}
@@ -2821,6 +2833,7 @@ function DataView({
   resolve,
   decideReview,
   decideMileage,
+  correctTransactionMileage,
   decideAllocation,
   decideRequest,
   cancelRequest,
@@ -2847,6 +2860,7 @@ function DataView({
   resolve: (id: string) => void;
   decideReview: (id:string,accepted:boolean)=>void;
   decideMileage:(id:string,accepted:boolean)=>void;
+  correctTransactionMileage:(row:Row)=>void;
   decideAllocation:(id:string,accepted:boolean)=>void;
   decideRequest: (id: string, accepted: boolean) => void;
   cancelRequest: (id: string) => void;
@@ -3166,6 +3180,8 @@ function DataView({
                     <><button className={styles.smallBtn} onClick={()=>decideReview(r.id,true)}>Accepter</button>{" "}<button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>decideReview(r.id,false)}>Refuser</button></>
                   ) : view === "anomalies" && r.statut !== "Résolue" && r.statut !== "Acceptée" && r.statut !== "Refusée" ? (
                     <button className={styles.smallBtn} onClick={() => resolve(r.id)}>Résoudre</button>
+                  ) : view === "mileage" && String(r.id).startsWith("transaction:") ? (
+                    <button className={styles.smallBtn} onClick={()=>correctTransactionMileage(r)}>Vérifier / corriger KM</button>
                   ) : view === "mileage" && canManage(user.role) && r.statut === "EN_ATTENTE_ZIN" ? (
                     <><button className={styles.smallBtn} onClick={()=>decideMileage(r.id,true)}>Valider</button>{" "}<button className={`${styles.smallBtn} ${styles.dangerBtn}`} onClick={()=>decideMileage(r.id,false)}>Refuser</button></>
                   ) : view === "transactions" && r.reviewId ? (

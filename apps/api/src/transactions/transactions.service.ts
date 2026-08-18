@@ -150,7 +150,7 @@ export class TransactionsService {
       row.product=String(row.product??'').trim();
       if(!row.product) throw new BadRequestException(`Nom de produit absent à la ligne ${index+2}. Import annulé.`);
       if(!row.station) throw new BadRequestException(`Nom de la station absent à la ligne ${index+2}. Import annulé.`);
-      const card=await client.query(`SELECT fc.id,fc.company_id,fc.official_registration,fc.holder_name,fc.card_category,fc.reference_vehicle_id,fc.status,
+      const card=await client.query(`SELECT fc.id,fc.company_id,fc.official_registration,fc.holder_name,fc.card_category,fc.reference_vehicle_id,fc.status,fc.responsible_user_id,
         (SELECT max(rr.returned_at) FROM card_return_receipt rr WHERE rr.fuel_card_id=fc.id) AS last_returned_at
         FROM fuel_card fc WHERE fc.deleted_at IS NULL AND (
         fc.total_payment_number=$1
@@ -266,6 +266,22 @@ export class TransactionsService {
         RETURNING id`,[external,card.rows[0].id,beneficiary.rows[0].id,vehicle.rows[0]?.id??null,row.date,row.station??null,row.product??null,row.liters,row.amount,batch.rows[0].id,index+1,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]);
       if(inserted.rowCount){
         imported++;
+        if(vehicle.rows[0]?.id&&row.mileage!=null){
+          const previous=Number(row.previousMileage??0),reported=Number(row.mileage),liters=Number(row.liters);
+          const rates=await client.query(`SELECT percentile_cont(0.5) WITHIN GROUP(ORDER BY rate)::float AS rate FROM (
+            SELECT 100*quantity_liters/(reported_mileage-previous_mileage) AS rate FROM fuel_transaction
+            WHERE vehicle_id=$1 AND id<>$2 AND deleted_at IS NULL AND previous_mileage IS NOT NULL
+              AND reported_mileage>previous_mileage AND 100*quantity_liters/(reported_mileage-previous_mileage) BETWEEN 2 AND 40) history`,[vehicle.rows[0].id,inserted.rows[0].id]);
+          const reference=Number(rates.rows[0]?.rate??0)||10;
+          const estimated=previous+100*liters/reference;
+          const minimum=previous+100*liters/(reference*1.35),maximum=previous+100*liters/(reference*.65);
+          if((reported<minimum||reported>maximum)&&card.rows[0].responsible_user_id){
+            await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
+              SELECT $1,'Kilométrage véhicule à vérifier',$2,'HIGH','mileage','fuel_transaction',$3
+              WHERE NOT EXISTS(SELECT 1 FROM notification WHERE user_id=$1 AND entity_type='fuel_transaction' AND entity_id=$3 AND title='Kilométrage véhicule à vérifier')`,
+              [card.rows[0].responsible_user_id,`${vehicle.rows[0].registration_display??row.vehicle??'Véhicule'} : ${reported} km extraits, estimation ${estimated.toFixed(0)} km (plage ${minimum.toFixed(0)}–${maximum.toFixed(0)}) selon ${liters.toFixed(3)} L. Kilométrage non conforme : veuillez contacter le chauffeur du véhicule.`,inserted.rows[0].id]);
+          }
+        }
         const canonicalProduct=this.canonicalFuelProduct(row.product);
         const applicablePrice=await client.query(`SELECT new_price,effective_date FROM fuel_price
           WHERE company_id=$1 AND upper(product)=upper($2) AND effective_date<=$3::date

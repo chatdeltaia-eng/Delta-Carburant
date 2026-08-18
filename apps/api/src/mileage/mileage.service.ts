@@ -49,7 +49,8 @@ export class MileageService {
    CASE WHEN ft.reported_mileage>coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),0)
      THEN round((100*ft.quantity_liters/(ft.reported_mileage-coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),0)))::numeric,2)::float
      ELSE null END AS "litersPer100Km",
-   null::float AS "referenceLitersPer100Km",null::float AS "estimatedDistance",ft.reported_mileage::float AS "estimatedMileage",
+   10::float AS "referenceLitersPer100Km",(10*ft.quantity_liters)::float AS "estimatedDistance",
+   (coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),0)+10*ft.quantity_liters)::float AS "estimatedMileage",
    CASE
      WHEN ft.reported_mileage<coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),0)
        THEN 'Anomalie : le kilométrage actuel est inférieur au kilométrage précédent.'
@@ -58,7 +59,7 @@ export class MileageService {
      WHEN ft.reported_mileage>coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),0)
        AND (100*ft.quantity_liters/(ft.reported_mileage-coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),0))) NOT BETWEEN 2 AND 40
        THEN 'Anomalie : consommation calculée hors de la plage de contrôle (2 à 40 L/100 km).'
-     ELSE 'Kilométrage et litres contrôlés depuis la transaction Total.'
+     ELSE concat('Kilométrage contrôlé. Estimation initiale : ',round((coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),0)+10*ft.quantity_liters)::numeric,0),' km selon une référence de 10 L/100 km.')
    END::text AS "reconciliationMessage",
    jsonb_build_array(jsonb_build_object(
      'id',ft.id,'date',ft.transaction_date,'card',fc.masked_card_number,'station',ft.station,'product',ft.product,
@@ -106,6 +107,34 @@ export class MileageService {
      SELECT id,$2,$3,$4,'mileage','mileage_reading',$5 FROM app_user WHERE active AND role::text=ANY($1::text[])`,
      [zin?['DIRECTION_GENERAL','SUPER_ADMIN']:['ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN'],anomaly?'Anomalie kilométrique à vérifier':zin?'Kilométrage ajouté par Zin':'Nouveau relevé kilométrique',`${allowed.rows[0].registration_display} : ${dto.mileage} km${anomaly?` · ${reconciliation}`:''}`,anomaly?'HIGH':'INFO',result.rows[0].id]);
    return {...result.rows[0],status:zin&&!anomaly?'VALIDATED':'PENDING',expectedMileage:expected??dto.mileage,detectedDistance:detected,periodLiters:liters,litersPer100Km,referenceLitersPer100Km:referenceRate,estimatedDistance,estimatedMileage:expected,reconciliationMessage:reconciliation,anomaly};
+ });}
+ async correctTransaction(id:string,dto:{mileage:number;note?:string},actor:Actor){return this.db.transaction(async client=>{
+   const current=await client.query(`SELECT ft.id,ft.vehicle_id,ft.previous_mileage,ft.reported_mileage,ft.quantity_liters,
+     v.registration_display,fc.responsible_user_id FROM fuel_transaction ft
+     JOIN fuel_card fc ON fc.id=ft.fuel_card_id JOIN vehicle v ON v.id=ft.vehicle_id
+     WHERE ft.id=$1 AND ft.deleted_at IS NULL FOR UPDATE OF ft`,[id]);
+   const row=current.rows[0];
+   if(!row)throw new NotFoundException('Transaction ou véhicule introuvable');
+   if(actor.role==='NAJIB_ASSIGNER'&&row.responsible_user_id!==actor.sub)throw new NotFoundException('Cette carte ne fait pas partie de votre périmètre');
+   const previous=Number(row.previous_mileage??0);
+   if(dto.mileage<previous)throw new BadRequestException(`Le nouveau kilométrage doit être supérieur ou égal au précédent (${previous} km)`);
+   const history=await client.query(`SELECT percentile_cont(0.5) WITHIN GROUP(ORDER BY rate)::float AS rate FROM (
+     SELECT 100*quantity_liters/(reported_mileage-previous_mileage) AS rate FROM fuel_transaction
+     WHERE vehicle_id=$1 AND id<>$2 AND deleted_at IS NULL AND previous_mileage IS NOT NULL
+       AND reported_mileage>previous_mileage AND 100*quantity_liters/(reported_mileage-previous_mileage) BETWEEN 2 AND 40) h`,[row.vehicle_id,id]);
+   const reference=Number(history.rows[0]?.rate??0)||10;
+   const estimated=previous+100*Number(row.quantity_liters)/reference;
+   const minimum=previous+100*Number(row.quantity_liters)/(reference*1.35);
+   const maximum=previous+100*Number(row.quantity_liters)/(reference*.65);
+   const anomaly=dto.mileage<minimum||dto.mileage>maximum;
+   await client.query(`UPDATE fuel_transaction SET reported_mileage=$2,corrected_at=now(),corrected_by=$3,
+     correction_reason=$4 WHERE id=$1`,[id,dto.mileage,actor.sub,dto.note??'Kilométrage confirmé après contact avec le chauffeur']);
+   await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'CORRECT_TRANSACTION_MILEAGE','fuel_transaction',$2,$3)`,
+     [actor.email,id,{previousMileage:previous,oldMileage:row.reported_mileage,mileage:dto.mileage,estimatedMileage:estimated,minimumMileage:minimum,maximumMileage:maximum,anomaly,note:dto.note}]);
+   if(anomaly&&row.responsible_user_id)await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
+     VALUES($1,'Kilométrage véhicule non conforme',$2,'HIGH','mileage','fuel_transaction',$3)`,[row.responsible_user_id,
+       `${row.registration_display} : ${dto.mileage} km saisis. Valeur attendue entre ${minimum.toFixed(0)} et ${maximum.toFixed(0)} km selon ${Number(row.quantity_liters).toFixed(3)} L consommés. Veuillez contacter le chauffeur du véhicule.`,id]);
+   return {id,mileage:dto.mileage,previousMileage:previous,referenceLitersPer100Km:reference,estimatedMileage:estimated,minimumMileage:minimum,maximumMileage:maximum,anomaly};
  });}
  async decide(id:string,dto:{decision:'VALIDATED'|'REJECTED';reason?:string},actor:Actor){if(dto.decision==='REJECTED'&&!dto.reason?.trim())throw new BadRequestException('Le motif du refus est obligatoire');
   return this.db.transaction(async client=>{const current=await client.query(`SELECT mr.*,v.registration_display FROM mileage_reading mr JOIN vehicle v ON v.id=mr.vehicle_id WHERE mr.id=$1 AND mr.status='PENDING' FOR UPDATE OF mr`,[id]);

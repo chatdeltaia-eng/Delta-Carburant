@@ -594,12 +594,22 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async extractAllClientCards(){
     const page=this.page;if(!page||!this.actor)throw new Error('La session Total est indisponible pour les cartes');
     const knownClients=['DELTA CUISINE','IKIT TN','DELTA CUISINE DISTRIBUTION','STE LES TECHNIQUES DE MARBRE'];
-    await this.openTotalCustomerSelection();
+    const results:unknown[]=[];
+    // Après l'extraction des chauffeurs, DELTA CUISINE est déjà le client
+    // actif. Extraire ses cartes avant d'ouvrir le sélecteur évite de tenter
+    // inutilement de resélectionner le client courant.
+    try{
+      const currentCards=await this.extractCardStatuses();
+      results.push(currentCards.length
+        ?await this.total.importCardStatuses(currentCards,this.actor,'DELTA CUISINE')
+        :{client:'DELTA CUISINE',extracted:0,error:'Aucune carte visible pour le client actif'});
+    }catch(error){
+      results.push({client:'DELTA CUISINE',error:error instanceof Error?error.message:String(error)});
+    }
     // Ne pas déduire les noms depuis tous les labels Quasar : leurs icônes
     // Material (« arrow_drop_down », etc.) sont aussi exposées comme du texte
     // et seraient prises à tort pour des clients.
-    const names=[...knownClients];
-    const results:unknown[]=[];
+    const names=knownClients.filter(name=>name!=='DELTA CUISINE');
     for(const name of names){
       await this.openTotalCustomerSelection();
       const selected=await this.selectTotalClientByName(name);
@@ -773,6 +783,20 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         !/^\d{2}-\d{2}-\d{4}$/.test(value)&&
         !/postpay|prépay|debit|crédit/i.test(value))??'';
       result.push({cardNumber:lines[index],status,registration,holderName,raw:{source:'visible-text'}});
+    }
+    // Dans la q-table actuelle, innerText peut réunir toutes les cellules
+    // d'une ligne. Exemple : « 0004 Postpayée VALIDE 0004 0 8 6987 TU 219
+    // t-king 30-06-2030 ». Lire aussi cette représentation aplatie.
+    const flat=text.replace(/\s+/g,' ').trim();
+    const pattern=/(?:^|\s)(\d{4})\s+(?:postpay[ée]e?|pr[ée]pay[ée]e?|carte|badge)\s+(valide|active?|inactive?|bloqu[ée]e?|suspendu?e?|oppos[ée]e?|annul[ée]e?|expir[ée]e?)(?=\s)/giu;
+    for(const match of flat.matchAll(pattern)){
+      const tail=flat.slice((match.index??0)+match[0].length,(match.index??0)+match[0].length+180);
+      const registration=tail.match(/\b\d{1,4}\s*(?:TU|TN)\s*\d{1,4}\b/i)?.[0];
+      const expiry=tail.search(/\b\d{2}-\d{2}-\d{4}\b/);
+      const beforeExpiry=expiry>=0?tail.slice(0,expiry):tail;
+      const holderName=beforeExpiry.replace(/^\s*\d{4}(?:\s+\d+)+\s*/,'')
+        .replace(registration??'','').trim().split(/\s{2,}/)[0]??'';
+      result.push({cardNumber:match[1],status:match[2],registration,holderName,raw:{source:'flat-visible-text'}});
     }
     return result;
   }

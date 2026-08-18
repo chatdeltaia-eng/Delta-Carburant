@@ -259,8 +259,15 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     if (!this.actor || this.statusValue.state === 'EXTRACTING') return;
     this.setStatus(
       'EXTRACTING',
-      'Connexion réussie. Extraction des transactions…',
+      'Connexion réussie. Sélection du client Total…',
     );
+    // Total redirige l'utilisateur authentifié vers l'écran de sélection du
+    // client. Aucun module (transactions, chauffeurs ou cartes) ne doit être
+    // ouvert avant que le client configuré ait été réellement sélectionné et
+    // validé avec « Ok », sinon le portail charge des données sans périmètre
+    // fiable ou renvoie vers access-denied.
+    await this.selectConfiguredClient();
+    this.setStatus('EXTRACTING', 'Client Total sélectionné. Extraction des transactions…');
     await this.total.reconnect(refreshToken, this.actor);
     const transactions = await this.total.syncNow(this.actor, '2026-08-01');
     this.setStatus('EXTRACTING', 'Transactions actualisées. Synchronisation des chauffeurs…');

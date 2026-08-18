@@ -387,14 +387,14 @@ export class TransactionsService {
       const companyId=vehicle.rows[0].company_id;
       const cardKey=String(row.card_number).replace(/\D/g,'');
       let card=dto.fuelCardId?await client.query(`SELECT id,company_id,holder_name FROM fuel_card
-        WHERE id=$1 AND deleted_at IS NULL LIMIT 1 FOR UPDATE`,[dto.fuelCardId]):await client.query(`SELECT id,company_id,holder_name FROM fuel_card WHERE deleted_at IS NULL AND (
-          total_payment_number=$1 OR (length($1)>6 AND total_payment_number=right($1,6))
+        WHERE id=$1 AND deleted_at IS NULL LIMIT 1 FOR UPDATE`,[dto.fuelCardId]):await client.query(`SELECT id,company_id,holder_name FROM fuel_card WHERE deleted_at IS NULL
+          AND company_id=$2 AND (total_payment_number=$1 OR (length($1)>6 AND total_payment_number=right($1,6))
           OR regexp_replace(masked_card_number,'[^0-9]','','g')=$1 OR official_card_number=$1)
         ORDER BY CASE WHEN total_payment_number=$1 THEN 0 WHEN length($1)>6 AND total_payment_number=right($1,6) THEN 1 ELSE 2 END
-        LIMIT 1 FOR UPDATE`,[cardKey]);
+        LIMIT 1 FOR UPDATE`,[cardKey,companyId]);
       if(!card.rows[0]) card=await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,masked_card_number,monthly_limit,status,card_category)
         VALUES($1,pgp_sym_encrypt($2,$3,'cipher-algo=aes256'),hmac($2,$4,'sha256'),$2,0,'ACTIVE','PERSONALIZED')
-        ON CONFLICT(card_number_hmac) DO UPDATE SET updated_at=now()
+        ON CONFLICT(company_id,card_number_hmac) DO UPDATE SET updated_at=now()
         RETURNING id,company_id`,[companyId,row.card_number,process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key']);
       // Le choix manuel de Zin devient la nouvelle reference pour les imports
       // suivants : carte, plaque et societe restent synchronisees.

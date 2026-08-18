@@ -265,9 +265,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     this.setStatus('EXTRACTING', 'Transactions actualisées. Synchronisation des chauffeurs…');
     const driverRows=await this.extractDrivers();
     const drivers=await this.total.importDrivers(driverRows,this.actor);
+    this.setStatus('EXTRACTING', 'Chauffeurs actualisés. Extraction des cartes de tous les clients…');
+    const cards=await this.extractAllClientCards();
     this.statusValue = {
-      ...this.status('SUCCESS', 'Transactions, kilométrages et chauffeurs Total actualisés'),
-      result: { ...transactions, drivers },
+      ...this.status('SUCCESS', 'Transactions, kilométrages, chauffeurs et cartes Total actualisés'),
+      result: { ...transactions, drivers, cards },
     };
     this.scheduleLiveRefresh();
   }
@@ -280,10 +282,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async liveRefresh(){
     if(!this.actor||!this.page||['STARTING','SIGNING_IN','CODE_REQUIRED','EXTRACTING'].includes(this.statusValue.state))return;
     try{
-      this.setStatus('EXTRACTING','Actualisation Total : transactions, kilométrages et chauffeurs…');
+      this.setStatus('EXTRACTING','Actualisation Total : transactions, kilométrages, chauffeurs et cartes…');
       const transactions=await this.total.syncNow(this.actor);
       const drivers=await this.total.importDrivers(await this.extractDrivers(),this.actor);
-      this.statusValue={...this.status('SUCCESS','Données Total actualisées automatiquement'),result:{...transactions,drivers,live:true}};
+      const cards=await this.extractAllClientCards();
+      this.statusValue={...this.status('SUCCESS','Données Total actualisées automatiquement'),result:{...transactions,drivers,cards,live:true}};
     }catch(error){this.fail(error);}
   }
 
@@ -513,16 +516,69 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     try{
       await page.goto('https://customer.fleet.totalenergies.com/tn/cards/manage-card',{waitUntil:'domcontentloaded',timeout:60_000});
       await page.waitForTimeout(4_000);
+      for(const frame of page.frames())await frame.evaluate(async()=>{
+        const candidates=[document.scrollingElement,...Array.from(document.querySelectorAll<HTMLElement>('[role="grid"], [role="table"], .table-container, .mat-table, main'))].filter(Boolean) as HTMLElement[];
+        for(const element of candidates){element.scrollTop=element.scrollHeight;}
+        await new Promise(resolve=>setTimeout(resolve,700));
+      }).catch(()=>undefined);
+      const rows:string[][]=[];
+      for(let pageIndex=0;pageIndex<100;pageIndex++){
+        rows.push(...(await Promise.all(page.frames().map(frame=>frame.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row').evaluateAll(elements=>elements.map(row=>
+          Array.from(row.querySelectorAll('td, [role="cell"], mat-cell')).map(cell=>(cell.textContent??'').replace(/\s+/g,' ').trim()))).catch(()=>[])))).flat());
+        let advanced=false;
+        for(const frame of page.frames()){
+          const next=frame.locator('button[aria-label*="next page" i], button[aria-label*="page suivante" i], button[title*="suivant" i]').first();
+          if(await next.isVisible({timeout:250}).catch(()=>false)&&await next.isEnabled().catch(()=>false)){
+            await next.click();await page.waitForTimeout(900);advanced=true;break;
+          }
+        }
+        if(!advanced)break;
+      }
       const fromJson=this.cardsFromUnknown(captured);
-      if(fromJson.length)return this.uniqueCards(fromJson);
-      const rows=await page.locator('table tbody tr').evaluateAll(elements=>elements.map(row=>
-        Array.from(row.querySelectorAll('td')).map(cell=>(cell.textContent??'').trim())));
       const fromTable=rows.map(cells=>({cardNumber:cells.find(value=>/\d{4,}/.test(value))??'',
-        status:cells.find(value=>/active|inactive|bloqu|suspend|oppos|actif|inactif/i.test(value))??'',
+        status:cells.find(value=>/valid|active|inactive|bloqu|suspend|oppos|actif|inactif|annul|expir/i.test(value))??'',
         holderName:cells[1],registration:cells.find(value=>/\bTU\b|\d{2,4}\s*TU/i.test(value)),raw:{cells}}))
         .filter(row=>row.cardNumber&&row.status);
-      return this.uniqueCards(fromTable);
+      return this.uniqueCards([...fromJson,...fromTable]);
     }finally{page.off('response',listener);}
+  }
+
+  private async extractAllClientCards(){
+    const page=this.page;if(!page||!this.actor)throw new Error('La session Total est indisponible pour les cartes');
+    await page.goto('https://customer.fleet.totalenergies.com/tn/customer-selection',{waitUntil:'domcontentloaded',timeout:60_000});
+    await page.waitForTimeout(2_500);
+    const names:string[]=[];
+    for(const frame of page.frames()){
+      const candidates=await frame.locator('label, [role="radio"], .q-radio').evaluateAll(elements=>elements.map(element=>(element.textContent??'').replace(/\s+/g,' ').trim()).filter(Boolean)).catch(()=>[]);
+      for(const name of candidates){
+        const clean=name.replace(/^\s*[○◉●]\s*/,'').trim();
+        if(clean.length>2&&!/choisir|bienvenue|continuer|annuler|^ok$/i.test(clean)&&!names.includes(clean))names.push(clean);
+      }
+    }
+    if(!names.length)throw new Error('Aucun client Total trouvé dans « Choisir un client »');
+    const results:unknown[]=[];
+    for(const name of names){
+      if(!/customer-selection/i.test(page.url())){
+        await page.goto('https://customer.fleet.totalenergies.com/tn/customer-selection',{waitUntil:'domcontentloaded',timeout:60_000});
+        await page.waitForTimeout(1_500);
+      }
+      let selected=false;
+      for(const frame of page.frames()){
+        const text=frame.getByText(new RegExp(`^\\s*${name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}\\s*$`,'i')).first();
+        if(await text.isVisible({timeout:500}).catch(()=>false)){await text.click();selected=true;break;}
+      }
+      if(!selected){results.push({client:name,error:'Client non sélectionnable'});continue;}
+      let confirmed=false;
+      for(const frame of page.frames()){
+        const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).first();
+        if(await ok.isVisible({timeout:500}).catch(()=>false)){await ok.click();confirmed=true;break;}
+      }
+      if(!confirmed){results.push({client:name,error:'Bouton Ok introuvable'});continue;}
+      await page.waitForURL(url=>!url.pathname.includes('customer-selection'),{timeout:15_000});
+      const cards=await this.extractCardStatuses();
+      results.push(await this.total.importCardStatuses(cards,this.actor,name));
+    }
+    return results;
   }
 
   private cardsFromUnknown(input:unknown):RemoteCardStatus[]{

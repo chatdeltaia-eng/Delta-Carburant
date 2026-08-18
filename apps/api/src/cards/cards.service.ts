@@ -190,8 +190,8 @@ export class CardsService {
       const beneficiaryName=change.beneficiary?.trim();
       if(change.beneficiary!==undefined&&!beneficiaryName)throw new BadRequestException('Le bénéficiaire est obligatoire');
       if(cardNumber){
-        const duplicate=await client.query(`SELECT id FROM fuel_card WHERE card_number_hmac=hmac($1,$2,'sha256') AND id<>$3 AND deleted_at IS NULL`,
-          [cardNumber,process.env.CARD_HMAC_KEY ?? 'delta-development-hmac-key',id]);
+        const duplicate=await client.query(`SELECT id FROM fuel_card WHERE company_id=$4 AND card_number_hmac=hmac($1,$2,'sha256') AND id<>$3 AND deleted_at IS NULL`,
+          [cardNumber,process.env.CARD_HMAC_KEY ?? 'delta-development-hmac-key',id,current.company_id]);
         if(duplicate.rows[0])throw new BadRequestException('Ce numéro de carte existe déjà');
       }
       const result = await client.query(`UPDATE fuel_card SET status=coalesce($2::card_status,status),

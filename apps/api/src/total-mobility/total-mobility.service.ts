@@ -160,19 +160,57 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         WHERE a.fuel_card_id=fc.id AND a.status='PENDING' ORDER BY a.requested_at DESC LIMIT 1) pending ON true
       WHERE fc.deleted_at IS NULL ORDER BY conformity DESC,fc.masked_card_number`);
   }
-  async importCardStatuses(cards: RemoteCardStatus[], actor: Actor) {
+  async importCardStatuses(cards: RemoteCardStatus[], actor: Actor, clientName?: string) {
     if (!cards.length) throw new BadRequestException('Aucun statut de carte trouvé dans « Gérer les cartes » sur Total Mobility');
     return this.db.transaction(async client => {
-      let matched=0;
+      const totalName=String(clientName??'').trim();
+      let company:{id:string;code:string}|undefined;
+      if(totalName){
+        const aliases:Record<string,string>={
+          'DELTA CUISINE':'DC','IKIT TN':'IKIT','STE LES TECHNIQUES DE MARBRE':'TCM','DELTA CUISINE DISTRIBUTION':'DCD',
+        };
+        const normalized=totalName.toUpperCase().replace(/[^A-Z0-9]/g,'');
+        const found=await client.query<{id:string;code:string}>(`SELECT id,code FROM company
+          WHERE active AND (regexp_replace(upper(name),'[^A-Z0-9]','','g')=$1 OR upper(code)=$2) LIMIT 1`,
+          [normalized,aliases[totalName.toUpperCase()]??'']);
+        company=found.rows[0];
+        if(!company){
+          const baseCode=aliases[totalName.toUpperCase()]??totalName.split(/\s+/).map(word=>word[0]).join('').replace(/[^A-Z0-9]/gi,'').toUpperCase().slice(0,8)??'TOTAL';
+          const inserted=await client.query<{id:string;code:string}>(`INSERT INTO company(code,name) VALUES(
+            CASE WHEN EXISTS(SELECT 1 FROM company WHERE upper(code)=upper($1)) THEN $1||substr(md5($2),1,3) ELSE $1 END,$2)
+            RETURNING id,code`,[baseCode||'TOTAL',totalName]);
+          company=inserted.rows[0];
+        }
+      }else{
+        const configured=await client.query<{id:string;code:string}>(`SELECT c.id,c.code FROM company c WHERE EXISTS(
+          SELECT 1 FROM driver d JOIN total_mobility_connection t ON regexp_replace(d.customer_number,'[^0-9]','','g')=regexp_replace(t.customer_number,'[^0-9]','','g')
+          WHERE d.company_id=c.id AND t.enabled) LIMIT 1`);
+        company=configured.rows[0];
+      }
+      if(!company)throw new BadRequestException(`Société introuvable pour le client Total ${totalName||'sélectionné'}`);
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,[`total-cards:${company.id}`]);
+      let matched=0,created=0;
       for (const card of cards) {
         const number=this.normalizeCardNumber(card.cardNumber);
         const remoteStatus=card.status.trim().toUpperCase();
         if(!number||!remoteStatus)continue;
         await client.query(`INSERT INTO total_mobility_card_snapshot(card_number,remote_status,holder_name,registration,raw_data)
           VALUES($1,$2,$3,$4,$5)`,[number,remoteStatus,card.holderName??null,card.registration??null,card.raw??{}]);
-        const updated=await client.query(`UPDATE fuel_card SET total_mobility_status=$2,total_mobility_checked_at=now(),updated_at=now()
-          WHERE deleted_at IS NULL AND regexp_replace(masked_card_number,'[^0-9]','','g') LIKE '%'||right($1,4)
-          RETURNING id,status`,[number,remoteStatus]);
+        let updated=await client.query(`UPDATE fuel_card SET total_mobility_status=$3,total_mobility_checked_at=now(),updated_at=now()
+          WHERE company_id=$1 AND deleted_at IS NULL AND regexp_replace(masked_card_number,'[^0-9]','','g')=regexp_replace($2,'[^0-9]','','g')
+          RETURNING id,status`,[company.id,number,remoteStatus]);
+        if(!updated.rows[0]){
+          const applicationStatus=/OPPOS|LOST|STOLEN|PERD|VOLE/.test(remoteStatus)?'OPPOSED'
+            :/SUSPEND|BLOCK|BLOQU|TEMPORAIR/.test(remoteStatus)?'SUSPENDED'
+            :/CANCEL|ANNULE|EXPIRE/.test(remoteStatus)?'CANCELLED':'TO_ASSIGN';
+          const inserted=await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,masked_card_number,
+            monthly_limit,status,card_category,total_mobility_status,total_mobility_checked_at)
+            VALUES($1,pgp_sym_encrypt($2,$3,'cipher-algo=aes256'),hmac($2,$4,'sha256'),$2,0,$5,'PERSONALIZED',$6,now())
+            ON CONFLICT(company_id,card_number_hmac) DO NOTHING RETURNING id,status`,[company.id,number,
+            process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key',applicationStatus,remoteStatus]);
+          updated=inserted;
+          if(inserted.rows[0])created++;
+        }
         for(const local of updated.rows){
           matched++;
           const pending=await client.query(`SELECT id,action_type FROM total_mobility_card_action WHERE fuel_card_id=$1 AND status='PENDING'`,[local.id]);
@@ -185,8 +223,8 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         }
       }
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
-        VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{extracted:cards.length,matched}]);
-      return {extracted:cards.length,matched,unmatched:cards.length-matched};
+        VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{client:totalName,company:company.code,extracted:cards.length,matched,created}]);
+      return {client:totalName,company:company.code,extracted:cards.length,matched,created,unmatched:cards.length-matched};
     });
   }
   async importDrivers(drivers: RemoteDriver[], actor: Actor) {

@@ -515,7 +515,21 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     page.on('response',listener);
     try{
       await page.goto('https://customer.fleet.totalenergies.com/tn/cards/manage-card',{waitUntil:'domcontentloaded',timeout:60_000});
-      await page.waitForTimeout(4_000);
+      await page.waitForTimeout(2_500);
+      // La page « Gérer » n'appelle pas toujours l'API des cartes au premier
+      // rendu. Le clic sur Recherche est nécessaire, comme dans le parcours
+      // utilisateur visible sur Mobility Business.
+      for(const frame of page.frames()){
+        const search=frame.getByRole('button',{name:/^\s*recherche\s*$/i}).first();
+        if(await search.isVisible({timeout:500}).catch(()=>false)){
+          await search.click();break;
+        }
+      }
+      await page.waitForTimeout(1_500);
+      // Attendre la disparition du panneau « Récupération de vos
+      // informations » avant de lire le tableau.
+      await Promise.all(page.frames().map(frame=>frame.getByText(/récupération de vos informations/i)
+        .waitFor({state:'hidden',timeout:20_000}).catch(()=>undefined)));
       for(const frame of page.frames())await frame.evaluate(async()=>{
         const candidates=[document.scrollingElement,...Array.from(document.querySelectorAll<HTMLElement>('[role="grid"], [role="table"], .table-container, .mat-table, main'))].filter(Boolean) as HTMLElement[];
         for(const element of candidates){element.scrollTop=element.scrollHeight;}
@@ -535,11 +549,17 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         if(!advanced)break;
       }
       const fromJson=this.cardsFromUnknown(captured);
-      const fromTable=rows.map(cells=>({cardNumber:cells.find(value=>/\d{4,}/.test(value))??'',
-        status:cells.find(value=>/valid|active|inactive|bloqu|suspend|oppos|actif|inactif|annul|expir/i.test(value))??'',
-        holderName:cells[1],registration:cells.find(value=>/\bTU\b|\d{2,4}\s*TU/i.test(value)),raw:{cells}}))
+      const fromTable=rows.map(cells=>({cardNumber:cells[1]?.match(/^\d{4,}$/)?.[0]??cells.find(value=>/^\d{4,}$/.test(value))??'',
+        status:cells[3]&&/valid|active|inactive|bloqu|suspend|oppos|actif|inactif|annul|expir/i.test(cells[3])?cells[3]:cells.find(value=>/valid|active|inactive|bloqu|suspend|oppos|actif|inactif|annul|expir/i.test(value))??'',
+        holderName:cells[6]??'',registration:cells.find(value=>/\b(?:TU|TN)\b|\d{2,4}\s*(?:TU|TN)/i.test(value)),raw:{cells}}))
         .filter(row=>row.cardNumber&&row.status);
-      return this.uniqueCards([...fromJson,...fromTable]);
+      const result=this.uniqueCards([...fromJson,...fromTable]);
+      if(!result.length){
+        const visible=(await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>''))))
+          .join(' ').replace(/\s+/g,' ').slice(0,400);
+        this.logger.warn(`Aucune carte lue sur ${page.url()}. Contenu visible : ${visible||'vide'}`);
+      }
+      return result;
     }finally{page.off('response',listener);}
   }
 

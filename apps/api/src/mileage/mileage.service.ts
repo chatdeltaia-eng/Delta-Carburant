@@ -39,12 +39,29 @@ export class MileageService {
    coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at))::float AS "previousMileage",
    ft.reported_mileage::float AS "expectedMileage",
    greatest(0,ft.reported_mileage-coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),ft.reported_mileage))::float AS "detectedDistance",
-   false AS anomaly,'VALIDATED'::text AS status,ft.quantity_liters::float AS "periodLiters",
+   CASE
+     WHEN ft.reported_mileage<coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),ft.reported_mileage) THEN true
+     WHEN ft.quantity_liters>0 AND ft.reported_mileage=coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),ft.reported_mileage) THEN true
+     WHEN ft.reported_mileage>coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),ft.reported_mileage)
+       AND (100*ft.quantity_liters/(ft.reported_mileage-coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at)))) NOT BETWEEN 2 AND 40 THEN true
+     ELSE false
+   END AS anomaly,'VALIDATED'::text AS status,ft.quantity_liters::float AS "periodLiters",
    CASE WHEN ft.reported_mileage>coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),ft.reported_mileage)
      THEN round((100*ft.quantity_liters/(ft.reported_mileage-coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at))))::numeric,2)::float
      ELSE null END AS "litersPer100Km",
    null::float AS "referenceLitersPer100Km",null::float AS "estimatedDistance",ft.reported_mileage::float AS "estimatedMileage",
-   'Kilométrage importé directement depuis la transaction Total'::text AS "reconciliationMessage",
+   CASE
+     WHEN ft.reported_mileage<coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),ft.reported_mileage)
+       THEN 'Anomalie : le kilométrage actuel est inférieur au kilométrage précédent.'
+     WHEN ft.quantity_liters>0 AND ft.reported_mileage=coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),ft.reported_mileage)
+       THEN 'Anomalie : carburant consommé sans distance parcourue entre les deux kilométrages.'
+     WHEN ft.reported_mileage>coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),ft.reported_mileage)
+       AND (100*ft.quantity_liters/(ft.reported_mileage-coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at)))) NOT BETWEEN 2 AND 40
+       THEN 'Anomalie : consommation calculée hors de la plage de contrôle (2 à 40 L/100 km).'
+     WHEN ft.previous_mileage IS NULL AND lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at) IS NULL
+       THEN 'Premier kilométrage du véhicule : contrôle de consommation disponible à la prochaine transaction.'
+     ELSE 'Kilométrage et litres contrôlés depuis la transaction Total.'
+   END::text AS "reconciliationMessage",
    jsonb_build_array(jsonb_build_object(
      'id',ft.id,'date',ft.transaction_date,'card',fc.masked_card_number,'station',ft.station,'product',ft.product,
      'liters',ft.quantity_liters,'amount',ft.amount_incl_tax,'beneficiary',coalesce(b.display_name,fc.holder_name,'—'))

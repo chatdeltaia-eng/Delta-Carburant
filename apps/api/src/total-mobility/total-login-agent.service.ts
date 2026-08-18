@@ -514,7 +514,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     };
     page.on('response',listener);
     try{
-      await page.goto('https://customer.fleet.totalenergies.com/tn/cards/manage-card',{waitUntil:'domcontentloaded',timeout:60_000});
+      await this.openManageCardsFromMenu();
       await page.waitForTimeout(2_500);
       // La page « Gérer » n'appelle pas toujours l'API des cartes au premier
       // rendu. Le clic sur Recherche est nécessaire, comme dans le parcours
@@ -553,7 +553,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         status:cells[3]&&/valid|active|inactive|bloqu|suspend|oppos|actif|inactif|annul|expir/i.test(cells[3])?cells[3]:cells.find(value=>/valid|active|inactive|bloqu|suspend|oppos|actif|inactif|annul|expir/i.test(value))??'',
         holderName:cells[6]??'',registration:cells.find(value=>/\b(?:TU|TN)\b|\d{2,4}\s*(?:TU|TN)/i.test(value)),raw:{cells}}))
         .filter(row=>row.cardNumber&&row.status);
-      const result=this.uniqueCards([...fromJson,...fromTable]);
+      const visibleTexts=await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>'')));
+      const fromVisible=visibleTexts.flatMap(text=>this.cardsFromVisibleText(text));
+      const result=this.uniqueCards([...fromJson,...fromTable,...fromVisible]);
       if(!result.length){
         const visible=(await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>''))))
           .join(' ').replace(/\s+/g,' ').slice(0,400);
@@ -561,6 +563,32 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
       return result;
     }finally{page.off('response',listener);}
+  }
+
+  private async openManageCardsFromMenu(){
+    const page=this.page;if(!page)throw new Error('La session Total est indisponible');
+    if(/\/cards\/manage-card/i.test(page.url()))return;
+    for(const frame of page.frames()){
+      const menuButton=frame.locator('button[aria-label*="menu" i], .q-header .q-btn').first();
+      if(await menuButton.isVisible({timeout:400}).catch(()=>false)){
+        await menuButton.click({timeout:2_000}).catch(()=>undefined);await frame.waitForTimeout(500);
+      }
+      const payment=frame.getByText(/^\s*Méthodes de paiement\s*$/i).first();
+      if(await payment.isVisible({timeout:700}).catch(()=>false)){
+        await payment.click({timeout:3_000});
+        await page.waitForURL(/\/tn\/cards(?:[/?#]|$)/i,{timeout:15_000});
+        await page.waitForTimeout(1_000);break;
+      }
+    }
+    for(const frame of page.frames()){
+      const manage=frame.getByText(/^\s*Gérer\s*$/i).first();
+      if(await manage.isVisible({timeout:800}).catch(()=>false)){
+        await manage.click({timeout:3_000});
+        await page.waitForURL(/\/cards\/manage-card/i,{timeout:15_000});return;
+      }
+    }
+    // Repli si le menu change, tout en conservant la session sélectionnée.
+    await page.goto('https://customer.fleet.totalenergies.com/tn/cards/manage-card',{waitUntil:'domcontentloaded',timeout:60_000});
   }
 
   private async extractAllClientCards(){
@@ -651,6 +679,14 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     for(const frame of page.frames()){
       const dialog=frame.locator('.q-dialog--modal, [role="dialog"]').filter({visible:true}).last();
       const scope=await dialog.isVisible({timeout:250}).catch(()=>false)?dialog:frame.locator('body');
+      // Écran réellement utilisé par Mobility Business Tunisie : quatre
+      // q-radio dans la boîte « Veuillez choisir un client ».
+      const directRadio=scope.locator('.q-radio, [role="radio"], label').filter({hasText:exact}).first();
+      if(await directRadio.isVisible({timeout:700}).catch(()=>false)){
+        await directRadio.click({timeout:3_000});await frame.waitForTimeout(500);
+        const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).first();
+        if(await ok.isEnabled({timeout:2_000}).catch(()=>false))return true;
+      }
       const search=frame.locator('input[type="search"], input[placeholder*="recherche" i], input[placeholder*="client" i]').first();
       if(await search.isVisible({timeout:250}).catch(()=>false)){
         await search.fill(name);await frame.waitForTimeout(500);
@@ -719,6 +755,26 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       Object.values(row).forEach(visit);
     };
     visit(input);return result;
+  }
+
+  private cardsFromVisibleText(text:string):RemoteCardStatus[]{
+    const lines=text.split(/\r?\n/).map(line=>line.replace(/\s+/g,' ').trim()).filter(Boolean);
+    const result:RemoteCardStatus[]=[];
+    for(let index=0;index<lines.length;index++){
+      if(!/^\d{4}$/.test(lines[index]))continue;
+      const window=lines.slice(index+1,index+10);
+      const status=window.find(value=>/^(?:valide|active?|inactive?|bloqu[ée]?e?|suspendu?e?|oppos[ée]e?|annul[ée]e?|expir[ée]e?)$/i.test(value));
+      if(!status)continue;
+      const registration=window.find(value=>/\b(?:TU|TN)\b|\d{2,4}\s*(?:TU|TN)/i.test(value));
+      const statusIndex=window.indexOf(status);
+      const holderName=window.slice(statusIndex+1).find(value=>
+        !/^\d{4}(?:\s+\d+)+$/.test(value)&&
+        !/\b(?:TU|TN)\b|\d{2,4}\s*(?:TU|TN)/i.test(value)&&
+        !/^\d{2}-\d{2}-\d{4}$/.test(value)&&
+        !/postpay|prépay|debit|crédit/i.test(value))??'';
+      result.push({cardNumber:lines[index],status,registration,holderName,raw:{source:'visible-text'}});
+    }
+    return result;
   }
   private uniqueCards(cards:RemoteCardStatus[]){
     const seen=new Set<string>();return cards.filter(card=>{const key=card.cardNumber.replace(/\D/g,'');if(!key||seen.has(key))return false;seen.add(key);return true;});

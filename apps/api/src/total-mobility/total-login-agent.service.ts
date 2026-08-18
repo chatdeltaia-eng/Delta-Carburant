@@ -579,9 +579,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       let confirmed=false;
       for(const frame of page.frames()){
         const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).first();
-        if(await ok.isVisible({timeout:500}).catch(()=>false)){await ok.click();confirmed=true;break;}
+        if(await ok.isVisible({timeout:500}).catch(()=>false)&&await ok.isEnabled().catch(()=>false)){
+          await ok.click({timeout:3_000});confirmed=true;break;
+        }
       }
-      if(!confirmed){results.push({client:name,error:'Bouton Ok introuvable'});continue;}
+      if(!confirmed){results.push({client:name,error:'Client non coché : bouton Ok désactivé'});continue;}
       await page.waitForURL(url=>!url.pathname.includes('customer-selection'),{timeout:15_000});
       await page.waitForTimeout(1_500);
       try{
@@ -645,7 +647,18 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       ];
       for(const choice of choices){
         if(!await choice.isVisible({timeout:500}).catch(()=>false))continue;
-        await choice.click({timeout:3_000});await frame.waitForTimeout(500);return true;
+        await choice.click({timeout:3_000});
+        // Le libellé et le radio sont parfois deux éléments séparés. Remonter
+        // jusqu'à la ligne du client et activer explicitement son contrôle.
+        const row=choice.locator('xpath=ancestor-or-self::*[contains(@class,"q-radio") or contains(@class,"q-item") or @role="radio"][1]');
+        const radio=row.locator('input[type="radio"], [role="radio"]').first();
+        if(await radio.count().catch(()=>0)){
+          const checked=await radio.isChecked().catch(()=>radio.getAttribute('aria-checked').then(value=>value==='true').catch(()=>false));
+          if(!checked)await radio.click({force:true,timeout:2_000}).catch(()=>undefined);
+        }
+        await frame.waitForTimeout(500);
+        const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).first();
+        if(await ok.isEnabled({timeout:2_000}).catch(()=>false))return true;
       }
     }
     return false;

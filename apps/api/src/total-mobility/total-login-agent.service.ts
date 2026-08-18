@@ -565,10 +565,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private async extractAllClientCards(){
     const page=this.page;if(!page||!this.actor)throw new Error('La session Total est indisponible pour les cartes');
-    await page.goto('https://customer.fleet.totalenergies.com/tn/customer-selection',{waitUntil:'domcontentloaded',timeout:60_000});
-    await page.waitForTimeout(2_500);
-    const names:string[]=[];
     const knownClients=['DELTA CUISINE','IKIT TN','DELTA CUISINE DISTRIBUTION','STE LES TECHNIQUES DE MARBRE'];
+    await this.openTotalCustomerSelection();
+    const names:string[]=[];
     for(const frame of page.frames()){
       const candidates=await frame.locator('label, [role="radio"], .q-radio, .q-item:has([role="radio"]), .q-item:has(input[type="radio"])').evaluateAll(elements=>elements.map(element=>(element.textContent??'').replace(/\s+/g,' ').trim()).filter(Boolean)).catch(()=>[]);
       for(const name of candidates){
@@ -578,13 +577,13 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const body=(await frame.locator('body').innerText().catch(()=>''));
       for(const known of knownClients)if(body.toUpperCase().includes(known)&&!names.includes(known))names.push(known);
     }
-    if(!names.length)throw new Error('Aucun client Total trouvé dans « Choisir un client »');
+    // Certaines versions du portail rendent la liste dans un composant sans
+    // rôle radio/label. Les quatre clients métier restent alors notre source
+    // fiable et seront recherchés un par un dans l'écran Total.
+    for(const known of knownClients)if(!names.includes(known))names.push(known);
     const results:unknown[]=[];
     for(const name of names){
-      if(!/customer-selection/i.test(page.url())){
-        await page.goto('https://customer.fleet.totalenergies.com/tn/customer-selection',{waitUntil:'domcontentloaded',timeout:60_000});
-        await page.waitForTimeout(1_500);
-      }
+      await this.openTotalCustomerSelection();
       const selected=await this.selectTotalClientByName(name);
       if(!selected){results.push({client:name,error:'Client non sélectionnable'});continue;}
       let confirmed=false;
@@ -607,6 +606,24 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
     }
     return results;
+  }
+
+  private async openTotalCustomerSelection(){
+    const page=this.page;if(!page)throw new Error('La session Total est indisponible');
+    // Le lien d'en-tête initialise correctement le composant de sélection,
+    // contrairement à un accès direct qui peut afficher une SPA sans options.
+    if(!/customer-selection/i.test(page.url())){
+      for(const frame of page.frames()){
+        const chooser=frame.getByText(/choisir un client/i).first();
+        if(await chooser.isVisible({timeout:700}).catch(()=>false)){
+          await chooser.click();
+          await page.waitForURL(/customer-selection/i,{timeout:15_000}).catch(()=>undefined);
+          await page.waitForTimeout(2_000);return;
+        }
+      }
+    }
+    await page.goto('https://customer.fleet.totalenergies.com/tn/customer-selection',{waitUntil:'domcontentloaded',timeout:60_000});
+    await page.waitForTimeout(3_000);
   }
 
   private async selectTotalClientByName(name:string){

@@ -42,6 +42,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private refreshToken?: string;
   private liveTimer?: NodeJS.Timeout;
   private watchdogTimer?: NodeJS.Timeout;
+  private lastCardDiagnostic='';
   private statusValue: AgentStatus = this.status('IDLE', 'Agent Total prêt');
 
   constructor(
@@ -509,7 +510,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     if(!page)throw new Error('Le navigateur Total a été fermé avant l’extraction des cartes');
     const captured: unknown[]=[];
     const listener=async(response: import('playwright').Response)=>{
-      if(!/card|carte|support/i.test(response.url()))return;
+      // L'endpoint actuel porte un nom générique de recherche de « moyens de
+      // paiement » et ne contient pas forcément card/carte dans son URL.
+      const contentType=response.headers()['content-type']??'';
+      if(!/json/i.test(contentType))return;
       try{captured.push(await response.json());}catch{/* Réponse Total non JSON. */}
     };
     page.on('response',listener);
@@ -556,10 +560,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const visibleTexts=await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>'')));
       const fromVisible=visibleTexts.flatMap(text=>this.cardsFromVisibleText(text));
       const result=this.uniqueCards([...fromJson,...fromTable,...fromVisible]);
+      this.lastCardDiagnostic=`JSON=${captured.length}, lignes=${rows.length}, JSON-cartes=${fromJson.length}, tableau=${fromTable.length}, texte=${fromVisible.length}, url=${page.url()}`;
       if(!result.length){
         const visible=(await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>''))))
           .join(' ').replace(/\s+/g,' ').slice(0,400);
-        this.logger.warn(`Aucune carte lue sur ${page.url()}. Contenu visible : ${visible||'vide'}`);
+        this.logger.warn(`Aucune carte lue sur ${page.url()} (JSON=${captured.length}, lignes=${rows.length}). Contenu visible : ${visible||'vide'}`);
       }
       return result;
     }finally{page.off('response',listener);}
@@ -602,7 +607,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const currentCards=await this.extractCardStatuses();
       results.push(currentCards.length
         ?await this.total.importCardStatuses(currentCards,this.actor,'DELTA CUISINE')
-        :{client:'DELTA CUISINE',extracted:0,error:'Aucune carte visible pour le client actif'});
+        :{client:'DELTA CUISINE',extracted:0,error:`Aucune carte visible (${this.lastCardDiagnostic})`});
     }catch(error){
       results.push({client:'DELTA CUISINE',error:error instanceof Error?error.message:String(error)});
     }
@@ -628,7 +633,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         const cards=await this.extractCardStatuses();
         results.push(cards.length
           ?await this.total.importCardStatuses(cards,this.actor,name)
-          :{client:name,extracted:0,created:0,matched:0,message:'Aucune carte disponible'});
+          :{client:name,extracted:0,created:0,matched:0,error:`Aucune carte disponible (${this.lastCardDiagnostic})`});
       }catch(error){
         const message=error instanceof Error?error.message:String(error);
         this.logger.warn(`Extraction des cartes Total pour ${name} : ${message}`);
@@ -758,10 +763,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(!value||typeof value!=='object')return;
       const row=value as Record<string,unknown>;
       const read=(pattern:RegExp)=>Object.entries(row).find(([key])=>pattern.test(key))?.[1];
-      const number=read(/card.*(number|no)|pan|numero.*carte/i);
-      const status=read(/card.*status|status.*card|statut|state/i);
+      const number=read(/card.*(number|no)|pan|numero.*carte|payment.*method.*(number|no)|(?:number|no).*payment.*method|mode.*paiement.*num|num.*mode.*paiement|support.*(number|no)/i);
+      const status=read(/card.*status|status.*card|payment.*method.*status|status.*payment.*method|statut|status|state/i);
       if((typeof number==='string'||typeof number==='number')&&(typeof status==='string'||typeof status==='number'))
-        result.push({cardNumber:String(number),status:String(status),holderName:String(read(/holder|titulaire|beneficiary/i)??''),registration:String(read(/registration|immatriculation|plate/i)??''),raw:row});
+        result.push({cardNumber:String(number),status:String(status),holderName:String(read(/holder|titulaire|beneficiary|owner/i)??''),registration:String(read(/registration|immatriculation|plate/i)??''),raw:row});
       Object.values(row).forEach(visit);
     };
     visit(input);return result;

@@ -85,6 +85,11 @@ type Card = {
   latest_action_type?:string;
   latest_action_responsible?:string;
   initial_action?:string;
+  official_card_number?:string;
+  total_payment_number?:string;
+  holder_name?:string;
+  official_registration?:string;
+  expires_on?:string;
 };
 type Row = { id: string; [key: string]: string | number };
 type Modal =
@@ -3418,8 +3423,10 @@ function CardTable({
           <thead>
             <tr>
               <th>CARTE / CRÉATION</th>
-              <th>BÉNÉFICIAIRE / DÉPARTEMENT</th>
+              <th>MOYEN DE PAIEMENT</th>
+              <th>TITULAIRE / BÉNÉFICIAIRE</th>
               <th>VÉHICULE</th>
+              <th>EXPIRATION</th>
               <th>ANCIENNE → NOUVELLE</th>
               <th>PLAFOND / CONSOMMATION TOTALE</th>
               <th>STATUT</th>
@@ -3454,14 +3461,16 @@ function CardTable({
                     {c.company_code} · {c.card_category === "OFF_PARK" ? "Hors parc — responsable attribué" : "Personnalisée"} · créée le {c.created_at}
                   </small>
                 </td>
+                <td><b>{c.total_payment_number ?? "—"}</b><small>N° du mode de paiement</small></td>
                 <td>
-                  <b>{c.beneficiary ?? "Non affectée"}</b>
+                  <b>{c.holder_name ?? c.beneficiary ?? "Non affectée"}</b>
                   <small>{c.department ?? "—"}</small>
                 </td>
                 <td>
-                  <b>{c.registration ?? "—"}</b>
+                  <b>{c.official_registration ?? c.registration ?? "—"}</b>
                   <small>{c.vehicle_model ?? ""}</small>
                 </td>
+                <td><b>{c.expires_on ? new Date(`${c.expires_on}T00:00:00`).toLocaleDateString("fr-FR") : "—"}</b></td>
                 <td>
                   {c.old_card_id
                     ? `${cards.find((x) => x.id === c.old_card_id)?.masked_card_number ?? "?"} → ${c.masked_card_number}`

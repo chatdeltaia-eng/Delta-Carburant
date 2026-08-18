@@ -560,9 +560,17 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         if(!advanced)break;
       }
       const fromJson=this.cardsFromUnknown(captured);
-      const fromTable=rows.map(cells=>({cardNumber:cells[1]?.match(/^\d{4,}$/)?.[0]??cells.find(value=>/^\d{4,}$/.test(value))??'',
-        status:cells[3]&&/valid|active|inactive|bloqu|suspend|oppos|actif|inactif|annul|expir/i.test(cells[3])?cells[3]:cells.find(value=>/valid|active|inactive|bloqu|suspend|oppos|actif|inactif|annul|expir/i.test(value))??'',
-        holderName:cells[6]??'',registration:cells.find(value=>/\b(?:TU|TN)\b|\d{2,4}\s*(?:TU|TN)/i.test(value)),raw:{cells}}))
+      const fromTable=rows.map(cells=>{
+        const statusIndex=cells.findIndex(value=>/valid|active|inactive|bloqu|suspend|oppos|actif|inactif|annul|expir/i.test(value));
+        const expiry=cells.find(value=>/^\d{2}-\d{2}-\d{4}$/.test(value));
+        const registration=cells.find(value=>/\b(?:TU|TN)\b|\d{1,4}\s*(?:TU|TN)\s*\d{1,4}/i.test(value));
+        const paymentMethodNumber=cells.find(value=>/^\d{4}(?:\s+\d+){1,3}$/.test(value));
+        const cardNumber=cells.find(value=>/^\d{4}$/.test(value))??paymentMethodNumber?.slice(0,4)??'';
+        const holderName=expiry&&cells.indexOf(expiry)>0?cells[cells.indexOf(expiry)-1]:statusIndex>=0?cells[statusIndex+3]??'':'';
+        const limitCell=cells.find(value=>/(?:plafond|limit)/i.test(value)&&/\d/.test(value));
+        return {cardNumber,paymentMethodNumber,status:statusIndex>=0?cells[statusIndex]:'',holderName,registration,
+          expiresOn:this.parseTotalDate(expiry),monthlyLimit:this.parseAmount(limitCell),raw:{cells}};
+      })
         .filter(row=>row.cardNumber&&row.status);
       const visibleTexts=await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>'')));
       const fromVisible=visibleTexts.flatMap(text=>this.cardsFromVisibleText(text));
@@ -903,10 +911,14 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(!value||typeof value!=='object')return;
       const row=value as Record<string,unknown>;
       const read=(pattern:RegExp)=>Object.entries(row).find(([key])=>pattern.test(key))?.[1];
-      const number=read(/card.*(number|no)|pan|numero.*carte|payment.*method.*(number|no)|(?:number|no).*payment.*method|mode.*paiement.*num|num.*mode.*paiement|support.*(number|no)/i);
+      const cardNumber=read(/card.*(number|no)|pan|numero.*carte|support.*(number|no)/i);
+      const paymentNumber=read(/payment.*method.*(number|no)|(?:number|no).*payment.*method|mode.*paiement.*num|num.*mode.*paiement/i);
+      const number=cardNumber??paymentNumber;
       const status=read(/card.*status|status.*card|payment.*method.*status|status.*payment.*method|statut|status|state/i);
       if((typeof number==='string'||typeof number==='number')&&(typeof status==='string'||typeof status==='number'))
-        result.push({cardNumber:String(number),status:String(status),holderName:String(read(/holder|titulaire|beneficiary|owner/i)??''),registration:String(read(/registration|immatriculation|plate/i)??''),raw:row});
+        result.push({cardNumber:String(cardNumber??String(number).slice(0,4)),paymentMethodNumber:String(paymentNumber??''),status:String(status),
+          holderName:String(read(/holder|titulaire|beneficiary|owner/i)??''),registration:String(read(/registration|immatriculation|plate/i)??''),
+          expiresOn:this.parseTotalDate(read(/expir|expiry|valid.*until/i)),monthlyLimit:this.parseAmount(read(/monthly.*limit|card.*limit|plafond|ceiling/i)),raw:row});
       Object.values(row).forEach(visit);
     };
     visit(input);return result;
@@ -927,7 +939,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         !/\b(?:TU|TN)\b|\d{2,4}\s*(?:TU|TN)/i.test(value)&&
         !/^\d{2}-\d{2}-\d{4}$/.test(value)&&
         !/postpay|prépay|debit|crédit/i.test(value))??'';
-      result.push({cardNumber:lines[index],status,registration,holderName,raw:{source:'visible-text'}});
+      const paymentMethodNumber=window.find(value=>/^\d{4}(?:\s+\d+){1,3}$/.test(value));
+      const expiresOn=this.parseTotalDate(window.find(value=>/^\d{2}-\d{2}-\d{4}$/.test(value)));
+      result.push({cardNumber:lines[index],paymentMethodNumber,status,registration,holderName,expiresOn,raw:{source:'visible-text'}});
     }
     // Dans la q-table actuelle, innerText peut réunir toutes les cellules
     // d'une ligne. Exemple : « 0004 Postpayée VALIDE 0004 0 8 6987 TU 219
@@ -941,12 +955,31 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const beforeExpiry=expiry>=0?tail.slice(0,expiry):tail;
       const holderName=beforeExpiry.replace(/^\s*\d{4}(?:\s+\d+)+\s*/,'')
         .replace(registration??'','').trim().split(/\s{2,}/)[0]??'';
-      result.push({cardNumber:match[1],status:match[2],registration,holderName,raw:{source:'flat-visible-text'}});
+      const paymentMethodNumber=tail.match(/^\s*(\d{4}(?:\s+\d+){1,3})\b/)?.[1];
+      result.push({cardNumber:match[1],paymentMethodNumber,status:match[2],registration,holderName,
+        expiresOn:this.parseTotalDate(tail.match(/\b\d{2}-\d{2}-\d{4}\b/)?.[0]),raw:{source:'flat-visible-text'}});
     }
     return result;
   }
+  private parseTotalDate(value:unknown){
+    const match=String(value??'').match(/^(\d{2})[-/]([0-1]\d)[-/](\d{4})$/);return match?`${match[3]}-${match[2]}-${match[1]}`:undefined;
+  }
+  private parseAmount(value:unknown){
+    const amount=Number(String(value??'').replace(/[^\d,.-]/g,'').replace(',','.'));return Number.isFinite(amount)&&amount>=0?amount:undefined;
+  }
   private uniqueCards(cards:RemoteCardStatus[]){
-    const seen=new Set<string>();return cards.filter(card=>{const key=card.cardNumber.replace(/\D/g,'');if(!key||seen.has(key))return false;seen.add(key);return true;});
+    const merged=new Map<string,RemoteCardStatus>();
+    for(const card of cards){
+      const digits=card.cardNumber.replace(/\D/g,'');if(!digits)continue;
+      const key=digits.padStart(4,'0');
+      const previous=merged.get(key);
+      merged.set(key,{...previous,...card,cardNumber:key,
+        paymentMethodNumber:card.paymentMethodNumber||previous?.paymentMethodNumber,
+        holderName:card.holderName||previous?.holderName,registration:card.registration||previous?.registration,
+        expiresOn:card.expiresOn||previous?.expiresOn,monthlyLimit:card.monthlyLimit||previous?.monthlyLimit,
+        raw:{...(previous?.raw??{}),...(card.raw??{})}});
+    }
+    return [...merged.values()];
   }
 
   private async fillFirst(page: Page, selectors: string[], value: string) {

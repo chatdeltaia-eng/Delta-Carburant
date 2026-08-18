@@ -61,9 +61,12 @@ type RemoteTransaction = {
 };
 export type RemoteCardStatus = {
   cardNumber: string;
+  paymentMethodNumber?: string;
   status: string;
   holderName?: string;
   registration?: string;
+  expiresOn?: string;
+  monthlyLimit?: number;
   raw?: Record<string, unknown>;
 };
 export type RemoteDriver = {
@@ -191,23 +194,33 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,[`total-cards:${company.id}`]);
       let matched=0,created=0;
       for (const card of cards) {
-        const number=this.normalizeCardNumber(card.cardNumber);
+        const number=this.normalizeCardNumber(card.cardNumber).padStart(4,'0');
         const remoteStatus=card.status.trim().toUpperCase();
         if(!number||!remoteStatus)continue;
         await client.query(`INSERT INTO total_mobility_card_snapshot(card_number,remote_status,holder_name,registration,raw_data)
           VALUES($1,$2,$3,$4,$5)`,[number,remoteStatus,card.holderName??null,card.registration??null,card.raw??{}]);
-        let updated=await client.query(`UPDATE fuel_card SET total_mobility_status=$3,total_mobility_checked_at=now(),updated_at=now()
+        let updated=await client.query(`UPDATE fuel_card SET total_mobility_status=$3,total_mobility_checked_at=now(),
+          official_card_number=coalesce(nullif($4,''),official_card_number),
+          total_payment_number=coalesce(nullif($5,''),total_payment_number),
+          holder_name=coalesce(nullif($6,''),holder_name),
+          official_registration=coalesce(nullif($7,''),official_registration),
+          expires_on=coalesce($8::date,expires_on),
+          monthly_limit=CASE WHEN $9::numeric>0 THEN $9 ELSE monthly_limit END,updated_at=now()
           WHERE company_id=$1 AND deleted_at IS NULL AND regexp_replace(masked_card_number,'[^0-9]','','g')=regexp_replace($2,'[^0-9]','','g')
-          RETURNING id,status`,[company.id,number,remoteStatus]);
+          RETURNING id,status`,[company.id,number,remoteStatus,number,this.normalizeCardNumber(card.paymentMethodNumber??''),
+            card.holderName?.trim()??'',card.registration?.trim()??'',card.expiresOn??null,card.monthlyLimit??0]);
         if(!updated.rows[0]){
           const applicationStatus=/OPPOS|LOST|STOLEN|PERD|VOLE/.test(remoteStatus)?'OPPOSED'
             :/SUSPEND|BLOCK|BLOQU|TEMPORAIR/.test(remoteStatus)?'SUSPENDED'
             :/CANCEL|ANNULE|EXPIRE/.test(remoteStatus)?'CANCELLED':'TO_ASSIGN';
           const inserted=await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,masked_card_number,
-            monthly_limit,status,card_category,total_mobility_status,total_mobility_checked_at)
-            VALUES($1,pgp_sym_encrypt($2,$3,'cipher-algo=aes256'),hmac($2,$4,'sha256'),$2,0,$5,'PERSONALIZED',$6,now())
+            monthly_limit,status,card_category,total_mobility_status,total_mobility_checked_at,official_card_number,
+            total_payment_number,holder_name,official_registration,expires_on)
+            VALUES($1,pgp_sym_encrypt($2,$3,'cipher-algo=aes256'),hmac($2,$4,'sha256'),$2,$7,$5,'PERSONALIZED',$6,now(),
+              $2,nullif($8,''),nullif($9,''),nullif($10,''),$11::date)
             ON CONFLICT(company_id,card_number_hmac) DO NOTHING RETURNING id,status`,[company.id,number,
-            process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key',applicationStatus,remoteStatus]);
+            process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key',applicationStatus,remoteStatus,
+            card.monthlyLimit??0,this.normalizeCardNumber(card.paymentMethodNumber??''),card.holderName?.trim()??'',card.registration?.trim()??'',card.expiresOn??null]);
           updated=inserted;
           if(inserted.rows[0])created++;
         }
@@ -222,6 +235,15 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           }
         }
       }
+      // Retirer uniquement les lignes fantômes créées par les anciennes
+      // versions de l'extracteur (0, 1, 10, etc.). Une carte ayant une
+      // transaction ou une affectation n'est jamais touchée.
+      await client.query(`UPDATE fuel_card fc SET deleted_at=now(),updated_at=now()
+        WHERE fc.company_id=$1 AND fc.deleted_at IS NULL
+          AND length(regexp_replace(fc.masked_card_number,'[^0-9]','','g'))<4
+          AND fc.monthly_limit=0 AND fc.responsible_user_id IS NULL
+          AND NOT EXISTS(SELECT 1 FROM fuel_transaction ft WHERE ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL)
+          AND NOT EXISTS(SELECT 1 FROM card_assignment ca WHERE ca.fuel_card_id=fc.id AND ca.ends_at IS NULL)`,[company.id]);
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
         VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{client:totalName,company:company.code,extracted:cards.length,matched,created}]);
       return {client:totalName,company:company.code,extracted:cards.length,matched,created,unmatched:cards.length-matched};

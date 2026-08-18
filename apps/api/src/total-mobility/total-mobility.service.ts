@@ -206,7 +206,11 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           official_registration=coalesce(nullif($7,''),official_registration),
           expires_on=coalesce($8::date,expires_on),
           monthly_limit=CASE WHEN $9::numeric>0 THEN $9 ELSE monthly_limit END,updated_at=now()
-          WHERE company_id=$1 AND deleted_at IS NULL AND regexp_replace(masked_card_number,'[^0-9]','','g')=regexp_replace($2,'[^0-9]','','g')
+          WHERE company_id=$1 AND deleted_at IS NULL AND (
+            regexp_replace(masked_card_number,'[^0-9]','','g')=regexp_replace($2,'[^0-9]','','g')
+            OR regexp_replace(coalesce(official_card_number,''),'[^0-9]','','g')=regexp_replace($2,'[^0-9]','','g')
+            OR ($5<>'' AND regexp_replace(coalesce(total_payment_number,''),'[^0-9]','','g')=regexp_replace($5,'[^0-9]','','g'))
+          )
           RETURNING id,status`,[company.id,number,remoteStatus,number,this.normalizeCardNumber(card.paymentMethodNumber??''),
             card.holderName?.trim()??'',card.registration?.trim()??'',card.expiresOn??null,card.monthlyLimit??0]);
         if(!updated.rows[0]){

@@ -672,12 +672,49 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         await payment.scrollIntoViewIfNeeded().catch(()=>undefined);
         await payment.click({timeout:3_000});paymentOpened=true;break;
       }
+
+      // En mode « mini », Total masque le libellé avec CSS et le q-item n'est
+      // ni un lien ni un menuitem. Playwright ne peut donc pas le trouver avec
+      // getByText(...). Chercher aussi dans le DOM brut (texte masqué,
+      // aria-label, title, data-* et nom d'icône), puis cliquer le conteneur
+      // Quasar réellement interactif. Ce clic conserve le contexte client,
+      // contrairement à une navigation directe vers /manage-card.
+      const clickedFromDom=await frame.evaluate((patternSource)=>{
+        const pattern=new RegExp(patternSource,'i');
+        const iconPattern=/^(?:credit_card|payment|payments|account_balance_wallet|card_membership)$/i;
+        const nodes=Array.from(document.querySelectorAll<HTMLElement>('body *'));
+        const scored=nodes.map(node=>{
+          const attributes=Array.from(node.attributes).map(attribute=>attribute.value).join(' ');
+          const ownText=Array.from(node.childNodes)
+            .filter(child=>child.nodeType===Node.TEXT_NODE)
+            .map(child=>child.textContent??'').join(' ').replace(/\s+/g,' ').trim();
+          const materialIcon=node.matches('.material-icons,.q-icon,mat-icon')
+            &&iconPattern.test((node.textContent??'').trim());
+          const haystack=`${ownText} ${attributes}`.replace(/\s+/g,' ').trim();
+          const matches=pattern.test(haystack)||materialIcon;
+          const target=node.closest<HTMLElement>('.q-item,a,button,[role="button"],[tabindex]')??node;
+          const rect=target.getBoundingClientRect();
+          const visible=rect.width>0&&rect.height>0;
+          const score=(pattern.test(ownText)?100:0)+(pattern.test(attributes)?70:0)
+            +(materialIcon?40:0)+(target.matches('.q-item,a,button')?20:0)+(visible?10:0);
+          return {target,matches,score};
+        }).filter(candidate=>candidate.matches).sort((a,b)=>b.score-a.score);
+        const candidate=scored[0];
+        if(!candidate)return false;
+        candidate.target.scrollIntoView({block:'center'});
+        candidate.target.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
+        candidate.target.click();
+        return true;
+      },paymentPattern.source).catch(()=>false);
+      if(clickedFromDom){paymentOpened=true;break;}
     }
     if(!paymentOpened){
       const diagnostics=(await Promise.all(page.frames().map(async frame=>({
         links:await frame.locator('a:visible, [role="menuitem"]:visible').allTextContents().catch(()=>[]),
         hrefs:await frame.locator('a:visible').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('href')).filter(Boolean)).catch(()=>[]),
-      })))).flatMap(item=>[...item.links,...item.hrefs]).map(value=>String(value).replace(/\s+/g,' ').trim()).filter(Boolean).slice(0,30).join(' | ');
+        controls:await frame.locator('.q-drawer .q-item, aside [role="button"], nav [role="button"], button')
+          .evaluateAll(nodes=>nodes.map(node=>`${(node.textContent??'').replace(/\s+/g,' ').trim()} ${(node.getAttribute('aria-label')??'')} ${(node.getAttribute('title')??'')}`.trim()).filter(Boolean)).catch(()=>[]),
+      })))).flatMap(item=>[...item.links,...item.hrefs,...item.controls]).map(value=>String(value).replace(/\s+/g,' ').trim()).filter(Boolean).slice(0,50).join(' | ');
       throw new Error(`Menu de paiement introuvable après ouverture du tableau de bord (${page.url()}). Éléments visibles: ${diagnostics||'aucun'}`);
     }
     await page.waitForURL(/\/tn\/(?:cards|payment)/i,{timeout:15_000}).catch(()=>undefined);

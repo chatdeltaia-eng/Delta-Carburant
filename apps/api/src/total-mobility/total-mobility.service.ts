@@ -195,22 +195,51 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
     const [company]=await this.db.query<{id:string;code:string}>(`SELECT c.id,c.code FROM company c WHERE EXISTS(SELECT 1 FROM driver d WHERE d.company_id=c.id AND regexp_replace(coalesce(d.customer_number,''),'[^0-9]','','g')=regexp_replace($1,'[^0-9]','','g')) ORDER BY c.created_at LIMIT 1`,[connection?.customer_number??'']);
     if(!company)throw new BadRequestException(`Aucune société de l'application ne correspond au client Total ${connection?.customer_number??'inconnu'}`);
     return this.db.transaction(async client=>{
-      let created=0,updated=0;
+      // Prevent two scheduled/manual synchronizations from both observing a
+      // missing driver and attempting the same INSERT.
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,[`total-drivers:${company.id}`]);
+      let created=0,updated=0,keyConflicts=0;
       for(const remote of drivers){
         const number=String(remote.driverNumber).trim().padStart(4,'0');
         if(!number)continue;
+        const rawCode=String(remote.driverCode??'').trim();
+        // The extractor returns an empty string when Total does not expose a
+        // driver code. Never turn every missing code into the shared "0000".
+        const code=(rawCode||number).padStart(4,'0');
         const firstName=String(remote.firstName??'').trim();
         const lastName=String(remote.lastName??'').trim().toUpperCase();
         const active=!/oppos|bloqu|inactif|inactive|suspend/i.test(String(remote.status??''));
-        const existing=await client.query(`SELECT id FROM driver WHERE company_id=$1 AND driver_number=$2 AND deleted_at IS NULL LIMIT 1`,[company.id,number]);
-        if(existing.rows[0]){
-          await client.query(`UPDATE driver SET first_name=$2,last_name=$3,full_name=trim($2||' '||$3),driver_code=coalesce(nullif($4,''),driver_code),customer_number=$5,customer_name=$6,active=$7,total_mobility_checked_at=now(),total_mobility_raw=$8,updated_at=now() WHERE id=$1`,[existing.rows[0].id,firstName,lastName,String(remote.driverCode??''),connection?.customer_number??'',company.code,active,remote.raw??{}]);updated++;
+        // Total's driver code is the same business key enforced by
+        // uq_driver_company_driver_code. Older imports sometimes stored a
+        // different driver_number for an already known code, so looking up by
+        // number alone attempted a duplicate INSERT and aborted the full sync.
+        const existing=await client.query<{id:string;driver_number:string;driver_code:string}>(`SELECT id,driver_number,driver_code FROM driver
+          WHERE company_id=$1 AND deleted_at IS NULL AND (driver_code=$2 OR driver_number=$3)
+          ORDER BY CASE WHEN driver_code=$2 THEN 0 ELSE 1 END,created_at
+          FOR UPDATE`,[company.id,code,number]);
+        const codeOwner=existing.rows.find(row=>row.driver_code===code);
+        const numberOwner=existing.rows.find(row=>row.driver_number===number);
+        const target=codeOwner??numberOwner;
+        if(target){
+          // Bad historical data can have the requested code and number on two
+          // different rows. Keep the target's number in that case instead of
+          // violating uq_driver_company_driver_number and aborting the batch.
+          const safeNumber=numberOwner&&numberOwner.id!==target.id?target.driver_number:number;
+          if(safeNumber!==number)keyConflicts++;
+          await client.query(`UPDATE driver SET first_name=$2,last_name=$3,full_name=trim($2||' '||$3),driver_number=$4,driver_code=$5,customer_number=$6,customer_name=$7,active=$8,total_mobility_checked_at=now(),total_mobility_raw=$9,updated_at=now() WHERE id=$1`,[target.id,firstName,lastName,safeNumber,code,connection?.customer_number??'',company.code,active,remote.raw??{}]);updated++;
         }else{
-          await client.query(`INSERT INTO driver(company_id,full_name,customer_number,customer_name,driver_number,first_name,last_name,driver_code,active,total_mobility_checked_at,total_mobility_raw) VALUES($1,trim($2||' '||$3),$4,$5,$6,$2,$3,$7,$8,now(),$9)`,[company.id,firstName,lastName,connection?.customer_number??'',company.code,number,String(remote.driverCode??number).padStart(4,'0'),active,remote.raw??{}]);created++;
+          const inserted=await client.query<{id:string}>(`INSERT INTO driver(company_id,full_name,customer_number,customer_name,driver_number,first_name,last_name,driver_code,active,total_mobility_checked_at,total_mobility_raw) VALUES($1,trim($2||' '||$3),$4,$5,$6,$2,$3,$7,$8,now(),$9) ON CONFLICT DO NOTHING RETURNING id`,[company.id,firstName,lastName,connection?.customer_number??'',company.code,number,code,active,remote.raw??{}]);
+          if(inserted.rows[0])created++;
+          else {
+            // A manual write may race with the sync despite our advisory lock.
+            // Treat it as an already-existing driver instead of failing all rows.
+            await client.query(`UPDATE driver SET first_name=$3,last_name=$4,full_name=trim($3||' '||$4),customer_number=$5,customer_name=$6,active=$7,total_mobility_checked_at=now(),total_mobility_raw=$8,updated_at=now() WHERE company_id=$1 AND deleted_at IS NULL AND (driver_code=$2 OR driver_number=$9)`,[company.id,code,firstName,lastName,connection?.customer_number??'',company.code,active,remote.raw??{},number]);
+            updated++;
+          }
         }
       }
-      await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'SYNC_TOTAL_DRIVERS','integration','TOTAL_MOBILITY_DRIVERS',$2)`,[actor.email,{company:company.code,received:drivers.length,created,updated}]);
-      return {received:drivers.length,created,updated,company:company.code};
+      await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'SYNC_TOTAL_DRIVERS','integration','TOTAL_MOBILITY_DRIVERS',$2)`,[actor.email,{company:company.code,received:drivers.length,created,updated,keyConflicts}]);
+      return {received:drivers.length,created,updated,keyConflicts,company:company.code};
     });
   }
   async importVehicles(vehicles: RemoteVehicle[], actor: Actor) {

@@ -567,20 +567,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     const page=this.page;if(!page||!this.actor)throw new Error('La session Total est indisponible pour les cartes');
     const knownClients=['DELTA CUISINE','IKIT TN','DELTA CUISINE DISTRIBUTION','STE LES TECHNIQUES DE MARBRE'];
     await this.openTotalCustomerSelection();
-    const names:string[]=[];
-    for(const frame of page.frames()){
-      const candidates=await frame.locator('label, [role="radio"], .q-radio, .q-item:has([role="radio"]), .q-item:has(input[type="radio"])').evaluateAll(elements=>elements.map(element=>(element.textContent??'').replace(/\s+/g,' ').trim()).filter(Boolean)).catch(()=>[]);
-      for(const name of candidates){
-        const clean=name.replace(/^\s*[○◉●]\s*/,'').trim();
-        if(clean.length>2&&!/choisir|bienvenue|continuer|annuler|^ok$/i.test(clean)&&!names.includes(clean))names.push(clean);
-      }
-      const body=(await frame.locator('body').innerText().catch(()=>''));
-      for(const known of knownClients)if(body.toUpperCase().includes(known)&&!names.includes(known))names.push(known);
-    }
-    // Certaines versions du portail rendent la liste dans un composant sans
-    // rôle radio/label. Les quatre clients métier restent alors notre source
-    // fiable et seront recherchés un par un dans l'écran Total.
-    for(const known of knownClients)if(!names.includes(known))names.push(known);
+    // Ne pas déduire les noms depuis tous les labels Quasar : leurs icônes
+    // Material (« arrow_drop_down », etc.) sont aussi exposées comme du texte
+    // et seraient prises à tort pour des clients.
+    const names=[...knownClients];
     const results:unknown[]=[];
     for(const name of names){
       await this.openTotalCustomerSelection();

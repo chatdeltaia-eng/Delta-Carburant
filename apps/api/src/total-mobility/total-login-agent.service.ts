@@ -597,6 +597,18 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         results.push({client:name,error:message});
       }
     }
+    const successful=results.filter(result=>{
+      if(!result||typeof result!=='object')return false;
+      const row=result as Record<string,unknown>;
+      return !row.error&&Number(row.extracted??0)>0;
+    });
+    if(!successful.length){
+      const details=results.map(result=>{
+        const row=result as Record<string,unknown>;
+        return `${row.client??'Client inconnu'}: ${row.error??row.message??'0 carte'}`;
+      }).join(' | ');
+      throw new Error(`Aucune carte Total importée. ${details}`);
+    }
     return results;
   }
 
@@ -637,13 +649,26 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     const exact=new RegExp(`^\\s*${escaped}\\s*$`,'i');
     const contains=new RegExp(escaped,'i');
     for(const frame of page.frames()){
+      const dialog=frame.locator('.q-dialog--modal, [role="dialog"]').filter({visible:true}).last();
+      const scope=await dialog.isVisible({timeout:250}).catch(()=>false)?dialog:frame.locator('body');
       const search=frame.locator('input[type="search"], input[placeholder*="recherche" i], input[placeholder*="client" i]').first();
       if(await search.isVisible({timeout:250}).catch(()=>false)){
         await search.fill(name);await frame.waitForTimeout(500);
       }
+      // Version actuelle : le client est choisi dans un q-select. Ouvrir le
+      // champ avant de chercher l'option, sans cliquer l'icône Material cachée.
+      const clientSelect=scope.locator('[role="combobox"], .q-select').first();
+      if(await clientSelect.isVisible({timeout:300}).catch(()=>false)){
+        await clientSelect.click({timeout:3_000});await frame.waitForTimeout(400);
+        const option=frame.locator('[role="option"], .q-menu .q-item, .q-virtual-scroll__content .q-item')
+          .filter({hasText:exact}).first();
+        if(await option.isVisible({timeout:1_500}).catch(()=>false)){
+          await option.click({timeout:3_000});await frame.waitForTimeout(500);
+        }
+      }
       const choices=[
-        frame.getByText(exact).first(),
-        frame.locator('label, [role="radio"], .q-radio, .q-item').filter({hasText:contains}).first(),
+        scope.getByText(exact).first(),
+        scope.locator('label, [role="radio"], .q-radio, .q-item').filter({hasText:contains}).first(),
       ];
       for(const choice of choices){
         if(!await choice.isVisible({timeout:500}).catch(()=>false))continue;
@@ -659,6 +684,22 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         await frame.waitForTimeout(500);
         const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).first();
         if(await ok.isEnabled({timeout:2_000}).catch(()=>false))return true;
+      }
+      // Certains comptes demandent aussi un site après le client. Choisir le
+      // site configuré, ou à défaut la première option disponible.
+      const selects=scope.locator('[role="combobox"], .q-select');
+      if(await selects.count()>1){
+        const siteSelect=selects.nth(1);
+        if(await siteSelect.isVisible().catch(()=>false)){
+          await siteSelect.click({timeout:2_000});await frame.waitForTimeout(300);
+          const [connection]=await this.db.query<{site_number:string}>(`SELECT site_number FROM total_mobility_connection WHERE enabled LIMIT 1`);
+          const site=connection?.site_number?.trim();
+          const options=frame.locator('[role="option"], .q-menu .q-item, .q-virtual-scroll__content .q-item').filter({visible:true});
+          const target=site?options.filter({hasText:new RegExp(site.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'))}).first():options.first();
+          if(await target.isVisible({timeout:1_000}).catch(()=>false))await target.click({timeout:2_000});
+          const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).first();
+          if(await ok.isEnabled({timeout:2_000}).catch(()=>false))return true;
+        }
       }
     }
     return false;

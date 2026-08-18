@@ -1,6 +1,13 @@
 BEGIN;
 
-CREATE OR REPLACE VIEW v_fuel_card_list AS
+-- beneficiary and registration used to inherit the citext type from their
+-- source columns.  The fallbacks added below make PostgreSQL resolve these
+-- expressions as text. CREATE OR REPLACE VIEW cannot change an existing view
+-- column type (42P16), so recreate the view explicitly. This only replaces the
+-- view definition; the underlying card data is untouched.
+DROP VIEW IF EXISTS v_fuel_card_list;
+
+CREATE VIEW v_fuel_card_list AS
 SELECT fc.id, c.code AS company_code, fc.masked_card_number, fc.monthly_limit,
        fc.threshold_alert_enabled, fc.status, fc.legacy_state,
        coalesce(b.display_name,fc.holder_name) AS beneficiary, d.name AS department,

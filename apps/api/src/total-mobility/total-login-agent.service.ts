@@ -610,13 +610,26 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private async openTotalCustomerSelection(){
     const page=this.page;if(!page)throw new Error('La session Total est indisponible');
+    // Total ouvre parfois « Choisir un client » dans une q-dialog sans changer
+    // l'URL. Ne jamais recliquer le lien d'en-tête lorsque cette fenêtre est
+    // déjà au premier plan : son backdrop intercepte volontairement les clics.
+    for(const frame of page.frames()){
+      const openDialog=frame.locator('.q-dialog[aria-hidden="false"], .q-dialog--modal, [role="dialog"]')
+        .filter({has:frame.locator('input[type="radio"], [role="radio"], input[type="search"], input[placeholder*="client" i]')}).first();
+      if(await openDialog.isVisible({timeout:400}).catch(()=>false)){
+        await frame.waitForTimeout(700);return;
+      }
+    }
     // Le lien d'en-tête initialise correctement le composant de sélection,
     // contrairement à un accès direct qui peut afficher une SPA sans options.
     if(!/customer-selection/i.test(page.url())){
       for(const frame of page.frames()){
         const chooser=frame.getByText(/choisir un client/i).first();
         if(await chooser.isVisible({timeout:700}).catch(()=>false)){
-          await chooser.click();
+          const clicked=await chooser.click({timeout:3_000}).then(()=>true).catch(()=>false);
+          // Un échec de clic signifie généralement que la q-dialog est déjà
+          // ouverte et que son backdrop protège le bouton situé derrière.
+          if(!clicked){await frame.waitForTimeout(500);return;}
           await page.waitForURL(/customer-selection/i,{timeout:15_000}).catch(()=>undefined);
           await page.waitForTimeout(2_000);return;
         }

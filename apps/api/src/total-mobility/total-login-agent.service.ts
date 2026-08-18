@@ -580,11 +580,35 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async openManageCardsFromMenu(){
     const page=this.page;if(!page)throw new Error('La session Total est indisponible');
     if(/\/cards\/manage-card/i.test(page.url()))return;
-    // Le hamburger Total n'a ni aria-label ni texte accessible. Le repérer
-    // parmi les contrôles visibles situés dans le coin supérieur gauche.
+    // Toujours repartir du tableau de bord du client actif. Les pages métier
+    // (notamment /drivers) n'affichent pas toutes le même bouton de menu.
+    // On utilise le logo/lien d'accueil de la SPA, jamais une URL métier
+    // directe qui ferait perdre le contexte du client sélectionné.
+    if(!/\/tn\/(?:dashboard)?(?:[/?#]|$)/i.test(page.url())){
+      for(const frame of page.frames()){
+        const home=frame.locator('a[href$="/tn"], a[href$="/tn/"], a[href*="/tn/dashboard"], [routerlink="/tn"], [routerlink*="dashboard" i]').filter({visible:true}).first();
+        if(await home.isVisible({timeout:400}).catch(()=>false)){
+          await home.click({timeout:3_000}).catch(()=>undefined);break;
+        }
+      }
+      await page.waitForTimeout(1_500);
+    }
+
+    // Ouvrir le tiroir avec ses sélecteurs sémantiques en priorité. Total a
+    // changé plusieurs fois le composant (Quasar, bouton Material, simple
+    // div cliquable), d'où les replis DOM puis coordonnées.
     let drawerClicked=false;
     for(const frame of page.frames()){
-      const controls=frame.locator('button, [role="button"], .q-btn');
+      const semantic=frame.locator([
+        'button[aria-label*="menu" i]','[role="button"][aria-label*="menu" i]',
+        'button:has(.material-icons:text-is("menu"))','button:has(.q-icon:text-is("menu"))',
+        '.q-btn:has-text("menu")','mat-icon:text-is("menu")',
+      ].join(',')).filter({visible:true}).first();
+      if(await semantic.isVisible({timeout:400}).catch(()=>false)){
+        await semantic.click({timeout:2_000}).catch(()=>undefined);
+        await frame.waitForTimeout(700);drawerClicked=true;break;
+      }
+      const controls=frame.locator('header button, header [role="button"], .q-header .q-btn, button, [role="button"], .q-btn');
       for(let index=0;index<await controls.count();index++){
         const control=controls.nth(index);
         if(!await control.isVisible().catch(()=>false))continue;
@@ -597,8 +621,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
       if(drawerClicked)break;
     }
+    const paymentPattern=/(?:méthodes?|moyens?|modes?)\s+de\s+paiement|gestion\s+(?:des\s+)?(?:paiements?|cartes?)/i;
     let paymentVisible=false;
-    for(const frame of page.frames())paymentVisible=paymentVisible||await frame.getByText(/^\s*Méthodes de paiement\s*$/i).filter({visible:true}).first().isVisible({timeout:250}).catch(()=>false);
+    for(const frame of page.frames())paymentVisible=paymentVisible||await frame.getByText(paymentPattern).filter({visible:true}).first().isVisible({timeout:250}).catch(()=>false);
     // Repli visuel exact dans le repère de la page, puis validation réelle du
     // libellé. Un clic seul ne suffit pas à conclure que le tiroir est ouvert.
     if(!paymentVisible){
@@ -607,15 +632,34 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     }
     let paymentOpened=false;
     for(const frame of page.frames()){
-      const payment=frame.getByText(/^\s*Méthodes de paiement\s*$/i).filter({visible:true}).first();
+      // Les éléments du bas du tiroir peuvent être hors viewport. Faire
+      // défiler le conteneur avant de chercher le libellé ou sa route.
+      await frame.locator('.q-drawer, aside, nav, [role="navigation"]').filter({visible:true}).first()
+        .evaluate(element=>{element.scrollTop=element.scrollHeight;}).catch(()=>undefined);
+      const byRoute=frame.locator('a[href*="/cards" i], [routerlink*="cards" i], a[href*="payment" i], [routerlink*="payment" i]').filter({visible:true}).first();
+      const payment=await byRoute.isVisible({timeout:400}).catch(()=>false)
+        ?byRoute
+        :frame.getByText(paymentPattern).filter({visible:true}).first();
       if(await payment.isVisible({timeout:1_500}).catch(()=>false)){
+        await payment.scrollIntoViewIfNeeded().catch(()=>undefined);
         await payment.click({timeout:3_000});paymentOpened=true;break;
       }
     }
-    if(!paymentOpened)throw new Error(`Menu latéral ouvert, mais « Méthodes de paiement » reste introuvable (${page.url()})`);
-    await page.waitForURL(/\/tn\/cards(?:[/?#]|$)/i,{timeout:15_000});
+    if(!paymentOpened){
+      const diagnostics=(await Promise.all(page.frames().map(async frame=>({
+        links:await frame.locator('a:visible, [role="menuitem"]:visible').allTextContents().catch(()=>[]),
+        hrefs:await frame.locator('a:visible').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('href')).filter(Boolean)).catch(()=>[]),
+      })))).flatMap(item=>[...item.links,...item.hrefs]).map(value=>String(value).replace(/\s+/g,' ').trim()).filter(Boolean).slice(0,30).join(' | ');
+      throw new Error(`Menu de paiement introuvable après ouverture du tableau de bord (${page.url()}). Éléments visibles: ${diagnostics||'aucun'}`);
+    }
+    await page.waitForURL(/\/tn\/(?:cards|payment)/i,{timeout:15_000}).catch(()=>undefined);
     await page.waitForTimeout(1_500);
     for(const frame of page.frames()){
+      const manageRoute=frame.locator('a[href*="manage-card" i], [routerlink*="manage-card" i]').filter({visible:true}).first();
+      if(await manageRoute.isVisible({timeout:500}).catch(()=>false)){
+        await manageRoute.click({timeout:3_000});
+        await page.waitForURL(/\/cards\/manage-card/i,{timeout:15_000});return;
+      }
       const manage=frame.getByText(/^\s*Gérer\s*$/i).filter({visible:true}).first();
       if(await manage.isVisible({timeout:800}).catch(()=>false)){
         await manage.click({timeout:3_000});

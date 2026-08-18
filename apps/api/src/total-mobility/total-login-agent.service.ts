@@ -573,10 +573,20 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async openManageCardsFromMenu(){
     const page=this.page;if(!page)throw new Error('La session Total est indisponible');
     if(/\/cards\/manage-card/i.test(page.url()))return;
+    if(/access|denied|forbidden/i.test(page.url())){
+      await page.goto('https://customer.fleet.totalenergies.com/tn/dashboard',{waitUntil:'domcontentloaded',timeout:60_000});
+      await page.waitForTimeout(2_000);
+    }
     for(const frame of page.frames()){
-      const menuButton=frame.locator('button[aria-label*="menu" i], .q-header .q-btn').first();
-      if(await menuButton.isVisible({timeout:400}).catch(()=>false)){
-        await menuButton.click({timeout:2_000}).catch(()=>undefined);await frame.waitForTimeout(500);
+      const toggles=[
+        frame.locator('button[aria-label*="menu" i], button[title*="menu" i]').first(),
+        frame.locator('button:has(.q-icon)').filter({hasText:/^\s*menu\s*$/i}).first(),
+        frame.locator('.q-icon').filter({hasText:/^\s*menu\s*$/i}).first(),
+      ];
+      for(const toggle of toggles){
+        if(await toggle.isVisible({timeout:400}).catch(()=>false)){
+          await toggle.click({timeout:2_000});await frame.waitForTimeout(700);break;
+        }
       }
       const payment=frame.getByText(/^\s*Méthodes de paiement\s*$/i).first();
       if(await payment.isVisible({timeout:700}).catch(()=>false)){
@@ -592,8 +602,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         await page.waitForURL(/\/cards\/manage-card/i,{timeout:15_000});return;
       }
     }
-    // Repli si le menu change, tout en conservant la session sélectionnée.
-    await page.goto('https://customer.fleet.totalenergies.com/tn/cards/manage-card',{waitUntil:'domcontentloaded',timeout:60_000});
+    // Ne jamais ouvrir /manage-card directement : Total renvoie alors vers
+    // /access-denied même si l'utilisateur possède les droits via le menu.
+    throw new Error(`Parcours Total impossible : « Méthodes de paiement > Gérer » introuvable (${page.url()})`);
   }
 
   private async extractAllClientCards(){

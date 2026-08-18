@@ -192,7 +192,9 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
   async importDrivers(drivers: RemoteDriver[], actor: Actor) {
     if (!drivers.length) throw new BadRequestException('Aucun chauffeur trouvé dans « Gestion des chauffeurs » sur Total Mobility');
     const [connection]=await this.db.query<{customer_number:string}>(`SELECT customer_number FROM total_mobility_connection WHERE enabled LIMIT 1`);
-    const [company]=await this.db.query<{id:string;code:string}>(`SELECT c.id,c.code FROM company c WHERE EXISTS(SELECT 1 FROM driver d WHERE d.company_id=c.id AND regexp_replace(coalesce(d.customer_number,''),'[^0-9]','','g')=regexp_replace($1,'[^0-9]','','g')) ORDER BY c.created_at LIMIT 1`,[connection?.customer_number??'']);
+    const [company]=await this.db.query<{id:string;code:string;customer_name:string}>(`SELECT c.id,c.code,
+      coalesce((SELECT nullif(d.customer_name,'') FROM driver d WHERE d.company_id=c.id AND regexp_replace(coalesce(d.customer_number,''),'[^0-9]','','g')=regexp_replace($1,'[^0-9]','','g') AND d.deleted_at IS NULL AND nullif(d.customer_name,'') IS NOT NULL ORDER BY d.created_at LIMIT 1),c.name) customer_name
+      FROM company c WHERE EXISTS(SELECT 1 FROM driver d WHERE d.company_id=c.id AND regexp_replace(coalesce(d.customer_number,''),'[^0-9]','','g')=regexp_replace($1,'[^0-9]','','g')) ORDER BY c.created_at LIMIT 1`,[connection?.customer_number??'']);
     if(!company)throw new BadRequestException(`Aucune société de l'application ne correspond au client Total ${connection?.customer_number??'inconnu'}`);
     return this.db.transaction(async client=>{
       // Prevent two scheduled/manual synchronizations from both observing a
@@ -226,14 +228,14 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           // violating uq_driver_company_driver_number and aborting the batch.
           const safeNumber=numberOwner&&numberOwner.id!==target.id?target.driver_number:number;
           if(safeNumber!==number)keyConflicts++;
-          await client.query(`UPDATE driver SET first_name=$2,last_name=$3,full_name=trim($2||' '||$3),driver_number=$4,driver_code=$5,customer_number=$6,customer_name=$7,active=$8,total_mobility_checked_at=now(),total_mobility_raw=$9,updated_at=now() WHERE id=$1`,[target.id,firstName,lastName,safeNumber,code,connection?.customer_number??'',company.code,active,remote.raw??{}]);updated++;
+          await client.query(`UPDATE driver SET first_name=$2,last_name=$3,full_name=trim($2||' '||$3),driver_number=$4,driver_code=$5,customer_number=$6,customer_name=$7,active=$8,total_mobility_checked_at=now(),total_mobility_raw=$9,updated_at=now() WHERE id=$1`,[target.id,firstName,lastName,safeNumber,code,connection?.customer_number??'',company.customer_name,active,remote.raw??{}]);updated++;
         }else{
-          const inserted=await client.query<{id:string}>(`INSERT INTO driver(company_id,full_name,customer_number,customer_name,driver_number,first_name,last_name,driver_code,active,total_mobility_checked_at,total_mobility_raw) VALUES($1,trim($2||' '||$3),$4,$5,$6,$2,$3,$7,$8,now(),$9) ON CONFLICT DO NOTHING RETURNING id`,[company.id,firstName,lastName,connection?.customer_number??'',company.code,number,code,active,remote.raw??{}]);
+          const inserted=await client.query<{id:string}>(`INSERT INTO driver(company_id,full_name,customer_number,customer_name,driver_number,first_name,last_name,driver_code,active,total_mobility_checked_at,total_mobility_raw) VALUES($1,trim($2||' '||$3),$4,$5,$6,$2,$3,$7,$8,now(),$9) ON CONFLICT DO NOTHING RETURNING id`,[company.id,firstName,lastName,connection?.customer_number??'',company.customer_name,number,code,active,remote.raw??{}]);
           if(inserted.rows[0])created++;
           else {
             // A manual write may race with the sync despite our advisory lock.
             // Treat it as an already-existing driver instead of failing all rows.
-            await client.query(`UPDATE driver SET first_name=$3,last_name=$4,full_name=trim($3||' '||$4),customer_number=$5,customer_name=$6,active=$7,total_mobility_checked_at=now(),total_mobility_raw=$8,updated_at=now() WHERE company_id=$1 AND deleted_at IS NULL AND (driver_code=$2 OR driver_number=$9)`,[company.id,code,firstName,lastName,connection?.customer_number??'',company.code,active,remote.raw??{},number]);
+            await client.query(`UPDATE driver SET first_name=$3,last_name=$4,full_name=trim($3||' '||$4),customer_number=$5,customer_name=$6,active=$7,total_mobility_checked_at=now(),total_mobility_raw=$8,updated_at=now() WHERE company_id=$1 AND deleted_at IS NULL AND (driver_code=$2 OR driver_number=$9)`,[company.id,code,firstName,lastName,connection?.customer_number??'',company.customer_name,active,remote.raw??{},number]);
             updated++;
           }
         }

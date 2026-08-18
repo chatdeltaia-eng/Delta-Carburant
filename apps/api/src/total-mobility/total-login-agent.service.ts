@@ -594,18 +594,36 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       await page.waitForTimeout(1_500);
     }
 
-    // Ouvrir le tiroir avec ses sélecteurs sémantiques en priorité. Total a
-    // changé plusieurs fois le composant (Quasar, bouton Material, simple
-    // div cliquable), d'où les replis DOM puis coordonnées.
+    // Le bundle Total courant expose précisément `.menu-hamburger` et rend le
+    // menu dans `.q-drawer`. Attendre aussi la fin de LoadPackageNavigation :
+    // le tiroir peut être visible mais encore vide juste après le changement
+    // de client.
+    await page.locator('.menu-hamburger').first().waitFor({state:'visible',timeout:20_000}).catch(()=>undefined);
+    await page.waitForFunction(()=>document.querySelectorAll('.q-drawer .q-item').length>0,{timeout:30_000}).catch(()=>undefined);
+    const drawer=page.locator('.q-drawer').filter({visible:true}).first();
+    if(await drawer.isVisible({timeout:1_000}).catch(()=>false)){
+      // À 1920 px, Quasar laisse le tiroir en mode mini. Son événement
+      // mouseover est le mécanisme officiel du portail pour afficher les
+      // libellés et rendre « Méthodes de paiement » sélectionnable.
+      await drawer.hover({position:{x:20,y:100}}).catch(()=>undefined);
+      await page.waitForTimeout(900);
+    }
+
+    // Ouvrir le tiroir avec ses sélecteurs sémantiques en priorité.
     let drawerClicked=false;
     for(const frame of page.frames()){
       const semantic=frame.locator([
+        '.menu-hamburger',
         'button[aria-label*="menu" i]','[role="button"][aria-label*="menu" i]',
         'button:has(.material-icons:text-is("menu"))','button:has(.q-icon:text-is("menu"))',
         '.q-btn:has-text("menu")','mat-icon:text-is("menu")',
       ].join(',')).filter({visible:true}).first();
       if(await semantic.isVisible({timeout:400}).catch(()=>false)){
-        await semantic.click({timeout:2_000}).catch(()=>undefined);
+        // Si le q-drawer est déjà visible (mode mini/desktop), le hamburger le
+        // fermerait. Dans ce cas le survol ci-dessus suffit.
+        const visibleDrawer=frame.locator('.q-drawer').filter({visible:true}).first();
+        if(!await visibleDrawer.isVisible({timeout:200}).catch(()=>false))
+          await semantic.click({timeout:2_000}).catch(()=>undefined);
         await frame.waitForTimeout(700);drawerClicked=true;break;
       }
       const controls=frame.locator('header button, header [role="button"], .q-header .q-btn, button, [role="button"], .q-btn');
@@ -627,8 +645,18 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     // Repli visuel exact dans le repère de la page, puis validation réelle du
     // libellé. Un clic seul ne suffit pas à conclure que le tiroir est ouvert.
     if(!paymentVisible){
-      await page.mouse.click(36,43);
+      const hamburger=page.locator('.menu-hamburger').filter({visible:true}).first();
+      const existingDrawer=page.locator('.q-drawer').filter({visible:true}).first();
+      if(!await existingDrawer.isVisible({timeout:300}).catch(()=>false)){
+        if(await hamburger.isVisible({timeout:300}).catch(()=>false))await hamburger.click();
+        else await page.mouse.click(36,43);
+      }
       await page.waitForTimeout(1_200);
+      const reopened=page.locator('.q-drawer').filter({visible:true}).first();
+      if(await reopened.isVisible({timeout:500}).catch(()=>false)){
+        await reopened.hover({position:{x:20,y:100}}).catch(()=>undefined);
+        await page.waitForTimeout(700);
+      }
     }
     let paymentOpened=false;
     for(const frame of page.frames()){
@@ -636,7 +664,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // défiler le conteneur avant de chercher le libellé ou sa route.
       await frame.locator('.q-drawer, aside, nav, [role="navigation"]').filter({visible:true}).first()
         .evaluate(element=>{element.scrollTop=element.scrollHeight;}).catch(()=>undefined);
-      const byRoute=frame.locator('a[href*="/cards" i], [routerlink*="cards" i], a[href*="payment" i], [routerlink*="payment" i]').filter({visible:true}).first();
+      const byRoute=frame.locator('.q-drawer .q-item[href*="/cards" i], .q-drawer a[href*="/cards" i], a[href*="/cards" i], [routerlink*="cards" i], a[href*="payment" i], [routerlink*="payment" i]').filter({visible:true}).first();
       const payment=await byRoute.isVisible({timeout:400}).catch(()=>false)
         ?byRoute
         :frame.getByText(paymentPattern).filter({visible:true}).first();

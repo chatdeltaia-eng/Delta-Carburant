@@ -248,6 +248,16 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           AND fc.monthly_limit=0 AND fc.responsible_user_id IS NULL
           AND NOT EXISTS(SELECT 1 FROM fuel_transaction ft WHERE ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL)
           AND NOT EXISTS(SELECT 1 FROM card_assignment ca WHERE ca.fuel_card_id=fc.id AND ca.ends_at IS NULL)`,[company.id]);
+      // Nettoyer les lignes fantômes des anciennes versions (numéro lu depuis
+      // le paginator, sans aucun détail réel provenant de Total).
+      await client.query(`UPDATE fuel_card fc SET deleted_at=now(),updated_at=now()
+        WHERE fc.company_id=$1 AND fc.deleted_at IS NULL AND fc.monthly_limit=0
+          AND nullif(fc.total_payment_number,'') IS NULL
+          AND nullif(fc.holder_name,'') IS NULL
+          AND nullif(fc.official_registration,'') IS NULL
+          AND fc.expires_on IS NULL AND fc.responsible_user_id IS NULL
+          AND NOT EXISTS(SELECT 1 FROM fuel_transaction ft WHERE ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL)
+          AND NOT EXISTS(SELECT 1 FROM card_assignment ca WHERE ca.fuel_card_id=fc.id AND ca.ends_at IS NULL)`,[company.id]);
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
         VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{client:totalName,company:company.code,extracted:cards.length,matched,created}]);
       return {client:totalName,company:company.code,extracted:cards.length,matched,created,unmatched:cards.length-matched};

@@ -552,9 +552,24 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           Array.from(row.querySelectorAll('td, [role="cell"], mat-cell')).map(cell=>(cell.textContent??'').replace(/\s+/g,' ').trim()))).catch(()=>[])))).flat());
         let advanced=false;
         for(const frame of page.frames()){
-          const next=frame.locator('button[aria-label*="next page" i], button[aria-label*="page suivante" i], button[title*="suivant" i]').first();
-          if(await next.isVisible({timeout:250}).catch(()=>false)&&await next.isEnabled().catch(()=>false)){
-            await next.click();await page.waitForTimeout(900);advanced=true;break;
+          const buttons=frame.locator('button');
+          const nextIndex=await buttons.evaluateAll(elements=>elements.findIndex(element=>{
+            const button=element as HTMLButtonElement;
+            const token=[button.textContent,button.getAttribute('aria-label'),button.getAttribute('title')]
+              .filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();
+            const visible=Boolean(button.offsetWidth||button.offsetHeight||button.getClientRects().length);
+            return visible&&!button.disabled&&button.getAttribute('aria-disabled')!=='true'&&(
+              /^(chevron_right|navigate_next|keyboard_arrow_right)$/.test((button.textContent??'').trim())||
+              /next page|page suivante|suivant/.test(token)
+            )&&!/last|derni[eè]re/.test(token);
+          })).catch(()=>-1);
+          if(nextIndex>=0){
+            const before=await frame.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row').allTextContents().catch(()=>[]);
+            await buttons.nth(nextIndex).click({force:true});
+            await page.waitForTimeout(900);
+            const after=await frame.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row').allTextContents().catch(()=>[]);
+            advanced=after.join('|')!==before.join('|');
+            if(advanced)break;
           }
         }
         if(!advanced)break;
@@ -970,8 +985,14 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private uniqueCards(cards:RemoteCardStatus[]){
     const merged=new Map<string,RemoteCardStatus>();
     for(const card of cards){
-      const digits=card.cardNumber.replace(/\D/g,'');if(!digits)continue;
-      const key=digits.padStart(4,'0');
+      const digits=card.cardNumber.replace(/\D/g,'');
+      const paymentDigits=String(card.paymentMethodNumber??'').replace(/\D/g,'');
+      const corroborated=paymentDigits.length>4||Boolean(card.registration?.trim())||Boolean(card.holderName?.trim())||Boolean(card.expiresOn);
+      // Les numéros de carte Total visibles dans « Gérer » ont exactement
+      // quatre chiffres. Cette validation évite de prendre les compteurs du
+      // paginator (0, 1, 10...) pour des cartes.
+      if(digits.length!==4||!corroborated)continue;
+      const key=digits;
       const previous=merged.get(key);
       merged.set(key,{...previous,...card,cardNumber:key,
         paymentMethodNumber:card.paymentMethodNumber||previous?.paymentMethodNumber,

@@ -3470,7 +3470,7 @@ function CardTable({
                   <b>{c.official_registration ?? c.registration ?? "—"}</b>
                   <small>{c.vehicle_model ?? ""}</small>
                 </td>
-                <td><b>{c.expires_on ? new Date(`${c.expires_on}T00:00:00`).toLocaleDateString("fr-FR") : "—"}</b></td>
+                <td><b>{frenchDate(c.expires_on)}</b></td>
                 <td>
                   {c.old_card_id
                     ? `${cards.find((x) => x.id === c.old_card_id)?.masked_card_number ?? "?"} → ${c.masked_card_number}`

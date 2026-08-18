@@ -4,10 +4,10 @@ type Actor={sub:string;email:string;role:string};
 @Injectable()
 export class MileageService {
  constructor(private readonly db:DatabaseService){}
- list(actor:Actor){const own=actor.role==='NAJIB_ASSIGNER';return this.db.query(`SELECT mr.id,mr.vehicle_id AS "vehicleId",v.registration_display AS vehicle,
+ list(actor:Actor){const own=actor.role==='NAJIB_ASSIGNER';return this.db.query(`SELECT mr.id::text,mr.vehicle_id AS "vehicleId",v.registration_display AS vehicle,
    v.driver_name AS driver,c.code AS company,v.brand,v.model,v.vehicle_type AS "vehicleType",v.first_registration_date AS "firstRegistrationDate",
    mr.week_start AS week,mr.mileage,mr.previous_mileage AS "previousMileage",
-   mr.expected_mileage AS "expectedMileage",mr.detected_distance AS "detectedDistance",mr.anomaly,mr.status,
+   mr.expected_mileage AS "expectedMileage",mr.detected_distance AS "detectedDistance",mr.anomaly,mr.status::text AS status,
    coalesce((SELECT sum(ft.quantity_liters) FROM fuel_transaction ft WHERE ft.vehicle_id=mr.vehicle_id AND ft.deleted_at IS NULL
      AND ft.transaction_date>coalesce((SELECT max(previous.reading_date) FROM mileage_reading previous WHERE previous.vehicle_id=mr.vehicle_id
        AND previous.status='VALIDATED' AND previous.reading_date<mr.reading_date),'1970-01-01') AND ft.transaction_date<=mr.reading_date),0)::float AS "periodLiters",
@@ -29,7 +29,38 @@ export class MileageService {
    mr.rejection_reason AS "rejectionReason",mr.created_at AS "createdAt",u.display_name AS responsible,
    reviewer.display_name AS reviewer FROM mileage_reading mr JOIN vehicle v ON v.id=mr.vehicle_id JOIN company c ON c.id=v.company_id
    LEFT JOIN app_user u ON u.id=mr.created_by LEFT JOIN app_user reviewer ON reviewer.id=mr.validated_by
-   WHERE ($1::boolean=false OR mr.created_by=$2) ORDER BY mr.week_start DESC,mr.created_at DESC`,[own,actor.sub]);}
+   WHERE ($1::boolean=false OR mr.created_by=$2)
+
+   UNION ALL
+
+   SELECT 'transaction:'||ft.id::text AS id,ft.vehicle_id AS "vehicleId",v.registration_display AS vehicle,
+   v.driver_name AS driver,c.code AS company,v.brand,v.model,v.vehicle_type AS "vehicleType",v.first_registration_date AS "firstRegistrationDate",
+   ft.transaction_date::date AS week,ft.reported_mileage::float AS mileage,
+   coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at))::float AS "previousMileage",
+   ft.reported_mileage::float AS "expectedMileage",
+   greatest(0,ft.reported_mileage-coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),ft.reported_mileage))::float AS "detectedDistance",
+   false AS anomaly,'VALIDATED'::text AS status,ft.quantity_liters::float AS "periodLiters",
+   CASE WHEN ft.reported_mileage>coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at),ft.reported_mileage)
+     THEN round((100*ft.quantity_liters/(ft.reported_mileage-coalesce(ft.previous_mileage,lag(ft.reported_mileage) OVER(PARTITION BY ft.vehicle_id ORDER BY ft.transaction_date,ft.created_at))))::numeric,2)::float
+     ELSE null END AS "litersPer100Km",
+   null::float AS "referenceLitersPer100Km",null::float AS "estimatedDistance",ft.reported_mileage::float AS "estimatedMileage",
+   'Kilométrage importé directement depuis la transaction Total'::text AS "reconciliationMessage",
+   jsonb_build_array(jsonb_build_object(
+     'id',ft.id,'date',ft.transaction_date,'card',fc.masked_card_number,'station',ft.station,'product',ft.product,
+     'liters',ft.quantity_liters,'amount',ft.amount_incl_tax,'beneficiary',coalesce(b.display_name,fc.holder_name,'—'))
+   ) AS transactions,
+   null::text AS "rejectionReason",ft.created_at AS "createdAt",coalesce(b.display_name,fc.holder_name,'Total Mobility') AS responsible,
+   'Import Total'::text AS reviewer
+   FROM fuel_transaction ft
+   JOIN vehicle v ON v.id=ft.vehicle_id
+   JOIN company c ON c.id=v.company_id
+   JOIN fuel_card fc ON fc.id=ft.fuel_card_id
+   LEFT JOIN beneficiary b ON b.id=ft.beneficiary_id
+   WHERE ft.deleted_at IS NULL AND ft.reported_mileage IS NOT NULL
+     AND ($1::boolean=false OR fc.responsible_user_id=$2)
+     AND NOT EXISTS(SELECT 1 FROM mileage_reading existing WHERE existing.vehicle_id=ft.vehicle_id
+       AND existing.mileage=ft.reported_mileage AND existing.reading_date::date=ft.transaction_date::date)
+   ORDER BY week DESC,"createdAt" DESC`,[own,actor.sub]);}
  async create(dto:{vehicleId:string;mileage:number;note?:string},actor:Actor){return this.db.transaction(async client=>{
    const zin=actor.role==='ZIN_FINANCE';
    const allowed=await client.query(`SELECT v.id,v.registration_display FROM vehicle v JOIN company c ON c.id=v.company_id

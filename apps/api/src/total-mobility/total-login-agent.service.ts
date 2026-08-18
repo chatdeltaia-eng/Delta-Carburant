@@ -573,30 +573,15 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async openManageCardsFromMenu(){
     const page=this.page;if(!page)throw new Error('La session Total est indisponible');
     if(/\/cards\/manage-card/i.test(page.url()))return;
-    if(/access|denied|forbidden/i.test(page.url())){
-      await page.goto('https://customer.fleet.totalenergies.com/tn/dashboard',{waitUntil:'domcontentloaded',timeout:60_000});
-      await page.waitForTimeout(2_000);
-    }
+    // Le clic « Méthodes de paiement » ouvre cette route intermédiaire. Elle
+    // est autorisée par Total et conserve le client actif, contrairement à
+    // l'ouverture directe de /cards/manage-card.
+    await page.goto('https://customer.fleet.totalenergies.com/tn/cards',{waitUntil:'domcontentloaded',timeout:60_000});
+    await page.waitForTimeout(2_000);
+    if(/access|denied|forbidden/i.test(page.url()))
+      throw new Error(`Total refuse la page « Méthodes de paiement » pour le client actif (${page.url()})`);
     for(const frame of page.frames()){
-      const toggles=[
-        frame.locator('button[aria-label*="menu" i], button[title*="menu" i]').first(),
-        frame.locator('button:has(.q-icon)').filter({hasText:/^\s*menu\s*$/i}).first(),
-        frame.locator('.q-icon').filter({hasText:/^\s*menu\s*$/i}).first(),
-      ];
-      for(const toggle of toggles){
-        if(await toggle.isVisible({timeout:400}).catch(()=>false)){
-          await toggle.click({timeout:2_000});await frame.waitForTimeout(700);break;
-        }
-      }
-      const payment=frame.getByText(/^\s*Méthodes de paiement\s*$/i).first();
-      if(await payment.isVisible({timeout:700}).catch(()=>false)){
-        await payment.click({timeout:3_000});
-        await page.waitForURL(/\/tn\/cards(?:[/?#]|$)/i,{timeout:15_000});
-        await page.waitForTimeout(1_000);break;
-      }
-    }
-    for(const frame of page.frames()){
-      const manage=frame.getByText(/^\s*Gérer\s*$/i).first();
+      const manage=frame.getByText(/^\s*Gérer\s*$/i).filter({visible:true}).first();
       if(await manage.isVisible({timeout:800}).catch(()=>false)){
         await manage.click({timeout:3_000});
         await page.waitForURL(/\/cards\/manage-card/i,{timeout:15_000});return;
@@ -604,7 +589,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     }
     // Ne jamais ouvrir /manage-card directement : Total renvoie alors vers
     // /access-denied même si l'utilisateur possède les droits via le menu.
-    throw new Error(`Parcours Total impossible : « Méthodes de paiement > Gérer » introuvable (${page.url()})`);
+    throw new Error(`Parcours Total impossible : bouton « Gérer » introuvable sur ${page.url()}`);
   }
 
   private async extractAllClientCards(){

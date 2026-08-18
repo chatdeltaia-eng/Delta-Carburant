@@ -266,15 +266,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     this.setStatus('EXTRACTING', 'Transactions actualisées. Synchronisation des chauffeurs…');
     const driverRows=await this.extractDrivers();
     const drivers=await this.total.importDrivers(driverRows,this.actor);
-    // Total exposes current/previous mileage on transaction rows. There is no
-    // separate vehicle list for this customer, so trying to scrape one made an
-    // otherwise successful transaction import fail with "Aucun véhicule".
-    this.setStatus('EXTRACTING', 'Chauffeurs actualisés. Kilométrages importés avec les transactions. Ouverture de « Gérer les cartes »…');
-    const cardRows = await this.extractCardStatuses();
-    const cards = await this.total.importCardStatuses(cardRows, this.actor);
     this.statusValue = {
-      ...this.status('SUCCESS', 'Transactions, kilométrages, chauffeurs et cartes Total actualisés'),
-      result: { ...transactions, drivers, cards },
+      ...this.status('SUCCESS', 'Transactions, kilométrages et chauffeurs Total actualisés'),
+      result: { ...transactions, drivers },
     };
     this.scheduleLiveRefresh();
   }
@@ -287,11 +281,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async liveRefresh(){
     if(!this.actor||!this.page||['STARTING','SIGNING_IN','CODE_REQUIRED','EXTRACTING'].includes(this.statusValue.state))return;
     try{
-      this.setStatus('EXTRACTING','Actualisation Total : transactions, kilométrages, chauffeurs et cartes…');
+      this.setStatus('EXTRACTING','Actualisation Total : transactions, kilométrages et chauffeurs…');
       const transactions=await this.total.syncNow(this.actor);
       const drivers=await this.total.importDrivers(await this.extractDrivers(),this.actor);
-      const cards=await this.total.importCardStatuses(await this.extractCardStatuses(),this.actor);
-      this.statusValue={...this.status('SUCCESS','Données Total actualisées automatiquement'),result:{...transactions,drivers,cards,live:true}};
+      this.statusValue={...this.status('SUCCESS','Données Total actualisées automatiquement'),result:{...transactions,drivers,live:true}};
     }catch(error){this.fail(error);}
   }
 

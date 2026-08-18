@@ -156,6 +156,55 @@ const frenchDate = (value: unknown, withTime = false) => {
     ? parsed.toLocaleString("fr-FR", { day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" })
     : parsed.toLocaleDateString("fr-FR", { day:"2-digit", month:"2-digit", year:"numeric" });
 };
+
+// Total peut fournir plusieurs transactions pour le même véhicule dans un seul
+// export. Le module kilométrage présente un état du véhicule (ancien -> nouveau
+// compteur), pas une ligne par plein. On regroupe donc les transactions tout en
+// conservant leur détail pour l'audit.
+function consolidateTransactionMileage(rows: Record<string, unknown>[]) {
+  const regular: Record<string, unknown>[] = [];
+  const grouped = new Map<string, Record<string, unknown>[]>();
+  for (const row of rows) {
+    if (!String(row.id ?? "").startsWith("transaction:")) {
+      regular.push(row);
+      continue;
+    }
+    const key = String(row.vehicleId ?? row.vehicle ?? row.id);
+    grouped.set(key, [...(grouped.get(key) ?? []), row]);
+  }
+  for (const vehicleRows of grouped.values()) {
+    const ordered = [...vehicleRows].sort((a, b) =>
+      new Date(String(a.createdAt ?? a.week ?? 0)).getTime() - new Date(String(b.createdAt ?? b.week ?? 0)).getTime(),
+    );
+    const latest = ordered[ordered.length - 1];
+    const previous = Math.min(...ordered.map(row => Number(row.previousMileage ?? 0)));
+    const mileage = Math.max(...ordered.map(row => Number(row.mileage ?? 0)));
+    const liters = ordered.reduce((sum, row) => sum + Number(row.periodLiters ?? 0), 0);
+    const distance = Math.max(0, mileage - previous);
+    const consumption = distance > 0 ? 100 * liters / distance : null;
+    const transactions = ordered.flatMap(row => Array.isArray(row.transactions) ? row.transactions : []);
+    const anomaly = mileage < previous || (liters > 0 && distance === 0) || (consumption != null && (consumption < 2 || consumption > 40));
+    regular.push({
+      ...latest,
+      previousMileage: previous,
+      mileage,
+      expectedMileage: mileage,
+      detectedDistance: distance,
+      periodLiters: liters,
+      litersPer100Km: consumption == null ? null : Number(consumption.toFixed(2)),
+      estimatedDistance: 10 * liters,
+      estimatedMileage: previous + 10 * liters,
+      anomaly,
+      reconciliationMessage: anomaly
+        ? distance === 0
+          ? "Anomalie : carburant consommé sans distance parcourue entre l’ancien et le nouveau kilométrage. Veuillez contacter le chauffeur."
+          : "Anomalie : consommation calculée hors de la plage de contrôle (2 à 40 L/100 km). Veuillez contacter le chauffeur."
+        : "Ancien et nouveau kilométrage consolidés depuis toutes les transactions Total du véhicule.",
+      transactions,
+    });
+  }
+  return regular;
+}
 const tableValue = (value: string | number | undefined) =>
   typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value)
     ? frenchDate(value, !value.includes("T00:00:00"))
@@ -643,7 +692,7 @@ export default function Home() {
           transactions: (transactionPayload.items ?? transactionPayload).map((row:Record<string,unknown>) => {const allocations=Array.isArray(row.allocations)?row.allocations as Record<string,unknown>[]:[];return { id:String(row.id),reviewId:String(row.reviewId??""),date:new Date(String(row.date)).toLocaleString("fr-MA"),carte:String(row.card),beneficiaire:String(row.beneficiary??"—"),vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters),montant:Number(row.amount),prixApplique:row.appliedPrice==null?"—":Number(row.appliedPrice),montantTheorique:row.expectedAmount==null?"—":Number(row.expectedAmount),ecartFacturation:row.billingDifference==null?"—":Number(row.billingDifference),controleFacturation:String(row.billingStatus??"PRICE_UNAVAILABLE"),montantReparti:Number(row.allocatedAmount??0),repartitionEnAttente:String(row.pendingAllocationId??""),repartition:allocations.map(item=>`${String(item.beneficiary)} — ${String(item.vehicle)} — ${Number(item.amount).toFixed(3)} DT${item.mileage?` — ${Number(item.mileage)} km`:""}`).join(" | "),observation:row.observation?`${String(row.observation)} — ${String(row.observationBy??"—")}`:"—",statut:row.reviewStatus==="PENDING"?(row.reviewIssue==="MISSING_BENEFICIARY"?"Bénéficiaire à identifier":"Véhicule inconnu à valider"):"Importée Total",fichier:String(row.file??"—") }}),
           anomalies: (reviewsPayload.items ?? reviewsPayload).map((row:Record<string,unknown>) => {const reviewLabels:Record<string,string>={MISSING_BENEFICIARY:"Bénéficiaire manquant",UNKNOWN_CARD:"Carte absente de la base",UNAVAILABLE_CARD:"Carte indisponible",UNKNOWN_VEHICLE:"Véhicule absent de la base",UNAVAILABLE_VEHICLE:"Véhicule indisponible"};return { id:String(row.id),kind:String(row.kind??"REVIEW"),date:new Date(String(row.date)).toLocaleString("fr-MA"),type:String(row.kind)==="REVIEW"?(reviewLabels[String(row.type)]??"Transaction à vérifier"):String(row.description??row.type),carte:String(row.card??"—"),beneficiaire:"—",vehicule:String(row.vehicle??"—"),station:String(row.station??"—"),produit:String(row.product??"—"),litres:Number(row.liters??0),montant:Number(row.amount??0),gravite:String(row.severity)==="CRITICAL"?"Critique":String(row.severity)==="WARNING"?"Moyenne":String(row.severity)==="INFO"?"Information":"Haute",statut:String(row.kind)==="REVIEW"?"À vérifier":String(row.status)==="IN_REVIEW"?"En cours":"Ouverte" }}),
           vehicles:(vehiclesPayload.items??vehiclesPayload).map((row:Record<string,unknown>,index:number)=>({id:String(row.id),companyId:String(row.companyId??""),numero:Number(row.fleetNumber??0)||index+1,immatriculation:Boolean(row.registrationMissing)?"Sans matricule":String(row.registration),sansMatricule:Boolean(row.registrationMissing),type:String(row.vehicleType??row.model??"À compléter"),societe:String(row.company??"—"),mise_en_circulation:row.firstRegistrationDate?new Date(String(row.firstRegistrationDate)).toLocaleDateString("fr-FR"):"À compléter",reference:[row.brand,row.model].filter(Boolean).join(" "),conducteur:String(row.driver??row.cardHolder??"—"),titulaire:String(row.cardHolder??row.driver??"—"),carte:String(row.cardNumber??"—"),garde:String(row.custody)==="IN_SAFE"?"En coffre · non distribuée":"Distribuée / active",observation:String(row.notes??"—"),kilometrage:Number(row.lastMileage??0),statut:Boolean(row.active)?"Actif":"Inactif"})),
-          mileage:(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:frenchDate(row.week),vehicule:String(row.vehicle),detailsVehicule:[row.brand,row.model,row.vehicleType].filter(Boolean).join(" · ")||"Informations à compléter",miseEnCirculation:frenchDate(row.firstRegistrationDate),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),litresPeriode:Number(row.periodLiters??0),consommation100km:row.litersPer100Km==null?"—":Number(row.litersPer100Km),reference100km:row.referenceLitersPer100Km==null?"—":Number(row.referenceLitersPer100Km),distanceEstimee:row.estimatedDistance==null?"—":Number(row.estimatedDistance),attendu:Number(row.estimatedMileage??row.expectedMileage??0),rapprochement:String(row.reconciliationMessage??"—"),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—"),detailsTransactions:JSON.stringify(row.transactions??[])})),
+          mileage:consolidateTransactionMileage(mileagePayload.items??mileagePayload).map((row:Record<string,unknown>)=>({id:String(row.id),semaine:frenchDate(row.week),vehicule:String(row.vehicle),detailsVehicule:[row.brand,row.model,row.vehicleType].filter(Boolean).join(" · ")||"Informations à compléter",miseEnCirculation:frenchDate(row.firstRegistrationDate),societe:String(row.company),responsable:String(row.responsible??"—"),precedent:Number(row.previousMileage??0),distanceDetectee:Number(row.detectedDistance??0),litresPeriode:Number(row.periodLiters??0),consommation100km:row.litersPer100Km==null?"—":Number(row.litersPer100Km),reference100km:row.referenceLitersPer100Km==null?"—":Number(row.referenceLitersPer100Km),distanceEstimee:row.estimatedDistance==null?"—":Number(row.estimatedDistance),attendu:Number(row.estimatedMileage??row.expectedMileage??0),rapprochement:String(row.reconciliationMessage??"—"),kilometrage:Number(row.mileage),anomalie:Boolean(row.anomaly)?"Oui":"Non",statut:String(row.status)==="PENDING"?"EN_ATTENTE_ZIN":String(row.status)==="VALIDATED"?"VALIDEE_ZIN":"REFUSEE_ZIN",validateur:String(row.reviewer??"—"),detailsTransactions:JSON.stringify(row.transactions??[])})),
           drivers:(driversPayload.items??driversPayload).map((row:Record<string,unknown>)=>({id:String(row.id),companyId:String(row.companyId??""),nomComplet:String(row.fullName??"—"),numeroClient:String(row.customerNumber??"—"),nomClient:String(row.customerName??"—"),numeroChauffeur:String(row.driverNumber??"—"),prenom:String(row.firstName??"—"),nom:String(row.lastName??row.fullName??"—"),codeChauffeur:String(row.driverCode??"—"),vehicules:Array.isArray(row.vehicles)?(row.vehicles as {registration:string}[]).map(item=>item.registration).join(", "):"—",source:row.totalMobilityCheckedAt?`Total Mobility · ${frenchDate(row.totalMobilityCheckedAt,true)}`:"Saisie application",statut:Boolean(row.active)?"Actif":"Inactif"})),
           fuelPrices:(fuelPricesPayload.items??fuelPricesPayload).map((row:Record<string,unknown>)=>({id:String(row.id),societe:String(row.company),produit:String(row.product),ancienPrix:Number(row.oldPrice),nouveauPrix:Number(row.newPrice),variation:`${Number(row.variationPercent).toFixed(2)} %`,date:new Date(String(row.effectiveDate)).toLocaleDateString("fr-FR"),auteur:String(row.createdBy??"—"),source:String(row.source)==="OFFICIAL_TUNISIA"?"Ministère tunisien":String(row.source)==="TOTAL_SUPPLIER"?"Tarif fournisseur Total":"Saisie manuelle"})),
           complaints:(complaintsPayload.items??complaintsPayload).map((row:Record<string,unknown>)=>({id:String(row.id),numero:String(row.number),objet:String(row.subject),description:String(row.description),priorite:String(row.priority),statut:String(row.status),destinataire:String(row.targetRole),createur:String(row.creator),date:new Date(String(row.createdAt)).toLocaleString("fr-FR"),resolution:String(row.resolution??"—"),messages:JSON.stringify(row.messages??[])})),

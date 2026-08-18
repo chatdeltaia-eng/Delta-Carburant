@@ -1,4 +1,4 @@
-import { Body,Controller,Get,Param,ParseUUIDPipe,Patch,Post,Req,UseGuards } from '@nestjs/common';
+import { Body,Controller,Get,Param,ParseUUIDPipe,Patch,Post,Query,Req,UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { IsIn,IsNumber,IsOptional,IsString,IsUUID,Min } from 'class-validator';
 import { Roles } from '../common/roles';
@@ -11,7 +11,7 @@ type Actor={sub:string;email:string;role:string};
 @UseGuards(AuthGuard('jwt'),RolesGuard) @Controller('mileage')
 export class MileageController {
  constructor(private readonly mileage:MileageService){}
- @Get() @Roles('NAJIB_ASSIGNER','ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN') list(@Req() req:{user:Actor}){return this.mileage.list(req.user);}
+ @Get() @Roles('NAJIB_ASSIGNER','ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN') list(@Query('companyId') companyId='',@Req() req:{user:Actor}){return this.mileage.list(req.user,companyId);}
  @Post() @Roles('NAJIB_ASSIGNER','ZIN_FINANCE') create(@Body() dto:MileageDto,@Req() req:{user:Actor}){return this.mileage.create(dto,req.user);}
  @Patch('transaction/:id') @Roles('NAJIB_ASSIGNER','ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN') correctTransaction(@Param('id',ParseUUIDPipe) id:string,@Body() dto:TransactionMileageDto,@Req() req:{user:Actor}){return this.mileage.correctTransaction(id,dto,req.user);}
  @Patch(':id/decision') @Roles('ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN') decide(@Param('id',ParseUUIDPipe) id:string,@Body() dto:MileageDecisionDto,@Req() req:{user:Actor}){return this.mileage.decide(id,dto,req.user);}

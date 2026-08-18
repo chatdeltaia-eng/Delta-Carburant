@@ -4,7 +4,7 @@ type Actor={sub:string;email:string;role:string};
 @Injectable()
 export class MileageService {
  constructor(private readonly db:DatabaseService){}
- list(actor:Actor){const own=actor.role==='NAJIB_ASSIGNER';return this.db.query(`SELECT mr.id::text,mr.vehicle_id AS "vehicleId",v.registration_display AS vehicle,
+ list(actor:Actor,companyId=''){const own=actor.role==='NAJIB_ASSIGNER';return this.db.query(`SELECT mr.id::text,mr.vehicle_id AS "vehicleId",v.registration_display AS vehicle,
    v.driver_name AS driver,c.code AS company,v.brand,v.model,v.vehicle_type AS "vehicleType",v.first_registration_date AS "firstRegistrationDate",
    mr.week_start AS week,mr.mileage,mr.previous_mileage AS "previousMileage",
    mr.expected_mileage AS "expectedMileage",mr.detected_distance AS "detectedDistance",mr.anomaly,mr.status::text AS status,
@@ -29,7 +29,7 @@ export class MileageService {
    mr.rejection_reason AS "rejectionReason",mr.created_at AS "createdAt",u.display_name AS responsible,
    reviewer.display_name AS reviewer FROM mileage_reading mr JOIN vehicle v ON v.id=mr.vehicle_id JOIN company c ON c.id=v.company_id
    LEFT JOIN app_user u ON u.id=mr.created_by LEFT JOIN app_user reviewer ON reviewer.id=mr.validated_by
-   WHERE ($1::boolean=false OR mr.created_by=$2)
+   WHERE ($1::boolean=false OR mr.created_by=$2) AND ($3='' OR v.company_id=$3::uuid)
 
    UNION ALL
 
@@ -72,11 +72,11 @@ export class MileageService {
    JOIN company c ON c.id=v.company_id
    JOIN fuel_card fc ON fc.id=ft.fuel_card_id
    LEFT JOIN beneficiary b ON b.id=ft.beneficiary_id
-   WHERE ft.deleted_at IS NULL AND ft.reported_mileage IS NOT NULL
+   WHERE ft.deleted_at IS NULL AND ft.reported_mileage IS NOT NULL AND ($3='' OR v.company_id=$3::uuid)
      AND ($1::boolean=false OR fc.responsible_user_id=$2)
      AND NOT EXISTS(SELECT 1 FROM mileage_reading existing WHERE existing.vehicle_id=ft.vehicle_id
        AND existing.mileage=ft.reported_mileage AND existing.reading_date::date=ft.transaction_date::date)
-   ORDER BY week DESC,"createdAt" DESC`,[own,actor.sub]);}
+   ORDER BY week DESC,"createdAt" DESC`,[own,actor.sub,companyId]);}
  async create(dto:{vehicleId:string;mileage:number;note?:string},actor:Actor){return this.db.transaction(async client=>{
    const zin=actor.role==='ZIN_FINANCE';
    const allowed=await client.query(`SELECT v.id,v.registration_display FROM vehicle v JOIN company c ON c.id=v.company_id

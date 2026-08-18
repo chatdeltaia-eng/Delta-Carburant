@@ -4,47 +4,48 @@ import { DatabaseService } from '../database/database.service';
 @Injectable()
 export class DashboardService {
   constructor(private readonly db: DatabaseService) {}
-  async summary(actor: { sub: string; role: string }) {
+  async summary(actor: { sub: string; role: string },companyId='') {
     const ownCards = actor.role === 'NAJIB_ASSIGNER';
     const [totals] = await this.db.query(`SELECT
       count(*)::int AS "totalCards",
       count(*) FILTER (WHERE status IN('ACTIVE','DISTRIBUTED','ASSIGNED'))::int AS "activeCards",
       count(*) FILTER (WHERE status IN ('SUSPENDED','OPPOSED','LOST','STOLEN'))::int AS "blockedCards",
       coalesce(sum(monthly_limit) FILTER (WHERE status IN('ACTIVE','DISTRIBUTED','ASSIGNED')),0)::float AS "activeMonthlyLimit"
-      FROM fuel_card WHERE deleted_at IS NULL AND ($1::boolean=false OR responsible_user_id=$2)`, [ownCards, actor.sub]);
+      FROM fuel_card WHERE deleted_at IS NULL AND ($1::boolean=false OR responsible_user_id=$2)
+      AND ($3='' OR company_id=$3::uuid)`, [ownCards, actor.sub,companyId]);
     const [entities] = await this.db.query(`SELECT
       (SELECT count(DISTINCT ca.beneficiary_id)::int FROM card_assignment ca JOIN fuel_card fc ON fc.id=ca.fuel_card_id
-        WHERE ca.ends_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2)) AS beneficiaries,
+        WHERE ca.ends_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2) AND ($3='' OR fc.company_id=$3::uuid)) AS beneficiaries,
       (SELECT count(DISTINCT ca.vehicle_id)::int FROM card_assignment ca JOIN fuel_card fc ON fc.id=ca.fuel_card_id
-        WHERE ca.ends_at IS NULL AND ca.vehicle_id IS NOT NULL AND ($1::boolean=false OR fc.responsible_user_id=$2)) AS vehicles,
+        WHERE ca.ends_at IS NULL AND ca.vehicle_id IS NOT NULL AND ($1::boolean=false OR fc.responsible_user_id=$2) AND ($3='' OR fc.company_id=$3::uuid)) AS vehicles,
       (SELECT count(*)::int FROM transaction_review tr JOIN fuel_card fc ON fc.id=tr.fuel_card_id
-        WHERE tr.status='PENDING' AND ($1::boolean=false OR fc.responsible_user_id=$2)) AS "openIssues",
+        WHERE tr.status='PENDING' AND ($1::boolean=false OR fc.responsible_user_id=$2) AND ($3='' OR fc.company_id=$3::uuid)) AS "openIssues",
       (SELECT count(*)::int FROM transaction_review tr JOIN fuel_card fc ON fc.id=tr.fuel_card_id
-        WHERE tr.status='PENDING' AND ($1::boolean=false OR fc.responsible_user_id=$2)) AS "pendingTransactionReviews",
+        WHERE tr.status='PENDING' AND ($1::boolean=false OR fc.responsible_user_id=$2) AND ($3='' OR fc.company_id=$3::uuid)) AS "pendingTransactionReviews",
       (SELECT coalesce(sum(ft.quantity_liters),0)::float FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
-        WHERE ft.deleted_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2)) AS liters,
+        WHERE ft.deleted_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2) AND ($3='' OR fc.company_id=$3::uuid)) AS liters,
       (SELECT coalesce(sum(ft.amount_incl_tax),0)::float FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
-        WHERE ft.deleted_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2)) AS amount,
+        WHERE ft.deleted_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2) AND ($3='' OR fc.company_id=$3::uuid)) AS amount,
       (SELECT coalesce(sum(source.amount),0)::float FROM (
         SELECT ft.amount_incl_tax AS amount
         FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
         WHERE ft.deleted_at IS NULL
           AND ft.transaction_date>=date_trunc('month',current_date)
           AND ft.transaction_date<date_trunc('month',current_date)+interval '1 month'
-          AND ($1::boolean=false OR fc.responsible_user_id=$2)
+          AND ($1::boolean=false OR fc.responsible_user_id=$2) AND ($3='' OR fc.company_id=$3::uuid)
         UNION ALL
         SELECT tr.amount_incl_tax AS amount
         FROM transaction_review tr LEFT JOIN fuel_card fc ON fc.id=tr.fuel_card_id
         WHERE tr.status='PENDING'
           AND tr.transaction_date>=date_trunc('month',current_date)
           AND tr.transaction_date<date_trunc('month',current_date)+interval '1 month'
-          AND ($1::boolean=false OR fc.responsible_user_id=$2)
+          AND ($1::boolean=false OR fc.responsible_user_id=$2) AND ($3='' OR fc.company_id=$3::uuid)
       ) source) AS "officialMonthAmount",
-      (SELECT count(*)::int FROM card_request cr WHERE cr.status NOT IN ('CLOSED','REJECTED','CANCELLED')
-        AND ($1::boolean=false OR cr.requested_by=$2)) AS "openRequests"`, [ownCards, actor.sub]);
+      (SELECT count(*)::int FROM card_request cr LEFT JOIN fuel_card fc ON fc.id=cr.fuel_card_id WHERE cr.status NOT IN ('CLOSED','REJECTED','CANCELLED')
+        AND ($1::boolean=false OR cr.requested_by=$2) AND ($3='' OR fc.company_id=$3::uuid)) AS "openRequests"`, [ownCards, actor.sub,companyId]);
     const statuses = await this.db.query(`SELECT status, count(*)::int AS count FROM fuel_card
-      WHERE deleted_at IS NULL AND ($1::boolean=false OR responsible_user_id=$2)
-      GROUP BY status ORDER BY count DESC`, [ownCards, actor.sub]);
+      WHERE deleted_at IS NULL AND ($1::boolean=false OR responsible_user_id=$2) AND ($3='' OR company_id=$3::uuid)
+      GROUP BY status ORDER BY count DESC`, [ownCards, actor.sub,companyId]);
     return { ...totals, ...entities, statuses };
   }
   async history(month:string,actor:{sub:string;role:string}){

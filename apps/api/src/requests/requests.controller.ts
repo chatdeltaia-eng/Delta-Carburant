@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { IsIn, IsNumber, IsOptional, IsString, IsUUID, Min, MinLength } from 'class-validator';
 import { Roles } from '../common/roles';
@@ -28,7 +28,7 @@ class DecisionDto {
 export class RequestsController {
   constructor(private readonly requests: RequestsService) {}
   @Get() @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE','NAJIB_ASSIGNER')
-  list(@Req() req: { user: { sub: string; role: string } }) { return this.requests.list(req.user); }
+  list(@Query('companyId') companyId='',@Req() req: { user: { sub: string; role: string } }) { return this.requests.list(req.user,companyId); }
   @Post() @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE','NAJIB_ASSIGNER')
   create(@Body() dto: CreateRequestDto, @Req() req: { user: { sub: string; email: string; companyId?: string } }) { return this.requests.create(dto, req.user); }
   @Patch(':id/cancel') @Roles('NAJIB_ASSIGNER')

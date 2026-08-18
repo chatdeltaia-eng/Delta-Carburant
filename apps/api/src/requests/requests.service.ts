@@ -19,7 +19,7 @@ export class RequestsService {
     ) UPDATE fuel_card fc SET status='ACTIVE',responsible_user_id=e.requested_by
       FROM expired e WHERE fc.id=e.fuel_card_id`);
   }
-  async list(actor: Actor) {
+  async list(actor: Actor,companyId='') {
     await this.expirePhysicalHandovers();
     const ownOnly = actor.role === 'NAJIB_ASSIGNER';
     return this.db.query(`SELECT cr.id,cr.request_number AS "requestNumber",CASE WHEN cr.request_type='REACTIVATION' THEN 'CARD_FUNDING' ELSE cr.request_type::text END AS "requestType",cr.status,cr.requested_limit AS "requestedLimit",
@@ -43,7 +43,8 @@ export class RequestsService {
         WHERE al.entity_type='fuel_card' AND al.entity_id=cr.fuel_card_id::text
         ORDER BY al.created_at DESC LIMIT 1) latest ON true
       LEFT JOIN app_user action_user ON lower(action_user.email::text)=lower(latest.actor)
-      WHERE cr.archived_at IS NULL AND ($1::boolean=false OR cr.requested_by=$2) ORDER BY cr.created_at DESC`, [ownOnly, actor.sub]);
+      WHERE cr.archived_at IS NULL AND ($1::boolean=false OR cr.requested_by=$2)
+        AND ($3='' OR b.company_id=$3::uuid) ORDER BY cr.created_at DESC`, [ownOnly, actor.sub,companyId]);
   }
   async archive(id: string, actor: Actor) {
     const row = await this.db.transaction(async client => {

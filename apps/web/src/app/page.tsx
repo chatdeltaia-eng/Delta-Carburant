@@ -613,18 +613,19 @@ export default function Home() {
     let activeAccessToken = token;
     const loadRemote = (accessToken: string) => {
       const headers = { Authorization: `Bearer ${accessToken}` };
+      const scope=selectedClientId?`?companyId=${encodeURIComponent(selectedClientId)}`:"";
       return Promise.all([
-      fetch(`${API}/cards`, { headers, cache: "no-store" }),
-      fetch(`${API}/requests`, { headers, cache: "no-store" }),
+      fetch(`${API}/cards${scope}`, { headers, cache: "no-store" }),
+      fetch(`${API}/requests${scope}`, { headers, cache: "no-store" }),
       fetch(`${API}/notifications`, { headers, cache: "no-store" }),
-      fetch(`${API}/transactions`, { headers, cache: "no-store" }),
-      fetch(`${API}/dashboard/summary`, { headers, cache: "no-store" }),
+      fetch(`${API}/transactions${scope}`, { headers, cache: "no-store" }),
+      fetch(`${API}/dashboard/summary${scope}`, { headers, cache: "no-store" }),
       canManage(user.role) ? fetch(`${API}/dashboard/anomalies`, { headers, cache: "no-store" }) : Promise.resolve(null),
-      fetch(`${API}/vehicles`, { headers, cache: "no-store" }),
-      fetch(`${API}/mileage`, { headers, cache: "no-store" }),
-      fetch(`${API}/drivers`, { headers, cache: "no-store" }),
-      fetch(`${API}/fuel-prices`, { headers, cache: "no-store" }),
-      fetch(`${API}/cards/responsibles`,{headers,cache:"no-store"}),
+      fetch(`${API}/vehicles${scope}`, { headers, cache: "no-store" }),
+      fetch(`${API}/mileage${scope}`, { headers, cache: "no-store" }),
+      fetch(`${API}/drivers${scope}`, { headers, cache: "no-store" }),
+      fetch(`${API}/fuel-prices${scope}`, { headers, cache: "no-store" }),
+      fetch(`${API}/cards/responsibles${scope}`,{headers,cache:"no-store"}),
       fetch(`${API}/cards/companies`,{headers,cache:"no-store"}),
       user.role==="NAJIB_ASSIGNER"?fetch(`${API}/cards/safe-inventory`,{headers,cache:"no-store"}):Promise.resolve(null),
       fetch(`${API}/complaints`,{headers,cache:"no-store"}),
@@ -716,7 +717,7 @@ export default function Home() {
       });
     const timer = window.setInterval(() => setRefreshTick((current) => current + 1), 30000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [token, user, refreshTick]);
+  }, [token, user, refreshTick,selectedClientId]);
   useEffect(()=>{
     if(!token||!user||user.role==="NAJIB_ASSIGNER")return;
     const headers={Authorization:`Bearer ${token}`};

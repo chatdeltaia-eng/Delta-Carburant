@@ -41,7 +41,7 @@ export class TransactionsService {
     ].join('|');
     return createHash('sha256').update(normalized).digest('hex');
   }
-  async list(actor: { sub: string; role: string }) {
+  async list(actor: { sub: string; role: string },companyId='') {
     await this.archiveCompletedMonths();
     const transactions = await this.db.query(`SELECT ft.id,ft.transaction_date AS date,fc.masked_card_number AS card,
     ft.station,ft.product,ft.quantity_liters AS liters,ft.amount_incl_tax AS amount,ft.unit_price AS "appliedPrice",
@@ -70,8 +70,9 @@ export class TransactionsService {
     LEFT JOIN LATERAL (SELECT tro.observation,tro.created_at,au.display_name AS author FROM transaction_observation tro
       JOIN app_user au ON au.id=tro.author_id WHERE tro.fuel_transaction_id=ft.id ORDER BY tro.created_at DESC LIMIT 1) obs ON true
     WHERE ft.deleted_at IS NULL AND ft.archived_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2)
+      AND ($3='' OR fc.company_id=$3::uuid)
     GROUP BY ft.id,fc.id,tib.source_filename,b.display_name,v.registration_display,obs.observation,obs.created_at,obs.author
-    ORDER BY ft.transaction_date DESC`, [actor.role==='NAJIB_ASSIGNER',actor.sub]);
+    ORDER BY ft.transaction_date DESC`, [actor.role==='NAJIB_ASSIGNER',actor.sub,companyId]);
     if (actor.role === 'NAJIB_ASSIGNER') {
       const pending = await this.db.query(`SELECT ('review:'||tr.id::text) AS id,tr.transaction_date AS date,
         tr.card_number AS card,tr.station,tr.product,tr.quantity_liters AS liters,tr.amount_incl_tax AS amount,

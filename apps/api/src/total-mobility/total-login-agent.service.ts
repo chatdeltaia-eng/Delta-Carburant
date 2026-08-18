@@ -573,13 +573,34 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async openManageCardsFromMenu(){
     const page=this.page;if(!page)throw new Error('La session Total est indisponible');
     if(/\/cards\/manage-card/i.test(page.url()))return;
-    // Le clic « Méthodes de paiement » ouvre cette route intermédiaire. Elle
-    // est autorisée par Total et conserve le client actif, contrairement à
-    // l'ouverture directe de /cards/manage-card.
-    await page.goto('https://customer.fleet.totalenergies.com/tn/cards',{waitUntil:'domcontentloaded',timeout:60_000});
-    await page.waitForTimeout(2_000);
-    if(/access|denied|forbidden/i.test(page.url()))
-      throw new Error(`Total refuse la page « Méthodes de paiement » pour le client actif (${page.url()})`);
+    // Le hamburger Total n'a ni aria-label ni texte accessible. Le repérer
+    // parmi les contrôles visibles situés dans le coin supérieur gauche.
+    let drawerOpened=false;
+    for(const frame of page.frames()){
+      const controls=frame.locator('button, [role="button"], .q-btn');
+      for(let index=0;index<await controls.count();index++){
+        const control=controls.nth(index);
+        if(!await control.isVisible().catch(()=>false))continue;
+        const box=await control.boundingBox();
+        if(!box||box.x>85||box.y<55||box.y>135||box.width>90||box.height>90)continue;
+        await control.click({timeout:2_000}).catch(()=>undefined);
+        await frame.waitForTimeout(700);drawerOpened=true;break;
+      }
+      if(drawerOpened)break;
+    }
+    // Dernier repli visuel correspondant au bouton montré sur le portail
+    // desktop (x≈20, y≈103), sans changer l'URL ni perdre le client actif.
+    if(!drawerOpened){await page.mouse.click(20,105);await page.waitForTimeout(700);}
+    let paymentOpened=false;
+    for(const frame of page.frames()){
+      const payment=frame.getByText(/^\s*Méthodes de paiement\s*$/i).filter({visible:true}).first();
+      if(await payment.isVisible({timeout:1_500}).catch(()=>false)){
+        await payment.click({timeout:3_000});paymentOpened=true;break;
+      }
+    }
+    if(!paymentOpened)throw new Error(`Menu latéral ouvert, mais « Méthodes de paiement » reste introuvable (${page.url()})`);
+    await page.waitForURL(/\/tn\/cards(?:[/?#]|$)/i,{timeout:15_000});
+    await page.waitForTimeout(1_500);
     for(const frame of page.frames()){
       const manage=frame.getByText(/^\s*Gérer\s*$/i).filter({visible:true}).first();
       if(await manage.isVisible({timeout:800}).catch(()=>false)){

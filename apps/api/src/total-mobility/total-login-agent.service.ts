@@ -594,7 +594,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     for(const frame of page.frames())paymentVisible=paymentVisible||await frame.getByText(/^\s*Méthodes de paiement\s*$/i).filter({visible:true}).first().isVisible({timeout:250}).catch(()=>false);
     // Repli visuel exact dans le repère de la page, puis validation réelle du
     // libellé. Un clic seul ne suffit pas à conclure que le tiroir est ouvert.
-    if(!paymentVisible){await page.mouse.click(20,24);await page.waitForTimeout(800);}
+    if(!paymentVisible){
+      await page.mouse.click(36,43);
+      await page.waitForTimeout(1_200);
+    }
     let paymentOpened=false;
     for(const frame of page.frames()){
       const payment=frame.getByText(/^\s*Méthodes de paiement\s*$/i).filter({visible:true}).first();

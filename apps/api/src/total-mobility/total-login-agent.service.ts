@@ -575,22 +575,26 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     if(/\/cards\/manage-card/i.test(page.url()))return;
     // Le hamburger Total n'a ni aria-label ni texte accessible. Le repérer
     // parmi les contrôles visibles situés dans le coin supérieur gauche.
-    let drawerOpened=false;
+    let drawerClicked=false;
     for(const frame of page.frames()){
       const controls=frame.locator('button, [role="button"], .q-btn');
       for(let index=0;index<await controls.count();index++){
         const control=controls.nth(index);
         if(!await control.isVisible().catch(()=>false))continue;
         const box=await control.boundingBox();
-        if(!box||box.x>85||box.y<55||box.y>135||box.width>90||box.height>90)continue;
+        // Les coordonnées Playwright commencent sous la barre de Chrome : le
+        // hamburger visible vers y=103 sur la capture est vers y=23 dans la page.
+        if(!box||box.x>85||box.y<0||box.y>65||box.width>90||box.height>90)continue;
         await control.click({timeout:2_000}).catch(()=>undefined);
-        await frame.waitForTimeout(700);drawerOpened=true;break;
+        await frame.waitForTimeout(700);drawerClicked=true;break;
       }
-      if(drawerOpened)break;
+      if(drawerClicked)break;
     }
-    // Dernier repli visuel correspondant au bouton montré sur le portail
-    // desktop (x≈20, y≈103), sans changer l'URL ni perdre le client actif.
-    if(!drawerOpened){await page.mouse.click(20,105);await page.waitForTimeout(700);}
+    let paymentVisible=false;
+    for(const frame of page.frames())paymentVisible=paymentVisible||await frame.getByText(/^\s*Méthodes de paiement\s*$/i).filter({visible:true}).first().isVisible({timeout:250}).catch(()=>false);
+    // Repli visuel exact dans le repère de la page, puis validation réelle du
+    // libellé. Un clic seul ne suffit pas à conclure que le tiroir est ouvert.
+    if(!paymentVisible){await page.mouse.click(20,24);await page.waitForTimeout(800);}
     let paymentOpened=false;
     for(const frame of page.frames()){
       const payment=frame.getByText(/^\s*Méthodes de paiement\s*$/i).filter({visible:true}).first();

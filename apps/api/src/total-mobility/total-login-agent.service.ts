@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   Logger,
   OnModuleDestroy,
@@ -96,7 +95,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         this.statusValue.state,
       )
     )
-      throw new ConflictException('Une connexion Total est déjà en cours');
+      return this.statusValue;
     const username = process.env.TOTAL_USERNAME?.trim();
     const password = process.env.TOTAL_PASSWORD;
     if (!username || !password)

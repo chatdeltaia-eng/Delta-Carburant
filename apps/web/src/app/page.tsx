@@ -2418,10 +2418,6 @@ function Dashboard({
           note={`${Number(history?.transactions??0).toLocaleString("fr-FR")} transaction(s) analysée(s)`}
         />
       </section>
-      {isDirection(user.role)&&<MonthlyConsumptionGauge
-        consumed={officialMonthlyConsumed}
-        creditLine={activeMonthlyLimit}
-      />}
       {isDirection(user.role)&&historyMonth===currentMonth&&<DailyConsumptionHistogram transactions={transactions}/>}
       {isDirection(user.role)&&<CardPortfolioOverview cards={periodCards} go={go}/>}
       <section className={styles.overviewPanel}>

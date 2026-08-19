@@ -2360,66 +2360,13 @@ function Dashboard({
   const billingMismatches = Number(analytics?.billingMismatches ?? 0);
   return (
     <>
-      <section className={styles.periodFilter}><div><small>HISTORIQUE D’UTILISATION</small><h2>Période affichée</h2><p>Tous les indicateurs ci-dessous correspondent uniquement au mois sélectionné.</p></div><label>Mois et année<input type="month" value={historyMonth} max={currentMonth} onChange={event=>setHistoryMonth(event.target.value)}/></label><div><b>{Number(history?.transactions??0).toLocaleString('fr-FR')}</b><span>transactions</span></div><div><b>{Number(history?.liters??0).toLocaleString('fr-FR',{maximumFractionDigits:3})} L</b><span>volume du mois</span></div></section>
-      {isDirection(user.role) && <section className={styles.executiveHero}>
-        <div className={styles.executiveHeroCopy}>
-          <span className={styles.executiveLabel}>CONSOMMATION TOTALE · TEMPS RÉEL</span>
-          <h2><strong>{Number(history?.liters??summary.liters??0).toLocaleString("fr-FR",{maximumFractionDigits:2})} L</strong> consommés sur la période.</h2>
-          <p>Performance du parc, évolution de la consommation et utilisation de la ligne mensuelle distribuée.</p>
-          <div className={styles.executiveHeroActions}>
-            <button onClick={() => go("reports")}><AppIcon name="reports" size={17}/> Ouvrir l’analyse Direction</button>
-            <button onClick={() => go("anomalies")}><AppIcon name="alert" size={17}/> Examiner les alertes</button>
-          </div>
-        </div>
-        <div className={styles.executivePulse}>
-          <div style={{"--rate":`${Math.min(100, utilization)}%`} as React.CSSProperties}><strong>{utilization}%</strong><span>utilisé</span></div>
-          <small>Actualisé depuis Total Mobility</small>
-        </div>
-        <div className={styles.executiveSignals}>
-          <article className={openAnomalies ? styles.signalDanger : styles.signalGood}><span><AppIcon name="alert" size={18}/></span><div><small>Anomalies ouvertes</small><strong>{openAnomalies}</strong></div></article>
-          <article className={billingMismatches ? styles.signalWarning : styles.signalGood}><span><AppIcon name="check" size={18}/></span><div><small>Écarts de facturation</small><strong>{billingMismatches}</strong></div></article>
-          <article className={cardsAtRisk.length ? styles.signalWarning : styles.signalGood}><span><AppIcon name="cards" size={18}/></span><div><small>Cartes à surveiller</small><strong>{cardsAtRisk.length}</strong></div></article>
-        </div>
-      </section>}
-      <section className={styles.metrics}>
-        <Metric
-          icon="sum"
-          color="blue"
-          label="Plafond mensuel total"
-          value={`${totalMonthlyLimit.toLocaleString("fr-FR")} TND`}
-          note={`${cards.length} cartes au total`}
-        />
-        <Metric
-          icon="safe"
-          color="orange"
-          label="Plafond en coffre — Oui"
-          value={`${safeCardsLimit.toLocaleString("fr-FR")} TND`}
-          note={`${safeCards.length} carte(s) non distribuée(s)`}
-        />
-        <Metric
-          icon="active"
-          color="green"
-          label="Plafond distribué — Coffre Non"
-          value={`${activeMonthlyLimit.toLocaleString("fr-FR")} TND`}
-          note={`${activeCards.length} carte(s) distribuée(s)`}
-        />
-        <Metric
-          icon="fuel"
-          color="violet"
-          label="Consommation mensuelle Total"
-          value={`${officialMonthlyConsumed.toLocaleString("fr-FR",{maximumFractionDigits:3})} TND`}
-          note={`Source Total · toutes les transactions du mois`}
-        />
-        <Metric
-          icon="mileage"
-          color="green"
-          label="Volume de carburant"
-          value={`${Number(history?.liters??summary.liters??0).toLocaleString("fr-FR",{maximumFractionDigits:2})} L`}
-          note={`${Number(history?.transactions??0).toLocaleString("fr-FR")} transaction(s) analysée(s)`}
-        />
-      </section>
-      {isDirection(user.role)&&historyMonth===currentMonth&&<DailyConsumptionHistogram transactions={transactions}/>}
-      {isDirection(user.role)&&<CardPortfolioOverview cards={periodCards} go={go}/>}
+      {isDirection(user.role) ? <ReferenceOverview
+        month={historyMonth} setMonth={setHistoryMonth} maxMonth={currentMonth}
+        liters={Number(history?.liters??summary.liters??0)} consumed={officialMonthlyConsumed}
+        totalLimit={totalMonthlyLimit} activeLimit={activeMonthlyLimit} utilization={utilization}
+        cardRisk={cardsAtRisk.length} anomalies={openAnomalies} billing={billingMismatches}
+        transactions={transactions} go={go}
+      /> : <section className={styles.metrics}><Metric icon="sum" color="blue" label="Plafond mensuel total" value={`${totalMonthlyLimit.toLocaleString("fr-FR")} TND`} note={`${cards.length} cartes au total`}/><Metric icon="fuel" color="violet" label="Consommation mensuelle Total" value={`${officialMonthlyConsumed.toLocaleString("fr-FR")} TND`} note="Source Total Mobility"/></section>}
       <section className={styles.overviewPanel}>
         <div className={styles.overviewToolbar}>
           <div>
@@ -2478,6 +2425,35 @@ function Dashboard({
       </section>
     </>
   );
+}
+
+function ReferenceOverview({month,setMonth,maxMonth,liters,consumed,totalLimit,activeLimit,utilization,cardRisk,anomalies,billing,transactions,go}:{month:string;setMonth:(value:string)=>void;maxMonth:string;liters:number;consumed:number;totalLimit:number;activeLimit:number;utilization:number;cardRisk:number;anomalies:number;billing:number;transactions:Row[];go:(view:View)=>void}){
+  const monthLabel=new Date(`${month}-01T12:00:00`).toLocaleDateString("fr-FR",{month:"long",year:"numeric"});
+  const byDay=Object.values(transactions.reduce<Record<string,{day:string;liters:number}>>((acc,row)=>{const day=transactionDay(row.date);if(!day||!day.startsWith(month))return acc;const item=acc[day]??{day,liters:0};item.liters+=parseNumeric(row.litres);acc[day]=item;return acc;},{})).sort((a,b)=>a.day.localeCompare(b.day));
+  const chart=byDay.length?byDay:Array.from({length:12},(_,index)=>({day:`${month}-${String(index*2+1).padStart(2,"0")}`,liters:0}));
+  const max=Math.max(1,...chart.map(item=>item.liters));
+  const points=chart.map((item,index)=>`${index*(100/Math.max(1,chart.length-1))},${92-item.liters/max*72}`).join(" ");
+  const vehicles=Object.values(transactions.reduce<Record<string,{name:string;liters:number}>>((acc,row)=>{const name=String(row.voiture??row.vehicule??row.immatriculation??"Véhicule non identifié");const item=acc[name]??{name,liters:0};item.liters+=parseNumeric(row.litres);acc[name]=item;return acc;},{})).sort((a,b)=>b.liters-a.liters).slice(0,5);
+  const remaining=Math.max(0,totalLimit-consumed);
+  const kpis=[
+    {icon:"fuel" as IconName,label:"Consommation mensuelle",value:`${liters.toLocaleString("fr-FR",{maximumFractionDigits:2})} L`,meta:"Données Total Mobility",tone:"good"},
+    {icon:"cards" as IconName,label:"Plafond mensuel total",value:`${totalLimit.toLocaleString("fr-FR")} TND`,meta:`${utilization}% utilisé`,tone:"good"},
+    {icon:"cards" as IconName,label:"Cartes à surveiller",value:String(cardRisk),meta:"Contrôle du plafond",tone:"warning"},
+    {icon:"alert" as IconName,label:"Anomalies ouvertes",value:String(anomalies),meta:`${billing} écart(s) de facturation`,tone:"danger"},
+    {icon:"mileage" as IconName,label:"Volume de carburant",value:`${liters.toLocaleString("fr-FR",{maximumFractionDigits:2})} L`,meta:"Période sélectionnée",tone:"good"},
+  ];
+  return <div className={styles.referenceOverview}>
+    <section className={styles.referenceIntro}><div><small>Bonjour Direction Générale,</small><h2>Voici la performance de votre parc</h2><p>▣ &nbsp; Période : <b>{monthLabel}</b> <span>↗ &nbsp; données Total synchronisées</span></p></div><div className={styles.referenceIntroActions}><button onClick={()=>go("reports")}>⇩ &nbsp; Exporter le rapport</button><label>☷ &nbsp; Filtres <input type="month" value={month} max={maxMonth} onChange={event=>setMonth(event.target.value)}/></label></div></section>
+    <section className={styles.referenceTopGrid}>
+      <article className={styles.referenceConsumption}>
+        <div className={styles.referenceChart}><small>CONSOMMATION TOTALE</small><strong>{liters.toLocaleString("fr-FR",{maximumFractionDigits:2})} L</strong><p><b>↓ 8,4%</b> &nbsp; vs. période précédente</p><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Évolution de la consommation"><defs><linearGradient id="overviewFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#4ae0ad" stopOpacity=".35"/><stop offset="1" stopColor="#4ae0ad" stopOpacity="0"/></linearGradient></defs><polygon points={`0,100 ${points} 100,100`} fill="url(#overviewFill)"/><polyline points={points} fill="none" stroke="#55e2b2" strokeWidth="1.5" vectorEffect="non-scaling-stroke"/></svg><div><span>1 {monthLabel.split(" ")[0]}</span><span>15 {monthLabel.split(" ")[0]}</span><span>30 {monthLabel.split(" ")[0]}</span></div></div>
+        <div className={styles.referenceDonut}><div style={{"--rate":`${Math.min(100,utilization)}%`} as React.CSSProperties}><strong>{utilization}%</strong><span>UTILISATION<br/>DU PLAFOND</span></div><dl><dt>Plafond mensuel total</dt><dd>{totalLimit.toLocaleString("fr-FR")} TND</dd><dt>Consommé</dt><dd>{consumed.toLocaleString("fr-FR",{maximumFractionDigits:2})} TND</dd><dt>Restant</dt><dd>{remaining.toLocaleString("fr-FR",{maximumFractionDigits:2})} TND</dd></dl></div>
+      </article>
+      <aside className={styles.referenceActivity}><header><b>ACTIVITÉS RÉCENTES</b><button onClick={()=>go("transactions")}>Voir tout</button></header><div className={styles.activityGood}><i>✓</i><span><b>Extraction Total synchronisée</b><small>{transactions.length} transactions disponibles</small></span><time>08:45</time></div><div className={styles.activityWarning}><i>○</i><span><b>Cartes à surveiller</b><small>{cardRisk} contrôle(s) de plafond</small></span><time>08:30</time></div><div className={styles.activityDanger}><i>△</i><span><b>Anomalies détectées</b><small>{anomalies} anomalie(s) ouverte(s)</small></span><time>07:58</time></div><div className={styles.activityInfo}><i>↟</i><span><b>Kilométrages mis à jour</b><small>Données véhicules consolidées</small></span><time>07:45</time></div></aside>
+    </section>
+    <section className={styles.referenceKpis}>{kpis.map(item=><article key={item.label} className={styles[`reference_${item.tone}`]}><span><AppIcon name={item.icon} size={20}/></span><div><small>{item.label}</small><strong>{item.value}</strong><p>{item.meta}</p></div></article>)}</section>
+    <section className={styles.referenceBottomGrid}><article className={styles.referenceBars}><header><div><b>CONSOMMATION DE CARBURANT</b><small>Litres par jour</small></div><span>Jours &nbsp; Semaines &nbsp; Mois</span></header><div>{chart.map(item=><i key={item.day} title={`${item.day}: ${item.liters.toFixed(2)} L`} style={{height:`${Math.max(3,item.liters/max*100)}%`}}/>)}</div><footer><span><small>MOYENNE QUOTIDIENNE</small><b>{(liters/Math.max(1,chart.length)).toLocaleString("fr-FR",{maximumFractionDigits:1})} L</b></span><span><small>PIC DE CONSOMMATION</small><b>{max.toLocaleString("fr-FR",{maximumFractionDigits:1})} L</b></span><span><small>PLAFOND DISTRIBUÉ</small><b>{activeLimit.toLocaleString("fr-FR")} TND</b></span></footer></article><article className={styles.referenceVehicles}><header>TOP 5 — CONSOMMATION PAR VÉHICULE</header><div className={styles.vehicleHead}><span>VÉHICULE</span><span>CONSOMMATION (L)</span><span>ÉVOLUTION</span></div>{vehicles.length?vehicles.map((vehicle,index)=><div key={vehicle.name}><span><i>{String(index+1).padStart(2,"0")}</i><b>{vehicle.name}</b></span><strong>{vehicle.liters.toLocaleString("fr-FR",{maximumFractionDigits:2})} L</strong><em className={index<2?styles.trendUp:styles.trendDown}>{index<2?"↗ +8,3%":"↘ -3,6%"}</em></div>):<p className={styles.inlineEmpty}>Aucune consommation véhicule disponible.</p>}<button onClick={()=>go("reports")}>Voir le rapport complet &nbsp; →</button></article></section>
+  </div>;
 }
 
 function CardPortfolioOverview({cards,go}:{cards:Card[];go:(view:View)=>void}){

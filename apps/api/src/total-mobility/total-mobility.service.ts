@@ -192,11 +192,13 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       }
       if(!company)throw new BadRequestException(`Société introuvable pour le client Total ${totalName||'sélectionné'}`);
       await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,[`total-cards:${company.id}`]);
-      let matched=0,created=0;
+      let matched=0,created=0,removed=0;
+      const importedNumbers:string[]=[];
       for (const card of cards) {
         const number=this.normalizeCardNumber(card.cardNumber).padStart(4,'0');
         const remoteStatus=card.status.trim().toUpperCase();
         if(!number||!remoteStatus)continue;
+        importedNumbers.push(number);
         await client.query(`INSERT INTO total_mobility_card_snapshot(card_number,remote_status,holder_name,registration,raw_data)
           VALUES($1,$2,$3,$4,$5)`,[number,remoteStatus,card.holderName??null,card.registration??null,card.raw??{}]);
         let updated=await client.query(`UPDATE fuel_card SET total_mobility_status=$3,total_mobility_checked_at=now(),
@@ -258,9 +260,23 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           AND fc.expires_on IS NULL AND fc.responsible_user_id IS NULL
           AND NOT EXISTS(SELECT 1 FROM fuel_transaction ft WHERE ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL)
           AND NOT EXISTS(SELECT 1 FROM card_assignment ca WHERE ca.fuel_card_id=fc.id AND ca.ends_at IS NULL)`,[company.id]);
+      // DELTA CUISINE possède exactement 43 cartes dans Total Mobility. Une
+      // extraction incomplète ne doit jamais supprimer de données ; en
+      // revanche, lorsque les 43 cartes sont confirmées, la liste distante
+      // devient le référentiel officiel et toutes les autres lignes locales
+      // sont archivées comme données parasites. Le soft-delete conserve les
+      // transactions et la piste d'audit historiques.
+      const officialNumbers=[...new Set(importedNumbers)];
+      if(company.code==='DC'&&officialNumbers.length===43){
+        const cleanup=await client.query(`UPDATE fuel_card fc SET deleted_at=now(),updated_at=now()
+          WHERE fc.company_id=$1 AND fc.deleted_at IS NULL
+            AND NOT (regexp_replace(coalesce(fc.official_card_number,fc.masked_card_number), '[^0-9]', '', 'g') = ANY($2::text[]))
+          RETURNING fc.id`,[company.id,officialNumbers]);
+        removed=cleanup.rowCount??0;
+      }
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
-        VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{client:totalName,company:company.code,extracted:cards.length,matched,created}]);
-      return {client:totalName,company:company.code,extracted:cards.length,matched,created,unmatched:cards.length-matched};
+        VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{client:totalName,company:company.code,extracted:cards.length,matched,created,removed}]);
+      return {client:totalName,company:company.code,extracted:cards.length,matched,created,removed,unmatched:cards.length-matched};
     });
   }
   async importDrivers(drivers: RemoteDriver[], actor: Actor) {

@@ -270,14 +270,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     this.setStatus('EXTRACTING', 'Client Total sélectionné. Extraction des transactions…');
     await this.total.reconnect(refreshToken, this.actor);
     const transactions = await this.total.syncNow(this.actor, '2026-08-01');
-    this.setStatus('EXTRACTING', 'Transactions actualisées. Synchronisation des chauffeurs…');
-    const driverRows=await this.extractDrivers();
-    const drivers=await this.total.importDrivers(driverRows,this.actor);
-    this.setStatus('EXTRACTING', 'Chauffeurs actualisés. Extraction des cartes de tous les clients…');
+    this.setStatus('EXTRACTING', 'Transactions actualisées. Extraction complète de tous les clients…');
     const cards=await this.extractAllClientCards();
     this.statusValue = {
       ...this.status('SUCCESS', 'Transactions, kilométrages, chauffeurs et cartes Total actualisés'),
-      result: { ...transactions, drivers, cards },
+      result: { ...transactions, clients: cards },
     };
     this.scheduleLiveRefresh();
   }
@@ -292,9 +289,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     try{
       this.setStatus('EXTRACTING','Actualisation Total : transactions, kilométrages, chauffeurs et cartes…');
       const transactions=await this.total.syncNow(this.actor);
-      const drivers=await this.total.importDrivers(await this.extractDrivers(),this.actor);
       const cards=await this.extractAllClientCards();
-      this.statusValue={...this.status('SUCCESS','Données Total actualisées automatiquement'),result:{...transactions,drivers,cards,live:true}};
+      this.statusValue={...this.status('SUCCESS','Données Total actualisées automatiquement'),result:{...transactions,clients:cards,live:true}};
     }catch(error){this.fail(error);}
   }
 
@@ -767,10 +763,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     // actif. Extraire ses cartes avant d'ouvrir le sélecteur évite de tenter
     // inutilement de resélectionner le client courant.
     try{
-      const currentCards=await this.extractCardStatuses();
-      results.push(currentCards.length
-        ?await this.total.importCardStatuses(currentCards,this.actor,'DELTA CUISINE')
-        :{client:'DELTA CUISINE',extracted:0,error:`Aucune carte visible (${this.lastCardDiagnostic})`});
+      results.push(await this.extractCurrentClientData('DELTA CUISINE'));
     }catch(error){
       results.push({client:'DELTA CUISINE',error:error instanceof Error?error.message:String(error)});
     }
@@ -793,10 +786,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       await page.waitForURL(url=>!url.pathname.includes('customer-selection'),{timeout:15_000});
       await page.waitForTimeout(1_500);
       try{
-        const cards=await this.extractCardStatuses();
-        results.push(cards.length
-          ?await this.total.importCardStatuses(cards,this.actor,name)
-          :{client:name,extracted:0,created:0,matched:0,error:`Aucune carte disponible (${this.lastCardDiagnostic})`});
+        results.push(await this.extractCurrentClientData(name));
       }catch(error){
         const message=error instanceof Error?error.message:String(error);
         this.logger.warn(`Extraction des cartes Total pour ${name} : ${message}`);
@@ -816,6 +806,22 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       throw new Error(`Aucune carte Total importée. ${details}`);
     }
     return results;
+  }
+
+  private async extractCurrentClientData(clientName:string){
+    if(!this.actor)throw new Error('Utilisateur de synchronisation Total absent');
+    const driverRows=await this.extractDrivers().catch(error=>{
+      this.logger.warn(`Chauffeurs Total ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
+    });
+    const drivers=driverRows.length?await this.total.importDrivers(driverRows,this.actor,clientName):{received:0};
+    const vehicleRows=await this.extractVehicles().catch(error=>{
+      this.logger.warn(`Véhicules Total ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
+    });
+    const vehicles=vehicleRows.length?await this.total.importVehicles(vehicleRows,this.actor,clientName):{received:0};
+    const cardRows=await this.extractCardStatuses();
+    if(!cardRows.length)return {client:clientName,extracted:0,drivers,vehicles,error:`Aucune carte visible (${this.lastCardDiagnostic})`};
+    const cards=await this.total.importCardStatuses(cardRows,this.actor,clientName);
+    return {...cards,drivers,vehicles};
   }
 
   private async openTotalCustomerSelection(){

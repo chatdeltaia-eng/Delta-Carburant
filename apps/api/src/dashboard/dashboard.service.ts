@@ -105,7 +105,35 @@ export class DashboardService {
       FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
       WHERE ft.deleted_at IS NULL AND ft.transaction_date>=now()-interval '90 days'
       ORDER BY ft.transaction_date DESC`);
+    const [totalWorkflow] = await this.db.query(`SELECT
+      t.enabled,t.last_sync_at AS "lastSyncAt",t.last_success_at AS "lastSuccessAt",t.last_error AS "lastError",
+      (SELECT status FROM total_mobility_sync_run ORDER BY started_at DESC LIMIT 1) AS "lastRunStatus",
+      (SELECT count(*)::int FROM company WHERE active) AS "companies",
+      (SELECT count(*)::int FROM fuel_card WHERE deleted_at IS NULL) AS "cards",
+      (SELECT count(*)::int FROM fuel_card WHERE deleted_at IS NULL AND total_mobility_checked_at>=now()-interval '10 minutes') AS "freshCards",
+      (SELECT count(*)::int FROM vehicle WHERE deleted_at IS NULL AND active) AS "vehicles",
+      (SELECT count(*)::int FROM vehicle WHERE deleted_at IS NULL AND active AND (total_mobility_checked_at>=now()-interval '10 minutes' OR EXISTS(SELECT 1 FROM fuel_transaction ft WHERE ft.vehicle_id=vehicle.id AND ft.reported_mileage IS NOT NULL AND ft.deleted_at IS NULL))) AS "trackedVehicles",
+      (SELECT count(*)::int FROM driver WHERE deleted_at IS NULL AND active) AS "drivers",
+      (SELECT count(*)::int FROM driver WHERE deleted_at IS NULL AND active AND total_mobility_checked_at>=now()-interval '10 minutes') AS "freshDrivers",
+      (SELECT count(*)::int FROM fuel_transaction WHERE deleted_at IS NULL) AS "transactions",
+      (SELECT count(*)::int FROM fuel_transaction WHERE deleted_at IS NULL AND reported_mileage IS NOT NULL) AS "mileageTransactions",
+      (SELECT coalesce(sum(quantity_liters),0)::float FROM fuel_transaction WHERE deleted_at IS NULL) AS "liters",
+      (SELECT coalesce(sum(amount_incl_tax),0)::float FROM fuel_transaction WHERE deleted_at IS NULL) AS "amount"
+      FROM total_mobility_connection t LIMIT 1`);
+    const totalCompanies = await this.db.query(`SELECT c.code,c.name,
+      (SELECT count(*)::int FROM fuel_card fc WHERE fc.company_id=c.id AND fc.deleted_at IS NULL) AS cards,
+      (SELECT count(*)::int FROM vehicle v WHERE v.company_id=c.id AND v.deleted_at IS NULL AND v.active) AS vehicles,
+      (SELECT count(*)::int FROM driver d WHERE d.company_id=c.id AND d.deleted_at IS NULL AND d.active) AS drivers,
+      (SELECT count(*)::int FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id WHERE fc.company_id=c.id AND ft.deleted_at IS NULL) AS transactions,
+      (SELECT coalesce(sum(ft.quantity_liters),0)::float FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id WHERE fc.company_id=c.id AND ft.deleted_at IS NULL) AS liters,
+      (SELECT coalesce(sum(ft.amount_incl_tax),0)::float FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id WHERE fc.company_id=c.id AND ft.deleted_at IS NULL) AS amount,
+      (SELECT max(ft.transaction_date) FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id WHERE fc.company_id=c.id AND ft.deleted_at IS NULL) AS "lastTransactionAt",
+      (SELECT max(fc.total_mobility_checked_at) FROM fuel_card fc WHERE fc.company_id=c.id AND fc.deleted_at IS NULL) AS "cardsCheckedAt",
+      (SELECT max(v.total_mobility_checked_at) FROM vehicle v WHERE v.company_id=c.id AND v.deleted_at IS NULL) AS "vehiclesCheckedAt",
+      (SELECT max(d.total_mobility_checked_at) FROM driver d WHERE d.company_id=c.id AND d.deleted_at IS NULL) AS "driversCheckedAt"
+      FROM company c WHERE c.active ORDER BY c.code`);
     return { ...kpis[0], ...overview, migrations, companies, monthly, topConsumers, products,
+      totalWorkflow:totalWorkflow??null,totalCompanies,
       risks: risks.filter((row:{reason:string|null})=>row.reason).slice(0,25) };
   }
 

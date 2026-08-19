@@ -17,7 +17,7 @@ export class VehiclesService {
     v.updated_at AS "updatedAt" FROM vehicle v JOIN company c ON c.id=v.company_id
     LEFT JOIN beneficiary rb ON rb.id=v.reference_beneficiary_id
     LEFT JOIN fuel_card fc ON fc.reference_vehicle_id=v.id AND fc.deleted_at IS NULL
-    WHERE v.deleted_at IS NULL AND v.active=true AND c.code='DC'
+    WHERE v.deleted_at IS NULL AND v.active=true
     AND ($1::boolean=false OR v.managed_by=$2 OR EXISTS(SELECT 1 FROM transaction_allocation ta WHERE ta.vehicle_id=v.id AND ta.allocated_by=$2))
     AND ($3='' OR v.company_id=$3::uuid) ORDER BY c.code,coalesce(v.source_card_number,''),v.registration_display`,[own,actor.sub,companyId]); }
   async create(dto:Vehicle,actor:Actor){ const companyId=dto.companyId??actor.companyId;if(!companyId) throw new BadRequestException('Société obligatoire');this.assertCompanyScope(companyId,actor); const [row]=await this.db.query(`INSERT INTO vehicle(company_id,registration_normalized,registration_display,brand,model,active,managed_by,deleted_at,deleted_by)

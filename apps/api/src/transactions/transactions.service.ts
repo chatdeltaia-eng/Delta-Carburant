@@ -44,10 +44,11 @@ export class TransactionsService {
   async list(actor: { sub: string; role: string },companyId='') {
     await this.archiveCompletedMonths();
     const transactions = await this.db.query(`SELECT ft.id,ft.transaction_date AS date,fc.masked_card_number AS card,
-    ft.station,ft.product,ft.quantity_liters AS liters,ft.amount_incl_tax AS amount,ft.unit_price AS "appliedPrice",
+    c.code AS "companyCode",c.id AS "companyId",ft.station,ft.product,ft.quantity_liters AS liters,ft.amount_incl_tax AS amount,ft.unit_price AS "appliedPrice",
     ft.expected_amount AS "expectedAmount",ft.billing_difference AS "billingDifference",ft.validation_status AS "billingStatus",
     ft.billing_checked_at AS "billingCheckedAt",tib.source_filename AS file,
-    b.display_name AS beneficiary,v.registration_display AS vehicle,ft.corrected_at AS "correctedAt",
+    b.display_name AS beneficiary,v.registration_display AS vehicle,coalesce(d.full_name,v.driver_name) AS driver,
+    ft.previous_mileage AS "previousMileage",ft.reported_mileage AS mileage,ft.corrected_at AS "correctedAt",
     fc.card_category AS "cardCategory",fc.monthly_limit AS "monthlyLimit",
     obs.observation,obs.created_at AS "observationAt",obs.author AS "observationBy",
     coalesce(sum(ta.allocated_amount) FILTER(WHERE ta.workflow_status IN ('PENDING','APPROVED')),0) AS "allocatedAmount",
@@ -63,15 +64,16 @@ export class TransactionsService {
       LEFT JOIN driver dr ON dr.id=detail.driver_id
       JOIN vehicle dv ON dv.id=detail.vehicle_id
       WHERE detail.fuel_transaction_id=ft.id),'[]'::jsonb) AS allocations
-    FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
+    FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id JOIN company c ON c.id=fc.company_id
     LEFT JOIN beneficiary b ON b.id=ft.beneficiary_id LEFT JOIN vehicle v ON v.id=ft.vehicle_id
+    LEFT JOIN driver d ON d.id=v.driver_id AND d.deleted_at IS NULL
     LEFT JOIN transaction_import_batch tib ON tib.id=ft.import_batch_id
     LEFT JOIN transaction_allocation ta ON ta.fuel_transaction_id=ft.id
     LEFT JOIN LATERAL (SELECT tro.observation,tro.created_at,au.display_name AS author FROM transaction_observation tro
       JOIN app_user au ON au.id=tro.author_id WHERE tro.fuel_transaction_id=ft.id ORDER BY tro.created_at DESC LIMIT 1) obs ON true
     WHERE ft.deleted_at IS NULL AND ft.archived_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2)
       AND ($3='' OR fc.company_id=$3::uuid)
-    GROUP BY ft.id,fc.id,tib.source_filename,b.display_name,v.registration_display,obs.observation,obs.created_at,obs.author
+    GROUP BY ft.id,fc.id,c.id,tib.source_filename,b.display_name,v.registration_display,d.full_name,v.driver_name,obs.observation,obs.created_at,obs.author
     ORDER BY ft.transaction_date DESC`, [actor.role==='NAJIB_ASSIGNER',actor.sub,companyId]);
     if (actor.role === 'NAJIB_ASSIGNER') {
       const pending = await this.db.query(`SELECT ('review:'||tr.id::text) AS id,tr.transaction_date AS date,

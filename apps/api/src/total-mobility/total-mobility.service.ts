@@ -279,12 +279,14 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       return {client:totalName,company:company.code,extracted:cards.length,matched,created,removed,unmatched:cards.length-matched};
     });
   }
-  async importDrivers(drivers: RemoteDriver[], actor: Actor) {
+  async importDrivers(drivers: RemoteDriver[], actor: Actor, clientName?: string) {
     if (!drivers.length) throw new BadRequestException('Aucun chauffeur trouvé dans « Gestion des chauffeurs » sur Total Mobility');
     const [connection]=await this.db.query<{customer_number:string}>(`SELECT customer_number FROM total_mobility_connection WHERE enabled LIMIT 1`);
+    const aliases:Record<string,string>={'DELTA CUISINE':'DC','IKIT TN':'IKIT','STE LES TECHNIQUES DE MARBRE':'TCM','DELTA CUISINE DISTRIBUTION':'DCD'};
+    const requestedCode=aliases[String(clientName??'').trim().toUpperCase()]??'';
     const [company]=await this.db.query<{id:string;code:string;customer_name:string}>(`SELECT c.id,c.code,
       coalesce((SELECT nullif(d.customer_name,'') FROM driver d WHERE d.company_id=c.id AND regexp_replace(coalesce(d.customer_number,''),'[^0-9]','','g')=regexp_replace($1,'[^0-9]','','g') AND d.deleted_at IS NULL AND nullif(d.customer_name,'') IS NOT NULL ORDER BY d.created_at LIMIT 1),c.name) customer_name
-      FROM company c WHERE EXISTS(SELECT 1 FROM driver d WHERE d.company_id=c.id AND regexp_replace(coalesce(d.customer_number,''),'[^0-9]','','g')=regexp_replace($1,'[^0-9]','','g')) ORDER BY c.created_at LIMIT 1`,[connection?.customer_number??'']);
+      FROM company c WHERE ($2<>'' AND c.code=$2) OR ($2='' AND EXISTS(SELECT 1 FROM driver d WHERE d.company_id=c.id AND regexp_replace(coalesce(d.customer_number,''),'[^0-9]','','g')=regexp_replace($1,'[^0-9]','','g'))) ORDER BY CASE WHEN c.code=$2 THEN 0 ELSE 1 END,c.created_at LIMIT 1`,[connection?.customer_number??'',requestedCode]);
     if(!company)throw new BadRequestException(`Aucune société de l'application ne correspond au client Total ${connection?.customer_number??'inconnu'}`);
     return this.db.transaction(async client=>{
       // Prevent two scheduled/manual synchronizations from both observing a
@@ -334,10 +336,12 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       return {received:drivers.length,created,updated,keyConflicts,company:company.code};
     });
   }
-  async importVehicles(vehicles: RemoteVehicle[], actor: Actor) {
+  async importVehicles(vehicles: RemoteVehicle[], actor: Actor, clientName?: string) {
     if (!vehicles.length) throw new BadRequestException('Aucun véhicule trouvé dans Total Mobility');
     const [connection]=await this.db.query<{customer_number:string}>(`SELECT customer_number FROM total_mobility_connection WHERE enabled LIMIT 1`);
-    const [company]=await this.db.query<{id:string;code:string}>(`SELECT c.id,c.code FROM company c WHERE EXISTS(SELECT 1 FROM driver d WHERE d.company_id=c.id AND regexp_replace(coalesce(d.customer_number,''),'[^0-9]','','g')=regexp_replace($1,'[^0-9]','','g')) ORDER BY c.created_at LIMIT 1`,[connection?.customer_number??'']);
+    const aliases:Record<string,string>={'DELTA CUISINE':'DC','IKIT TN':'IKIT','STE LES TECHNIQUES DE MARBRE':'TCM','DELTA CUISINE DISTRIBUTION':'DCD'};
+    const requestedCode=aliases[String(clientName??'').trim().toUpperCase()]??'';
+    const [company]=await this.db.query<{id:string;code:string}>(`SELECT c.id,c.code FROM company c WHERE ($2<>'' AND c.code=$2) OR ($2='' AND EXISTS(SELECT 1 FROM driver d WHERE d.company_id=c.id AND regexp_replace(coalesce(d.customer_number,''),'[^0-9]','','g')=regexp_replace($1,'[^0-9]','','g'))) ORDER BY CASE WHEN c.code=$2 THEN 0 ELSE 1 END,c.created_at LIMIT 1`,[connection?.customer_number??'',requestedCode]);
     if(!company)throw new BadRequestException(`Aucune société ne correspond au client Total ${connection?.customer_number??'inconnu'}`);
     return this.db.transaction(async client=>{
       let created=0,updated=0,mileageReadings=0,ignoredMileage=0;

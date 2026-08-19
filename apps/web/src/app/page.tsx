@@ -133,7 +133,7 @@ type WorkflowStep = {
   description: string;
 };
 
-type IconName = "dashboard"|"reports"|"cards"|"users"|"vehicle"|"driver"|"transactions"|"requests"|"mileage"|"fuel"|"alert"|"settings"|"logout"|"bell"|"sum"|"safe"|"active"|"plus"|"check"|"transfer";
+type IconName = "dashboard"|"reports"|"cards"|"users"|"vehicle"|"driver"|"transactions"|"requests"|"mileage"|"fuel"|"alert"|"settings"|"logout"|"bell"|"search"|"sum"|"safe"|"active"|"plus"|"check"|"transfer";
 function AppIcon({name,size=20}:{name:IconName;size?:number}) {
   const paths:Record<IconName,React.ReactNode>={
     dashboard:<><path d="M3 13h8V3H3v10Zm0 8h8v-5H3v5Zm11 0h7V11h-7v10Zm0-18v5h7V3h-7Z"/></>, reports:<><path d="M4 20V10m5 10V4m6 16v-7m5 7H2"/></>,
@@ -142,7 +142,7 @@ function AppIcon({name,size=20}:{name:IconName;size?:number}) {
     transactions:<><path d="M7 7h13l-3-3m3 3-3 3M17 17H4l3 3m-3-3 3-3"/></>, requests:<><path d="M6 3h12v18H6zM9 8h6M9 12h6M9 16h4"/></>, mileage:<><circle cx="12" cy="13" r="8"/><path d="m12 13 4-4M7 3h10M12 5V3"/></>,
     fuel:<><path d="M5 21V4a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v17M3 21h15M8 6h5v5H8zM16 7h2l3 3v7a2 2 0 0 1-4 0v-4"/></>, alert:<><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v5m0 3h.01"/></>,
     settings:<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a7.8 7.8 0 0 0 .1-6l2-2.3-4.2-4.2-2.3 2a7.8 7.8 0 0 0-6 0l-2.3-2L2.5 6.7l2 2.3a7.8 7.8 0 0 0 0 6l-2 2.3 4.2 4.2 2.3-2a7.8 7.8 0 0 0 6 0l2.3 2 4.2-4.2-2.1-2.3Z"/></>, logout:<><path d="M10 17l5-5-5-5M15 12H3M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/></>,
-    bell:<><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></>, sum:<><path d="M18 4H6l6 8-6 8h12"/></>, safe:<><rect x="4" y="7" width="16" height="14" rx="2"/><path d="M8 7V5a4 4 0 0 1 8 0v2M12 12v4"/></>, active:<><path d="M20 6 9 17l-5-5"/></>, plus:<><path d="M12 5v14M5 12h14"/></>, check:<><path d="m5 12 4 4L19 6"/></>, transfer:<><path d="M7 7h13l-3-3m3 3-3 3M17 17H4l3 3m-3-3 3-3"/></>,
+    bell:<><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></>, search:<><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>, sum:<><path d="M18 4H6l6 8-6 8h12"/></>, safe:<><rect x="4" y="7" width="16" height="14" rx="2"/><path d="M8 7V5a4 4 0 0 1 8 0v2M12 12v4"/></>, active:<><path d="M20 6 9 17l-5-5"/></>, plus:<><path d="M12 5v14M5 12h14"/></>, check:<><path d="m5 12 4 4L19 6"/></>, transfer:<><path d="M7 7h13l-3-3m3 3-3 3M17 17H4l3 3m-3-3 3-3"/></>,
   };
   return <svg className={styles.appIcon} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -1901,7 +1901,9 @@ export default function Home() {
           ["dashboard", "cards", "vehicles", "drivers", "transactions", "requests", "mileage", "fuelPrices", "complaints", "returns", "documents"].includes(v),
         )
       : isDirection(user.role)
-        ? allNav
+        ? allNav.filter(([v]) =>
+            ["dashboard", "cards", "vehicles", "drivers", "transactions", "requests", "mileage", "fuelPrices", "anomalies", "complaints"].includes(v),
+          )
         : allNav.filter(([v]) => v !== "reports");
   const userNotifications = notifications.filter((n) => n.target === user.role),
     unread = userNotifications.filter((n) => !n.read).length;
@@ -1954,6 +1956,11 @@ export default function Home() {
             </button>
           ))}
         </nav>
+        {isDirection(user.role) && <div className={styles.topbarTools}>
+          <button type="button" aria-label="Rechercher" title="Rechercher" onClick={() => setSearch("")}><AppIcon name="search" size={18}/></button>
+          <button type="button" aria-label="Notifications" title="Notifications" onClick={() => setShowNotifications(!showNotifications)} className={styles.topbarBell}><AppIcon name="bell" size={18}/>{unread > 0 && <i>{unread}</i>}</button>
+          <div className={styles.topbarIdentity}><span>{user.name[0]}</span><div><b>{user.name}</b><small>{roleLabel(user.role)}</small></div><i>⌄</i></div>
+        </div>}
         <div className={styles.sideBottom}>
           <button
             className={view === "settings" ? styles.active : ""}

@@ -1581,3 +1581,25 @@
 @media(max-width:1450px){.referenceTopGrid,.referenceBottomGrid{grid-template-columns:1fr}.referenceActivity{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}.referenceActivity>header{grid-column:1/-1}.referenceActivity>div{margin:0}.referenceKpis{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:900px){.referenceConsumption{grid-template-columns:1fr}.referenceChart{padding-right:0;border-right:0;border-bottom:1px solid rgba(117,210,180,.14)}.referenceActivity{grid-template-columns:1fr 1fr}.referenceKpis{grid-template-columns:1fr 1fr}.referenceIntro{align-items:flex-start;flex-direction:column}.referenceIntroActions{width:100%}}
 @media(max-width:600px){.referenceDonut{grid-template-columns:1fr}.referenceDonut>div{margin:auto}.referenceActivity,.referenceKpis{grid-template-columns:1fr}.referenceIntroActions{flex-direction:column}.referenceIntroActions>*{width:100%}.referenceBars footer{grid-template-columns:1fr;gap:12px}.referenceBars footer span+span{padding-left:0;border-left:0}.referenceBottomGrid{grid-template-columns:minmax(0,1fr)}}
+
+/* Fidélité maquette DG — proportions 1676×944, navigation et surfaces exécutives. */
+.topbarTools{display:flex;align-items:center;gap:8px;padding-left:14px;border-left:1px solid rgba(126,202,178,.13)}
+.topbarTools>button{position:relative;width:37px;height:37px;display:grid;place-items:center;border:0;border-radius:9px;background:transparent;color:#c6ddd6;cursor:pointer}
+.topbarTools>button:hover{background:rgba(32,112,91,.28);color:#fff}.topbarBell i{position:absolute;right:3px;top:1px;min-width:15px;height:15px;padding:0 3px;display:grid;place-items:center;border:2px solid #062824;border-radius:99px;background:#38ba87;color:#fff;font-size:7px;font-style:normal;font-weight:850}
+.topbarIdentity{min-width:154px;height:48px;padding-left:7px;display:grid;grid-template-columns:36px 1fr auto;align-items:center;gap:9px;color:#ecf7f3}
+.topbarIdentity>span{width:36px;height:36px;display:grid;place-items:center;border-radius:50%;background:linear-gradient(145deg,#277bd0,#344fc1);font-size:11px;font-weight:800}.topbarIdentity b,.topbarIdentity small{display:block;white-space:nowrap}.topbarIdentity b{font-size:9px}.topbarIdentity small{margin-top:3px;color:#82a49b;font-size:7px}.topbarIdentity>i{color:#789c92;font-size:10px;font-style:normal}
+.topbarTools+.sideBottom{display:none}
+
+@media(min-width:1101px){
+  .sidebar{position:sticky;min-height:75px;height:75px;padding:0 16px;grid-template-columns:142px minmax(0,1fr) auto;gap:12px;background:linear-gradient(90deg,#031f1e,#042927 52%,#031d1e);box-shadow:0 8px 28px rgba(0,0,0,.22)}
+  .brand{width:142px;height:75px;min-height:75px;padding:5px 0}.brand img{width:124px;height:64px}
+  .sidebar nav{gap:1px;padding:10px 0}.sidebar nav button{min-height:46px;padding:8px 10px;gap:7px;border-radius:8px;font-size:10px}.sidebar nav button svg{width:16px;height:16px}.sidebar .active{box-shadow:inset 0 -2px #40dca8,0 7px 20px rgba(13,169,121,.12)}
+  .dashboardRail{inset:75px auto 0 0;width:212px;padding:24px 14px 18px;background:linear-gradient(180deg,#052d2c,#042727 76%,#032424)}
+  .dashboardContent{width:calc(100% - 212px);margin-left:212px;padding:22px 34px 46px}
+  .railClient>button{min-height:55px}.railGroup{margin-top:21px;gap:4px}.railGroup button{min-height:42px;padding:9px 9px;gap:10px;font-size:10px}.railGroup .railActive{margin-inline:-14px;padding-left:23px}.railDivider{margin:20px 0}.railHelp{padding:15px}.railUpdated{margin-top:15px}
+  .referenceOverview{gap:13px}.referenceIntro{min-height:91px}.referenceIntro h2{margin:5px 0 8px;font-size:25px}.referenceIntro small{font-size:10px}.referenceIntro p{font-size:9px}.referenceIntroActions button,.referenceIntroActions label{min-height:43px}
+  .referenceTopGrid{grid-template-columns:minmax(0,3.05fr) minmax(268px,.9fr);gap:14px}.referenceConsumption{min-height:257px;padding:22px 28px;grid-template-columns:minmax(0,1.42fr) minmax(300px,.94fr);gap:22px}.referenceChart>strong{font-size:28px}.referenceChart svg{height:128px}.referenceDonut{grid-template-columns:160px 1fr;gap:17px}.referenceDonut>div{width:154px}.referenceDonut strong{font-size:29px}.referenceDonut dd{font-size:14px}
+  .referenceActivity{padding:14px}.referenceActivity>div{min-height:49px;margin-top:7px;padding:8px}.referenceActivity i{width:27px;height:27px}.referenceKpis{gap:14px}.referenceKpis article{min-height:112px;padding:15px}.referenceKpis article>span{width:42px;height:42px;flex-basis:42px}.referenceKpis strong{font-size:20px}
+  .referenceBottomGrid{grid-template-columns:minmax(0,1.28fr) minmax(430px,1fr);gap:14px}.referenceBars,.referenceVehicles{min-height:304px}.referenceBars>div{height:185px}.referenceBars footer{min-height:64px}.referenceVehicles>div:not(.vehicleHead){min-height:42px}
+}
+@media(min-width:1101px) and (max-width:1380px){.topbarIdentity{display:none}.sidebar{grid-template-columns:122px minmax(0,1fr) auto}.brand{width:122px}.sidebar nav button{padding-inline:7px;font-size:9px}.dashboardRail{width:205px}.dashboardContent{width:calc(100% - 205px);margin-left:205px;padding-inline:24px}}

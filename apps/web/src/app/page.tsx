@@ -1957,9 +1957,11 @@ export default function Home() {
           ))}
         </nav>
         {isDirection(user.role) && <div className={styles.topbarTools}>
-          <button type="button" aria-label="Rechercher" title="Rechercher" onClick={() => setSearch("")}><AppIcon name="search" size={18}/></button>
+          <button type="button" aria-label="Rechercher" title="Rechercher" onClick={() => { setView("cards"); setSearch(""); window.setTimeout(() => document.querySelector<HTMLInputElement>('input[aria-label="Rechercher dans la liste"]')?.focus(), 100); }}><AppIcon name="search" size={18}/></button>
           <button type="button" aria-label="Notifications" title="Notifications" onClick={() => setShowNotifications(!showNotifications)} className={styles.topbarBell}><AppIcon name="bell" size={18}/>{unread > 0 && <i>{unread}</i>}</button>
           <div className={styles.topbarIdentity}><span>{user.name[0]}</span><div><b>{user.name}</b><small>{roleLabel(user.role)}</small></div><i>⌄</i></div>
+          <button type="button" aria-label="Paramètres" title="Paramètres" onClick={() => { setView("settings"); setSearch(""); }}><AppIcon name="settings" size={18}/></button>
+          <button type="button" aria-label="Déconnexion" title="Déconnexion" onClick={() => logout()}><AppIcon name="logout" size={18}/></button>
         </div>}
         <div className={styles.sideBottom}>
           <button

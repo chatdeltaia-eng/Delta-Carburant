@@ -1968,7 +1968,33 @@ export default function Home() {
           </button>
         </div>
       </aside>
-      <main className={styles.content}>
+      {view === "dashboard" && isDirection(user.role) && (
+        <aside className={styles.dashboardRail} aria-label="Navigation du cockpit Direction">
+          <div className={styles.railClient}>
+            <small>CLIENT</small>
+            <button type="button" onClick={() => setShowClientChooser(true)}>
+              <span><b>{selectedClient?.code ?? "DC"}</b><em>{selectedClient?.name ?? "Direction Générale"}</em></span><i>⌄</i>
+            </button>
+          </div>
+          <div className={styles.railGroup}>
+            <button className={styles.railActive} onClick={() => setView("dashboard")}><AppIcon name="dashboard" size={17}/><span>Vue d’ensemble</span></button>
+            <button onClick={() => setView("reports")}><AppIcon name="reports" size={17}/><span>Tableau de bord exécutif</span></button>
+            <button onClick={() => setView("reports")}><AppIcon name="sum" size={17}/><span>Analyse avancée</span></button>
+            <button onClick={() => setView("anomalies")}><AppIcon name="bell" size={17}/><span>Alertes & notifications</span></button>
+          </div>
+          <div className={styles.railDivider}/>
+          <p className={styles.railLabel}>RAPPORTS DIRECTION</p>
+          <div className={styles.railGroup}>
+            <button onClick={() => setView("reports")}><AppIcon name="reports" size={17}/><span>Performance globale</span></button>
+            <button onClick={() => setView("transactions")}><AppIcon name="fuel" size={17}/><span>Analyse carburant</span></button>
+            <button onClick={() => setView("mileage")}><AppIcon name="mileage" size={17}/><span>Kilométrage & entretien</span></button>
+            <button onClick={() => setView("reports")}><AppIcon name="sum" size={17}/><span>Benchmark & prévisions</span></button>
+          </div>
+          <div className={styles.railHelp}><b>Besoin d’aide ?</b><p>Accédez à votre centre d’aide ou contactez votre gestionnaire.</p><button onClick={() => setView("complaints")}>Centre d’aide <span>↗</span></button></div>
+          <small className={styles.railUpdated}>◌ &nbsp; Actualisé à {new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})}</small>
+        </aside>
+      )}
+      <main className={`${styles.content} ${view === "dashboard" && isDirection(user.role) ? styles.dashboardContent : ""}`}>
         <header>
           <div>
             <p className={styles.eyebrow}>
@@ -2030,7 +2056,7 @@ export default function Home() {
           </div>
         </header>
         {error && <div className={styles.alert}>{error}</div>}
-        <WorkflowGuide role={user.role} activeView={view} go={setView} />
+        {view !== "dashboard" && <WorkflowGuide role={user.role} activeView={view} go={setView} />}
         {view === "dashboard" ? (
           <Dashboard
             token={token}
@@ -2337,9 +2363,9 @@ function Dashboard({
       <section className={styles.periodFilter}><div><small>HISTORIQUE D’UTILISATION</small><h2>Période affichée</h2><p>Tous les indicateurs ci-dessous correspondent uniquement au mois sélectionné.</p></div><label>Mois et année<input type="month" value={historyMonth} max={currentMonth} onChange={event=>setHistoryMonth(event.target.value)}/></label><div><b>{Number(history?.transactions??0).toLocaleString('fr-FR')}</b><span>transactions</span></div><div><b>{Number(history?.liters??0).toLocaleString('fr-FR',{maximumFractionDigits:3})} L</b><span>volume du mois</span></div></section>
       {isDirection(user.role) && <section className={styles.executiveHero}>
         <div className={styles.executiveHeroCopy}>
-          <span className={styles.executiveLabel}>COCKPIT EXÉCUTIF · TEMPS RÉEL</span>
-          <h2>La consommation du parc est à <strong>{utilization}%</strong> de la ligne distribuée.</h2>
-          <p>Une lecture immédiate de la performance, des risques et des décisions à prendre sur le mois en cours.</p>
+          <span className={styles.executiveLabel}>CONSOMMATION TOTALE · TEMPS RÉEL</span>
+          <h2><strong>{Number(history?.liters??summary.liters??0).toLocaleString("fr-FR",{maximumFractionDigits:2})} L</strong> consommés sur la période.</h2>
+          <p>Performance du parc, évolution de la consommation et utilisation de la ligne mensuelle distribuée.</p>
           <div className={styles.executiveHeroActions}>
             <button onClick={() => go("reports")}><AppIcon name="reports" size={17}/> Ouvrir l’analyse Direction</button>
             <button onClick={() => go("anomalies")}><AppIcon name="alert" size={17}/> Examiner les alertes</button>
@@ -2383,6 +2409,13 @@ function Dashboard({
           label="Consommation mensuelle Total"
           value={`${officialMonthlyConsumed.toLocaleString("fr-FR",{maximumFractionDigits:3})} TND`}
           note={`Source Total · toutes les transactions du mois`}
+        />
+        <Metric
+          icon="mileage"
+          color="green"
+          label="Volume de carburant"
+          value={`${Number(history?.liters??summary.liters??0).toLocaleString("fr-FR",{maximumFractionDigits:2})} L`}
+          note={`${Number(history?.transactions??0).toLocaleString("fr-FR")} transaction(s) analysée(s)`}
         />
       </section>
       {isDirection(user.role)&&<MonthlyConsumptionGauge

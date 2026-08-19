@@ -402,7 +402,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         dto.userId?.trim() || null,
         dto.username?.trim() || null,
         this.encrypt(refreshToken),
-        dto.syncIntervalMinutes ?? 60,
+        dto.syncIntervalMinutes ?? 1,
         actor.sub,
       ],
     );
@@ -413,14 +413,14 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         {
           customerNumber: dto.customerNumber,
           siteNumber: dto.siteNumber,
-          interval: dto.syncIntervalMinutes ?? 60,
+          interval: dto.syncIntervalMinutes ?? 1,
         },
       ],
     );
     return {
       connected: true,
       passwordStored: false,
-      syncIntervalMinutes: dto.syncIntervalMinutes ?? 60,
+      syncIntervalMinutes: dto.syncIntervalMinutes ?? 1,
     };
   }
   async reconnect(refreshTokenValue: string, actor: Actor) {

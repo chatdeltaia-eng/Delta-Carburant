@@ -284,7 +284,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private scheduleLiveRefresh(){
     if(this.liveTimer)clearInterval(this.liveTimer);
-    const minutes=Math.max(1,Number(process.env.TOTAL_LIVE_SYNC_MINUTES??5));
+    const minutes=Math.max(1,Number(process.env.TOTAL_LIVE_SYNC_MINUTES??1));
     this.liveTimer=setInterval(()=>void this.liveRefresh(),minutes*60_000);this.liveTimer.unref();
   }
   private async liveRefresh(){

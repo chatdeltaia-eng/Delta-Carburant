@@ -30,7 +30,7 @@ class ConfigureTotalMobilityDto {
   @IsOptional() @IsString() userId?: string;
   @IsOptional() @IsString() username?: string;
   @IsString() @MinLength(20) refreshToken!: string;
-  @IsOptional() @IsInt() @Min(15) @Max(1440) syncIntervalMinutes?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(1440) syncIntervalMinutes?: number;
 }
 class ToggleDto {
   @IsBoolean() enabled!: boolean;

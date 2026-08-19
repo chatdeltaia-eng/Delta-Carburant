@@ -968,6 +968,55 @@
 @media(max-width:700px){.notificationMenu{position:fixed;top:82px;right:14px;left:14px;width:auto}.pagination{align-items:stretch;flex-direction:column;padding:14px}.pageSizeControl,.pageButtons{justify-content:space-between}.pageSizeControl label{display:none}}
 @media(prefers-reduced-motion:reduce){.notificationMenu,.bell>span,.tableWrap tbody>tr{animation:none!important}.notificationMenu>button,.pageButtons button{transition:none}}
 
+/* Cockpit DG grand format : le flux Total devient la colonne vertébrale visuelle. */
+.content{max-width:1920px;padding-inline:clamp(24px,3vw,58px)}
+.reportShell{border-radius:28px}
+.reportLayout{grid-template-columns:minmax(0,1fr) 280px;gap:22px;padding:22px}
+.totalWorkflowSection{
+  position:relative;
+  margin:20px 0;
+  padding:clamp(22px,2vw,32px);
+  border:1px solid #cfe2d9;
+  border-radius:24px;
+  background:
+    radial-gradient(circle at 100% 0,rgba(47,119,218,.09),transparent 26rem),
+    radial-gradient(circle at 0 100%,rgba(16,174,141,.08),transparent 24rem),
+    rgba(255,255,255,.96);
+  box-shadow:0 20px 55px rgba(10,52,36,.10);
+  overflow:hidden;
+}
+.totalWorkflowSection:before{content:"";position:absolute;inset:0 0 auto;height:4px;background:linear-gradient(90deg,#08aa8f,#2f77da 55%,#7553c8)}
+.totalWorkflowSection .flowKpiHeading{align-items:center;margin-bottom:22px}
+.totalWorkflowSection .flowKpiHeading h3{font-size:clamp(21px,1.5vw,29px);letter-spacing:-.65px}
+.totalWorkflowSection .flowKpiHeading p{max-width:790px;margin-top:8px;color:#687c72;font-size:12px;line-height:1.6}
+.flowLiveStatus{display:flex!important;align-items:center;gap:8px;padding:9px 13px!important;border:1px solid #cce7dc;border-radius:999px!important;background:#effaf5!important;color:#10664e!important;box-shadow:0 5px 16px rgba(16,116,85,.08)}
+.flowLiveStatus i{width:8px;height:8px;border-radius:50%;background:#13ad7e;box-shadow:0 0 0 5px rgba(19,173,126,.12);animation:flowPulse 2s ease-out infinite}
+.totalWorkflowSteps{position:relative;display:grid;grid-template-columns:repeat(5,minmax(145px,1fr));gap:16px;margin:0 0 22px}
+.totalWorkflowSteps:before{content:"";position:absolute;z-index:0;top:31px;left:6%;right:6%;height:2px;background:linear-gradient(90deg,#10ab8e,#267fcc 70%,#7157c4)}
+.totalWorkflowSteps article{position:relative;z-index:1;display:grid;grid-template-columns:44px minmax(0,1fr);gap:12px;min-height:148px;padding:20px 18px;border:1px solid #d8e8e0;border-radius:18px;background:rgba(255,255,255,.98);box-shadow:0 10px 25px rgba(13,53,38,.07);transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease}
+.totalWorkflowSteps article:hover{transform:translateY(-4px);border-color:#9ecfbc;box-shadow:0 17px 35px rgba(13,53,38,.12)}
+.totalWorkflowSteps article>span{width:44px;height:44px;border-radius:13px;background:linear-gradient(145deg,#dff8ef,#e7f0ff);color:#087459;font-size:11px;box-shadow:inset 0 0 0 1px #caeadd}
+.totalWorkflowSteps article>div{align-self:center}
+.totalWorkflowSteps small{color:#71857b;font-size:9px;letter-spacing:.75px}
+.totalWorkflowSteps b{margin:8px 0 7px;color:#123b2d;font-size:clamp(17px,1.2vw,22px);letter-spacing:-.35px}
+.totalWorkflowSteps em{color:#7a8d83;font-size:9px;line-height:1.5}
+.totalWorkflowSteps article>i{position:absolute;right:-13px;top:22px;z-index:2;display:grid;place-items:center;width:26px;height:26px;border:2px solid #fff;border-radius:50%;background:#217eb9;color:#fff;font-size:12px;font-style:normal;font-weight:900;box-shadow:0 5px 12px rgba(23,91,131,.22)}
+.totalWorkflowSteps article:last-child>i{right:14px;background:#13a77f}
+.totalCompanyFlow{border:1px solid #d6e4dd;border-radius:16px;box-shadow:inset 0 1px #fff,0 8px 24px rgba(12,49,35,.05)}
+.totalCompanyFlow>div{grid-template-columns:100px repeat(4,minmax(82px,1fr)) minmax(100px,1fr) minmax(120px,1.2fr) minmax(190px,1.6fr);min-width:1020px}
+.totalCompanyFlow b,.totalCompanyFlow strong,.totalCompanyFlow span{padding:14px 12px;font-size:10px}
+.totalCompanyFlow>div:first-child{background:linear-gradient(100deg,#0b392a,#124b3a 70%,#173e5f)}
+.totalCompanyFlow>div:not(:first-child):hover{background:#f3faf7}
+.totalCompanyFlow strong{font-size:11px}
+.reportFilters{top:96px;width:100%;padding:22px;gap:17px;border-radius:20px}
+.reportFilters label{font-size:10px}.reportFilters select{min-height:44px;font-size:11px}
+@keyframes flowPulse{0%{box-shadow:0 0 0 0 rgba(19,173,126,.32)}70%{box-shadow:0 0 0 8px rgba(19,173,126,0)}100%{box-shadow:0 0 0 0 rgba(19,173,126,0)}}
+
+@media(max-width:1450px){.reportLayout{grid-template-columns:minmax(0,1fr) 245px}.totalWorkflowSteps{gap:10px}.totalWorkflowSteps article{grid-template-columns:36px 1fr;padding:16px 13px}.totalWorkflowSteps article>span{width:36px;height:36px}.totalWorkflowSteps article>i{display:none}}
+@media(max-width:1120px){.reportLayout{grid-template-columns:1fr}.reportFilters{position:static;display:grid;grid-template-columns:repeat(3,1fr)}.reportFilters .filterHeading,.reportFilters>button{grid-column:1/-1}.totalWorkflowSteps{display:flex;overflow-x:auto;padding:4px 3px 12px;scroll-snap-type:x mandatory}.totalWorkflowSteps:before{display:none}.totalWorkflowSteps article{flex:0 0 240px;scroll-snap-align:start}}
+@media(max-width:700px){.content{padding-inline:14px}.reportLayout{padding:10px}.totalWorkflowSection{padding:19px 15px;border-radius:18px}.totalWorkflowSection .flowKpiHeading{align-items:flex-start;flex-direction:column}.flowLiveStatus{white-space:normal!important}.reportFilters{grid-template-columns:1fr 1fr}.totalCompanyFlow b,.totalCompanyFlow strong,.totalCompanyFlow span{padding:12px 10px;font-size:9px}}
+@media(prefers-reduced-motion:reduce){.flowLiveStatus i{animation:none}.totalWorkflowSteps article{transition:none}}
+
 /* Navigation de production : barre supérieure lisible, complète et responsive. */
 .sidebar{
   position:sticky;

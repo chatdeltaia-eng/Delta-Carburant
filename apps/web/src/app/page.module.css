@@ -1636,3 +1636,108 @@
 .notificationTools{top:65px!important;background:linear-gradient(180deg,#0a2442 78%,rgba(10,36,66,0))!important}.notificationTools button{border-color:rgba(99,168,255,.24)!important;background:#102f54!important;color:#8cc8ff!important}.notificationTools button:hover:not(:disabled){border-color:#4b9de8!important;background:#174675!important;color:#fff!important}
 .notificationMenu>button{min-height:76px!important;margin:7px 0!important;padding:13px 14px 13px 20px!important;border-color:rgba(97,163,244,.2)!important;background:#0b2747!important;color:#dcecff!important}.notificationMenu>button:hover,.notificationMenu>button.unread{transform:translateX(-2px);border-color:rgba(88,169,255,.46)!important;background:#10365f!important;box-shadow:0 9px 24px rgba(0,0,0,.2)!important}.notificationMenu>button:before{background:#35658f!important}.notificationMenu>button.unread:before{background:linear-gradient(#55b3ff,#586ee8)!important}.notificationMenu>button b{color:#f0f7ff!important;font-size:12px!important}.notificationMenu>button span{display:block;color:#a9c1d9!important;font-size:10px!important;line-height:1.5}.notificationMenu>button small{color:#7293b3!important}.notificationMenu>button.unread b:after{background:#174c7c!important;color:#8dcbff!important}.notificationEmpty{color:#89a9c8}.notificationEmpty>svg{background:#123a63!important;color:#72baff!important}.notificationEmpty b{color:#eaf4ff!important}.notificationEmpty p{color:#89a9c8!important}
 @media(max-width:700px){.notificationMenu{top:68px!important;right:10px!important;left:10px!important;width:auto!important;max-height:calc(100dvh - 78px)!important}}
+
+/* Palette métier à contraste élevé — priorité à la lecture opérationnelle. */
+.app{
+  --ui-bg:#071629;
+  --ui-surface:#0e2a49;
+  --ui-surface-raised:#12375e;
+  --ui-border:#2f628f;
+  --ui-text:#f4f8fc;
+  --ui-muted:#b5c8db;
+  --ui-blue:#4ba8ff;
+  --ui-blue-strong:#1976d2;
+  --ui-danger:#ef4444;
+  --ui-danger-dark:#991b1b;
+  --ui-warning:#f59e0b;
+  --ui-success:#22c55e;
+  color:var(--ui-text);
+}
+.content header,.panel,.fullPanel,.overviewPanel,.portfolioCard,.settings article,
+.referenceConsumption,.referenceActivity,.referenceKpis article,.referenceBars,.referenceVehicles,
+.totalWorkflowSection,.dgAnalysisSection,.dgCompanySection{
+  border-color:var(--ui-border)!important;
+  box-shadow:0 14px 38px rgba(0,0,0,.24)!important;
+}
+.content h1,.content h2,.content h3,.panelHead h2,.toolbar b,.portfolioHead h3,
+.referenceVehicles header,.referenceBars header b,.overviewToolbar h2{color:#fff!important}
+.content p,.content small,.panelHead p,.overviewToolbar p,.portfolioHead p,
+.referenceVehicles small,.referenceBars small{color:var(--ui-muted)!important}
+
+/* Formulaires et filtres : fond distinct, libellés et focus très visibles. */
+.moduleFilters{border-color:#356a98!important;background:linear-gradient(100deg,#0d2d4f,#0a223e)!important}
+.moduleFilters label{color:#c9dbec!important}.moduleFilters>div b{color:#fff!important}
+.moduleFilters>div small{color:#9fb8d1!important}
+.moduleFilters input,.moduleFilters select,.toolbar input,.overviewToolbar input,
+.formGrid input,.formGrid select,.formGrid textarea,.reportFilters select{
+  border-color:#4b78a1!important;background:#f8fbff!important;color:#102a43!important;
+  color-scheme:light!important;box-shadow:inset 0 1px 2px rgba(7,22,41,.08)!important
+}
+.moduleFilters input:focus,.moduleFilters select:focus,.toolbar input:focus,.overviewToolbar input:focus,
+.formGrid input:focus,.formGrid select:focus,.formGrid textarea:focus{
+  outline:3px solid rgba(75,168,255,.32)!important;border-color:#4ba8ff!important
+}
+.moduleFilters button,.toolbar button,.smallBtn,.referenceIntroActions button{
+  border-color:#6bb7ff!important;background:linear-gradient(135deg,#1976d2,#1559a0)!important;color:#fff!important
+}
+.moduleFilters button:hover,.toolbar button:hover,.smallBtn:hover{background:#2589e8!important}
+
+/* Tableaux : contraste stable sur chaque module. */
+.tableWrap{background:#091f38!important}
+.tableWrap th{background:#16446f!important;color:#fff!important;border-bottom:2px solid #4ba8ff!important}
+.tableWrap td{color:#dce9f5!important;border-color:#244d72!important}
+.tableWrap td b{color:#fff!important}.tableWrap td small{color:#a9c1d8!important}
+.tableWrap tbody>tr:nth-child(even):not(.allocationRow)>td{background:#0d2948!important}
+.tableWrap tbody>tr:hover:not(.allocationRow)>td{background:#153b62!important}
+
+/* Cartes plafonnées : rouge pour tous les rôles, sans ambiguïté. */
+.tableWrap tbody>tr.limitReachedRow>td{
+  background:linear-gradient(90deg,rgba(127,29,29,.96),rgba(69,24,35,.94))!important;
+  border-block-color:#ef4444!important;color:#fff!important
+}
+.tableWrap tbody>tr.limitReachedRow>td:first-child{box-shadow:inset 5px 0 #ff5a5a!important}
+.tableWrap tbody>tr.limitReachedRow:hover>td{background:#7f1d2d!important}
+.limitReachedRow td b,.limitReachedRow td small{color:#fff!important}
+.tableWrap tbody>tr.limitWarningRow>td{background:linear-gradient(90deg,rgba(120,69,10,.78),rgba(70,47,22,.7))!important}
+.tableWrap tbody>tr.limitWarningRow>td:first-child{box-shadow:inset 5px 0 #f59e0b!important}
+.consumptionReached .consumptionTrack span,.dgCritical i em,.usage_danger{background:#ef4444!important}
+.consumptionWarning .consumptionTrack span,.dgWarning i em,.usage_warning{background:#f59e0b!important}
+.limitWarningBadge{border:1px solid #ffce73!important;background:#fff7e6!important;color:#7c3f00!important;font-weight:850!important}
+.consumptionReached .limitWarningBadge{border-color:#ff8b8b!important;background:#fff0f0!important;color:#991b1b!important}
+.limitWarningBadge i{background:currentColor!important;color:#fff!important}
+
+/* Alertes et anomalies : icône et signal rouge; avertissements en ambre. */
+.alert{border:1px solid #ff7070!important;background:linear-gradient(110deg,#5f1724,#351626)!important;color:#fff!important;box-shadow:0 10px 30px rgba(239,68,68,.22)!important}
+.alert:before{background:#ef4444!important;box-shadow:0 0 0 5px rgba(239,68,68,.2)!important}
+.reference_danger{border-color:#ef5b5b!important;background:linear-gradient(145deg,#5f1d2a,#30192b)!important}
+.reference_danger>span,.activityDanger i{background:#ef4444!important;color:#fff!important}
+.reference_danger strong,.activityDanger b,.riskPanel b{color:#ff8c8c!important}
+.activityDanger{border-color:rgba(239,68,68,.55)!important;background:#421b2a!important}
+.riskPanel>div{border-left-color:#ef4444!important;background:#431b27!important}
+.reference_warning{border-color:#d89416!important;background:linear-gradient(145deg,#594019,#31281e)!important}
+.reference_warning>span,.activityWarning i{background:#f59e0b!important;color:#241500!important}
+.reference_warning strong,.activityWarning b{color:#ffd073!important}
+.activityWarning{border-color:rgba(245,158,11,.5)!important;background:#3d3020!important}
+.appIcon[aria-label*="alert" i],.dangerBtn svg{color:#ff6565!important}
+
+/* Statuts : couleurs sémantiques lisibles. */
+.badge{border:1px solid #4f7598!important;background:#173b5f!important;color:#ddebfa!important}
+.badge.active,.badge.distributed,.badge.assigned,.finance_confirmed,.documentAuthorized{
+  border-color:#34d178!important;background:#123f35!important;color:#80f0af!important
+}
+.badge.suspended,.badge.opposed,.badge.lost,.badge.stolen,.badge.replaced{
+  border-color:#ef5a5a!important;background:#531d2b!important;color:#ff9b9b!important
+}
+.badge.to_assign,.finance_pending,.documentPending,.waitingStatus{
+  border-color:#e6a429!important;background:#4b351b!important;color:#ffd277!important
+}
+.notificationMenu>button.unread:before{background:#4ba8ff!important}
+.notificationMenu>button b{color:#fff!important}.notificationMenu>button span{color:#c2d4e5!important}
+.topbarBell i,.bell>span{background:#ef4444!important;color:#fff!important}
+.topbarTools>button svg,.sideBottom button svg{stroke-width:2.2;color:#d7eaff!important}
+.sideBottom button:last-child,.sideBottom button:last-child svg{color:#ff8585!important}
+
+@media(max-width:700px){
+  .tableWrap{border:1px solid #315f8a;border-radius:12px}
+  .moduleFilters{gap:10px}.moduleFilters input,.moduleFilters select{font-size:12px}
+}

@@ -2881,7 +2881,7 @@ function ComplaintsView({token,user,rows,refresh,notify}:{token:string;user:User
  return <section className={styles.fullPanel}><div className={styles.importNotice}><b>Canal interne officiel</b><span>Najib, Zin et la DG peuvent ouvrir une réclamation, répondre, suivre son traitement et conserver la résolution dans l’historique.</span></div><Toolbar search={query} setSearch={setQuery} count={filteredRows.length} button="Nouvelle réclamation" click={create}/><div className={styles.moduleFilters}><div><AppIcon name="search" size={17}/><span><b>Filtres des réclamations</b><small>Statut et priorité</small></span></div><label>Statut<select value={complaintStatus} onChange={event=>setComplaintStatus(event.target.value)}><option>Tous</option>{complaintStatuses.map(value=><option key={value}>{value}</option>)}</select></label><label>Priorité<select value={priority} onChange={event=>setPriority(event.target.value)}><option>Toutes</option>{priorities.map(value=><option key={value}>{value}</option>)}</select></label><button type="button" onClick={()=>{setQuery("");setComplaintStatus("Tous");setPriority("Toutes")}}>Réinitialiser</button></div><div className={styles.tableWrap}><table><thead><tr>{["N°","Date","Créateur","Destinataire","Objet","Priorité","Statut","Résolution","Action"].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{filteredRows.map(row=><tr key={row.id}><td>{row.numero}</td><td>{row.date}</td><td>{row.createur}</td><td>{roleName[String(row.destinataire)]??row.destinataire}</td><td><b>{row.objet}</b><br/><small>{row.description}</small></td><td>{row.priorite}</td><td>{row.statut}</td><td>{row.resolution}</td><td><button className={styles.smallBtn} onClick={()=>respond(row)}>Répondre</button>{!['RESOLVED','CLOSED'].includes(String(row.statut))&&<><br/><button className={styles.smallBtn} onClick={()=>resolve(row)}>Résoudre</button></>}</td></tr>)}</tbody></table></div></section>;
 }
 function CardReturnsView({token,user,cards,requests,receipts,decide,refresh,notify}:{token:string;user:User;cards:Card[];requests:Row[];receipts:Row[];decide:(id:string,accepted:boolean)=>void|Promise<void>;refresh:()=>void;notify:(message:string)=>void}){
- const [clock,setClock]=useState(Date.now());
+ const [clock,setClock]=useState(0);
  useEffect(()=>{const timer=window.setInterval(()=>setClock(Date.now()),1000);return()=>window.clearInterval(timer);},[]);
  const currentMonthKey=new Date().toISOString().slice(0,7);
  // Toute carte distribuée doit revenir au coffre une fois par mois, quel que
@@ -3498,6 +3498,7 @@ function CardTable({
               const allocated = allocations.reduce((sum, item) => sum + item.amount, 0);
               const rate = cardRate(c);
               const isNajibLimitWarning = user.role === "NAJIB_ASSIGNER" && rate >= 60;
+              const isLimitWarning = rate >= 80 && rate < 100;
               const isLimitReached = rate >= 100;
               const previous = c.old_card_id ? cards.find((item) => item.id === c.old_card_id) : undefined;
               const previousConsumed = Number(previous?.consumed_amount ?? 0);
@@ -3505,7 +3506,7 @@ function CardTable({
               const locked = Boolean(c.activation_locked && previousRate < 100);
               return (
               <Fragment key={c.id}>
-              <tr className={isNajibLimitWarning ? (isLimitReached ? styles.limitReachedRow : styles.limitWarningRow) : undefined}>
+              <tr className={isLimitReached ? styles.limitReachedRow : isLimitWarning ? styles.limitWarningRow : undefined}>
                 <td>
                   <b>{c.masked_card_number}</b>
                   <small>
@@ -3530,7 +3531,7 @@ function CardTable({
                       : "—"}
                 </td>
                 <td>
-                  <div className={`${styles.consumptionCell} ${isNajibLimitWarning ? styles.consumptionWarning : ""} ${isLimitReached ? styles.consumptionReached : ""}`}>
+                  <div className={`${styles.consumptionCell} ${isLimitWarning || isNajibLimitWarning ? styles.consumptionWarning : ""} ${isLimitReached ? styles.consumptionReached : ""}`}>
                     <div className={styles.consumptionTopline}>
                       <b>Plafond : {c.monthly_limit.toLocaleString("fr-FR")} TND</b>
                       <strong>{rate}%</strong>
@@ -3550,10 +3551,10 @@ function CardTable({
                       {" · "}Solde : <b>{Math.max(0, c.monthly_limit-consumed).toLocaleString("fr-FR")} TND</b>
                       {" · "}Cumul : {totalConsumed.toLocaleString("fr-FR")} TND
                     </small>
-                    {isNajibLimitWarning && (
+                    {(isLimitReached || isLimitWarning || isNajibLimitWarning) && (
                       <span className={styles.limitWarningBadge}>
                         <i aria-hidden="true">!</i>
-                        {isLimitReached ? "Plafond atteint — carte à clôturer" : "Seuil 60 % dépassé — clôture prochaine"}
+                        {isLimitReached ? "Plafond atteint — action immédiate" : isNajibLimitWarning && rate < 80 ? "Seuil 60 % dépassé — clôture prochaine" : "Seuil d’alerte 80 % dépassé"}
                       </span>
                     )}
                   </div>

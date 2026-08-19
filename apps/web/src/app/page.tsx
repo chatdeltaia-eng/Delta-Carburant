@@ -2867,10 +2867,16 @@ function printOfficialDocument(title:string,body:string){
 }
 const documentText=(value:unknown)=>String(value??"—").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]??char));
 function ComplaintsView({token,user,rows,refresh,notify}:{token:string;user:User;rows:Row[];refresh:()=>void;notify:(message:string)=>void}){
+ const [query,setQuery]=useState("");
+ const [complaintStatus,setComplaintStatus]=useState("Tous");
+ const [priority,setPriority]=useState("Toutes");
+ const complaintStatuses=[...new Set(rows.map(row=>String(row.statut??"")).filter(Boolean))].sort();
+ const priorities=[...new Set(rows.map(row=>String(row.priorite??"")).filter(Boolean))].sort();
+ const filteredRows=rows.filter(row=>(complaintStatus==="Tous"||String(row.statut)===complaintStatus)&&(priority==="Toutes"||String(row.priorite)===priority)&&Object.values(row).join(" ").toLowerCase().includes(query.toLowerCase()));
  const create=async()=>{const subject=window.prompt("Objet de la réclamation");if(!subject)return;const description=window.prompt("Description détaillée");if(!description)return;const available=["NAJIB_ASSIGNER","ZIN_FINANCE","DIRECTION_GENERAL"].filter(role=>role!==user.role);const targetRole=window.prompt(`Destinataire : ${available.join(" / ")}`,available[0]);if(!targetRole||!available.includes(targetRole))return notify("Destinataire invalide");const priority=window.prompt("Priorité : NORMAL / HIGH / URGENT","NORMAL")?.toUpperCase();if(!priority||!["NORMAL","HIGH","URGENT"].includes(priority))return notify("Priorité invalide");const response=await fetch(`${API}/complaints`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({subject,description,targetRole,priority})});if(!response.ok)return notify("La réclamation n’a pas été enregistrée");notify("Réclamation transmise");refresh();};
  const respond=async(row:Row)=>{const message=window.prompt(`Réponse à ${row.numero}`);if(!message)return;const response=await fetch(`${API}/complaints/${row.id}/messages`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({message})});if(!response.ok)return notify("Réponse non enregistrée");refresh();};
  const resolve=async(row:Row)=>{const resolution=window.prompt("Solution apportée à la réclamation");if(!resolution)return;const response=await fetch(`${API}/complaints/${row.id}/status`,{method:"PATCH",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({status:"RESOLVED",resolution})});if(!response.ok)return notify("Clôture impossible");notify("Réclamation résolue");refresh();};
- return <section className={styles.fullPanel}><div className={styles.importNotice}><b>Canal interne officiel</b><span>Najib, Zin et la DG peuvent ouvrir une réclamation, répondre, suivre son traitement et conserver la résolution dans l’historique.</span></div><Toolbar search="" setSearch={()=>{}} count={rows.length} button="Nouvelle réclamation" click={create}/><div className={styles.tableWrap}><table><thead><tr>{["N°","Date","Créateur","Destinataire","Objet","Priorité","Statut","Résolution","Action"].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.id}><td>{row.numero}</td><td>{row.date}</td><td>{row.createur}</td><td>{roleName[String(row.destinataire)]??row.destinataire}</td><td><b>{row.objet}</b><br/><small>{row.description}</small></td><td>{row.priorite}</td><td>{row.statut}</td><td>{row.resolution}</td><td><button className={styles.smallBtn} onClick={()=>respond(row)}>Répondre</button>{!['RESOLVED','CLOSED'].includes(String(row.statut))&&<><br/><button className={styles.smallBtn} onClick={()=>resolve(row)}>Résoudre</button></>}</td></tr>)}</tbody></table></div></section>;
+ return <section className={styles.fullPanel}><div className={styles.importNotice}><b>Canal interne officiel</b><span>Najib, Zin et la DG peuvent ouvrir une réclamation, répondre, suivre son traitement et conserver la résolution dans l’historique.</span></div><Toolbar search={query} setSearch={setQuery} count={filteredRows.length} button="Nouvelle réclamation" click={create}/><div className={styles.moduleFilters}><div><AppIcon name="search" size={17}/><span><b>Filtres des réclamations</b><small>Statut et priorité</small></span></div><label>Statut<select value={complaintStatus} onChange={event=>setComplaintStatus(event.target.value)}><option>Tous</option>{complaintStatuses.map(value=><option key={value}>{value}</option>)}</select></label><label>Priorité<select value={priority} onChange={event=>setPriority(event.target.value)}><option>Toutes</option>{priorities.map(value=><option key={value}>{value}</option>)}</select></label><button type="button" onClick={()=>{setQuery("");setComplaintStatus("Tous");setPriority("Toutes")}}>Réinitialiser</button></div><div className={styles.tableWrap}><table><thead><tr>{["N°","Date","Créateur","Destinataire","Objet","Priorité","Statut","Résolution","Action"].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{filteredRows.map(row=><tr key={row.id}><td>{row.numero}</td><td>{row.date}</td><td>{row.createur}</td><td>{roleName[String(row.destinataire)]??row.destinataire}</td><td><b>{row.objet}</b><br/><small>{row.description}</small></td><td>{row.priorite}</td><td>{row.statut}</td><td>{row.resolution}</td><td><button className={styles.smallBtn} onClick={()=>respond(row)}>Répondre</button>{!['RESOLVED','CLOSED'].includes(String(row.statut))&&<><br/><button className={styles.smallBtn} onClick={()=>resolve(row)}>Résoudre</button></>}</td></tr>)}</tbody></table></div></section>;
 }
 function CardReturnsView({token,user,cards,requests,receipts,decide,refresh,notify}:{token:string;user:User;cards:Card[];requests:Row[];receipts:Row[];decide:(id:string,accepted:boolean)=>void|Promise<void>;refresh:()=>void;notify:(message:string)=>void}){
  const [clock,setClock]=useState(Date.now());
@@ -2951,6 +2957,9 @@ function DataView({
   observeTransaction: (row: Row) => void;
 }) {
   const [selectedCompany,setSelectedCompany]=useState("Toutes");
+  const [selectedStatus,setSelectedStatus]=useState("Tous");
+  const [dateFrom,setDateFrom]=useState("");
+  const [dateTo,setDateTo]=useState("");
   const [page,setPage]=useState(1);
   const [pageSize,setPageSize]=useState(10);
   const config: Record<
@@ -3040,8 +3049,11 @@ function DataView({
         ? cards
         : cards;
     const companyChoices=[...new Set(visibleCards.map(x=>x.company_code).filter(Boolean))];
+    const statusChoices=[...new Set(visibleCards.map(x=>status(x.status)).filter(Boolean))].sort();
     const filtered = visibleCards.filter((x) =>
-      (selectedCompany==="Toutes"||x.company_code===selectedCompany)&&Object.values(x).join(" ").toLowerCase().includes(search.toLowerCase()),
+      (selectedCompany==="Toutes"||x.company_code===selectedCompany)&&
+      (selectedStatus==="Tous"||status(x.status)===selectedStatus)&&
+      Object.values(x).join(" ").toLowerCase().includes(search.toLowerCase()),
     );
     return (
       <section className={styles.fullPanel}>
@@ -3052,7 +3064,7 @@ function DataView({
           button={canCreate(user.role) ? c.button : ""}
           click={() => open("card")}
         />
-        {canManage(user.role)&&<label className={styles.companyFilter}>Société <select value={selectedCompany} onChange={event=>setSelectedCompany(event.target.value)}><option>Toutes</option>{companyChoices.map(company=><option key={company}>{company}</option>)}</select></label>}
+        <div className={styles.moduleFilters}><div><AppIcon name="search" size={17}/><span><b>Filtres des cartes</b><small>Affinez le portefeuille affiché</small></span></div><label>Société<select value={selectedCompany} onChange={event=>setSelectedCompany(event.target.value)}><option>Toutes</option>{companyChoices.map(company=><option key={company}>{company}</option>)}</select></label><label>Statut<select value={selectedStatus} onChange={event=>setSelectedStatus(event.target.value)}><option>Tous</option>{statusChoices.map(value=><option key={value}>{value}</option>)}</select></label><button type="button" onClick={()=>{setSelectedCompany("Toutes");setSelectedStatus("Tous");setSearch("")}}>Réinitialiser</button></div>
         <CardTable key={`${search}-${selectedCompany}`} cards={filtered} transactions={data.transactions} full user={user} edit={edit} />
       </section>
     );
@@ -3102,9 +3114,15 @@ function DataView({
       typeCarte: card?.card_category === "OFF_PARK" ? "Hors parc" : "Personnalisée", reparti: `${allocated.toFixed(3)} DT`, detailRepartition: row.repartition || "Non répartie" };
   });
   const sourceRows = view === "beneficiaries" ? beneficiaryRows : view === "vehicles" ? vehicleRows : view === "transactions" ? transactionRows : (data[view] ?? []);
-  const companyChoices=[...new Set((view==="vehicles"?vehicleRows:cards.map(card=>({societe:card.company_code}))).map(row=>String(row.societe??"")).filter(Boolean))];
+  const companyChoices=[...new Set(sourceRows.map(row=>String(row.societe??row.company??row.companyCode??"")).filter(value=>value&&value!=="—"))].sort();
+  const statusChoices=[...new Set(sourceRows.map(row=>String(row.statut??row.status??"")).filter(value=>value&&value!=="—"))].sort();
+  const rowDate=(row:Row)=>String(row.date??row.dateDemande??row.semaine??row.createdAt??"");
+  const rowTimestamp=(row:Row)=>{const raw=rowDate(row);const french=raw.match(/^(\d{2})\/(\d{2})\/(\d{4})/);return french?new Date(`${french[3]}-${french[2]}-${french[1]}T12:00:00`).getTime():new Date(raw).getTime()};
   const rows = sourceRows.filter((x) =>
-    (view!=="vehicles"||selectedCompany==="Toutes"||String(x.societe)===selectedCompany)&&
+    (selectedCompany==="Toutes"||String(x.societe??x.company??x.companyCode??"")===selectedCompany)&&
+    (selectedStatus==="Tous"||String(x.statut??x.status??"")===selectedStatus)&&
+    (!dateFrom||!rowDate(x)||rowTimestamp(x)>=new Date(`${dateFrom}T00:00:00`).getTime())&&
+    (!dateTo||!rowDate(x)||rowTimestamp(x)<=new Date(`${dateTo}T23:59:59`).getTime())&&
     Object.values(x).join(" ").toLowerCase().includes(search.toLowerCase()),
   );
   const pageCount=Math.max(1,Math.ceil(rows.length/pageSize));
@@ -3189,7 +3207,14 @@ function DataView({
         button={button}
         click={() => (c.modal ? open(c.modal) : download(rows, view))}
       />
-      {view==="vehicles"&&canManageFleet(user.role)&&<label className={styles.companyFilter}>Société <select value={selectedCompany} onChange={event=>{setSelectedCompany(event.target.value);setPage(1)}}><option>Toutes</option>{companyChoices.map(company=><option key={company}>{company}</option>)}</select></label>}
+      <div className={styles.moduleFilters}>
+        <div><AppIcon name="search" size={17}/><span><b>Filtres du module</b><small>Société, statut et période</small></span></div>
+        <label>Société<select value={selectedCompany} onChange={event=>{setSelectedCompany(event.target.value);setPage(1)}}><option>Toutes</option>{companyChoices.map(company=><option key={company}>{company}</option>)}</select></label>
+        <label>Statut<select value={selectedStatus} onChange={event=>{setSelectedStatus(event.target.value);setPage(1)}}><option>Tous</option>{statusChoices.map(value=><option key={value}>{value}</option>)}</select></label>
+        <label>Du<input type="date" value={dateFrom} onChange={event=>{setDateFrom(event.target.value);setPage(1)}}/></label>
+        <label>Au<input type="date" value={dateTo} onChange={event=>{setDateTo(event.target.value);setPage(1)}}/></label>
+        <button type="button" onClick={()=>{setSelectedCompany("Toutes");setSelectedStatus("Tous");setDateFrom("");setDateTo("");setSearch("");setPage(1)}}>Réinitialiser</button>
+      </div>
       {view === "transactions" && canManage(user.role) && rows.length > 0 && (
         <div className={styles.bulkBar}>
           <span>{rows.length} transaction(s)</span>

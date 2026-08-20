@@ -69,8 +69,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async autoStart() {
     if (!['IDLE', 'FAILED'].includes(this.statusValue.state)) return;
     if (!process.env.TOTAL_USERNAME?.trim() || !process.env.TOTAL_PASSWORD) return;
-    const [connection] = await this.db.query<{ enabled: boolean }>(
-      `SELECT enabled FROM total_mobility_connection WHERE enabled LIMIT 1`,
+    const [connection] = await this.db.query<{ enabled: boolean; company_id: string | null }>(
+      `SELECT t.enabled,
+        (SELECT c.id FROM company c WHERE c.active AND upper(c.code)='DC' LIMIT 1) company_id
+       FROM total_mobility_connection t WHERE t.enabled LIMIT 1`,
     );
     if (!connection) return;
     const [user] = await this.db.query<{ id: string; email: string }>(
@@ -81,7 +83,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     if (!user) return;
     try {
       this.logger.log('Redémarrage automatique de l’agent Total Mobility');
-      this.start({ sub: user.id, email: user.email });
+      // Sans action humaine, le compte configuré correspond à DELTA CUISINE.
+      // Ne jamais lancer implicitement un mélange des quatre clients.
+      this.start({ sub: user.id, email: user.email }, connection.company_id??undefined);
     } catch (error) {
       this.logger.warn(`Agent Total non redémarré : ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -92,6 +96,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   }
 
   start(actor: Actor, companyId?: string) {
+    // Une sélection effectuée dans Delta doit prendre effet même si le
+    // watchdog avait déjà démarré un cycle. L'ancien code retournait avant
+    // d'enregistrer companyId et poursuivait les quatre clients.
+    if(companyId)this.requestedCompanyId=companyId;
     if (
       ['STARTING', 'SIGNING_IN', 'CODE_REQUIRED', 'EXTRACTING'].includes(
         this.statusValue.state,
@@ -793,11 +801,17 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     }catch(error){
       results.push({client:'DELTA CUISINE',error:error instanceof Error?error.message:String(error)});
     }
+    // Si l'utilisateur a choisi une société pendant ce cycle automatique,
+    // arrêter immédiatement le parcours groupe et honorer ce périmètre seul.
+    if(this.requestedCompanyId)
+      return [await this.extractSelectedCompany(this.requestedCompanyId)];
     // Ne pas déduire les noms depuis tous les labels Quasar : leurs icônes
     // Material (« arrow_drop_down », etc.) sont aussi exposées comme du texte
     // et seraient prises à tort pour des clients.
     const names=knownClients.filter(name=>name!=='DELTA CUISINE');
     for(const name of names){
+      if(this.requestedCompanyId)
+        return [await this.extractSelectedCompany(this.requestedCompanyId)];
       await this.openTotalCustomerSelection();
       const selected=await this.selectTotalClientByName(name);
       if(!selected){results.push({client:name,error:'Client non sélectionnable'});continue;}
@@ -924,9 +938,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     page.on('response',listener);
     try{
       let opened=false;
+      let transactionUrl='https://customer.fleet.totalenergies.com/tn/transactions/online-transactions';
       for(const frame of page.frames()){
         const link=frame.locator('a[href*="/transactions/online-transactions"]').filter({visible:true}).first();
         if(await link.isVisible({timeout:600}).catch(()=>false)){
+          const href=await link.getAttribute('href').catch(()=>null);
+          if(href)transactionUrl=new URL(href,page.url()).toString();
           // Le tiroir Quasar peut recouvrir brièvement le lien avec son
           // backdrop. Le lien est pourtant déjà visible et stable : un clic
           // forcé reproduit ici le choix humain sans attendre 30 secondes.
@@ -935,17 +952,23 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         }
       }
       if(!opened){
-        // Conserver l'état SPA contenant le client sélectionné. Un page.goto
-        // rechargeait l'application et revenait à customer-selection.
-        await page.evaluate(()=>{
-          history.pushState({},'', '/tn/transactions/online-transactions');
-          window.dispatchEvent(new PopStateEvent('popstate'));
-        });
+        await page.evaluate(url=>window.location.assign(url),transactionUrl);
       }
-      await this.waitForTotalRoute(
-        url=>/\/tn\/transactions\/online-transactions/i.test(url.pathname),
-        `ouverture des transactions de ${clientName}`,
-      );
+      try{
+        await this.waitForTotalRoute(
+          url=>/\/tn\/transactions\/online-transactions/i.test(url.pathname),
+          `ouverture SPA des transactions de ${clientName}`,8_000,
+        );
+      }catch{
+        // Certaines versions Quasar absorbent le clic du lien et restent sur
+        // /dashboard. Une navigation navigateur vers le href réel conserve
+        // les cookies/session et garantit l'ouverture du module demandé.
+        await page.evaluate(url=>window.location.assign(url),transactionUrl);
+        await this.waitForTotalRoute(
+          url=>/\/tn\/transactions\/online-transactions/i.test(url.pathname),
+          `ouverture des transactions de ${clientName}`,
+        );
+      }
       if(/customer-selection/i.test(page.url()))
         throw new Error(`Total a perdu le client ${clientName} avant l'ouverture des transactions`);
       await page.waitForTimeout(2_000);

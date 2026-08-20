@@ -681,7 +681,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       : new Date(`${this.initialExtractionDate}T00:00:00+01:00`);
     if (Number.isNaN(from.getTime())) throw new Error('date de début invalide');
     let complete = false;
-    let requestId = '';
+    const pageSignatures=new Set<string>();
     for (let page = 0; page < 100; page++) {
       const correlation = randomUUID(),
         payload: Record<string, unknown> = {
@@ -704,17 +704,17 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           LanguageId: 'b25a7eda-f295-11e2-a0ca-000c2976e124',
           Locale: '',
           NameOnCard: '',
-          // Total creates a fresh report snapshot on the first page, then
-          // expects its RequestId back for every following page. Reusing an
-          // empty/old search can return the previous transaction snapshot.
-          NewSearch: page === 0,
+          // Le rapport en ligne pagine directement avec StartIndex. Demander
+          // NewSearch ou réinjecter le RequestId de la première réponse fige
+          // le snapshot et répète les 100 premières lignes.
+          NewSearch: false,
           NodeNumber: '',
           NodeTypeNumber: 10,
           PageSize: 100,
           PartnerId: '0',
           PhantomCardNumber: '',
           ReportType: 4,
-          RequestId: requestId,
+          RequestId: '',
           SendEmail: false,
           SiteNumber: config.site_number,
           SortExpression: '',
@@ -749,8 +749,16 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       });
       if (!response.ok) throw new Error(`API Total ${response.status}`);
       const json: unknown = await response.json();
-      if (page === 0) requestId = this.findStringProperty(json, 'RequestId');
       const pageRows = this.findTransactions(json);
+      if(pageRows.length){
+        const signature=pageRows.map(row=>[
+          row.approvalNumber??row.authorisationCode,row.transactionDate,
+          row.transactionTime,row.cardNumber,row.totalAmount??row.transactedAmount,
+        ].join('|')).join('\n');
+        if(pageSignatures.has(signature))
+          throw new Error(`pagination Total répétée à partir de la ligne ${page*100+1} : données existantes conservées`);
+        pageSignatures.add(signature);
+      }
       results.push(...pageRows);
       if (pageRows.length < 100) { complete = true; break; }
     }

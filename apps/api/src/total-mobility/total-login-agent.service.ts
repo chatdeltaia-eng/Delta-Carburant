@@ -42,6 +42,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private requestedCompanyId?: string;
   private activeClientName?: string;
   private refreshToken?: string;
+  private accessToken?: string;
   private liveTimer?: NodeJS.Timeout;
   private watchdogTimer?: NodeJS.Timeout;
   private lastCardDiagnostic='';
@@ -117,6 +118,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     this.requestedCompanyId = companyId;
     this.activeClientName = undefined;
     this.refreshToken = undefined;
+    this.accessToken = undefined;
     this.setStatus('STARTING', companyId
       ? 'Démarrage de l’agent pour le client sélectionné…'
       : 'Démarrage sécurisé de l’agent Total…');
@@ -223,13 +225,13 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async awaitAuthenticated() {
     const page = this.page;
     if (!page) throw new Error('Le navigateur Total a été fermé');
-    const deadline = Date.now() + 90_000;
+    const deadline = Date.now() + 180_000;
     while (Date.now() < deadline) {
       // La réponse OAuth contenant le refresh_token arrive avant que la SPA
       // Total ait terminé sa redirection de callback. Démarrer finish() à ce
       // moment laisse le navigateur sur /oauth2?code=… et toute ouverture de
       // Transactions expire. Attendre une vraie route applicative Total.
-      if (this.refreshToken) {
+      if (this.refreshToken||this.accessToken) {
         const currentUrl=page.url();
         let portalReady=false;
         try{
@@ -237,7 +239,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           portalReady=parsed.hostname==='customer.fleet.totalenergies.com'&&
             !/\/oauth2(?:[/?#]|$)|\/login(?:[/?#]|$)/i.test(parsed.pathname);
         }catch{/* navigation OAuth transitoire */}
-        if(portalReady)return this.finish(this.refreshToken);
+        if(portalReady)return this.finish(this.refreshToken,this.accessToken);
       }
       const body = (
         await page
@@ -265,7 +267,18 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         throw new Error('Total a refusé l’identifiant ou le mot de passe');
       await page.waitForTimeout(750);
     }
-    throw new Error('Total n’a pas terminé la connexion dans le délai prévu');
+    // Sur Render, le callback OAuth peut rester affiché alors que les jetons
+    // et cookies sont déjà valides. Tenter une seule reprise contrôlée vers le
+    // portail avant de déclarer l'authentification en échec.
+    if(this.refreshToken||this.accessToken){
+      await page.goto('https://customer.fleet.totalenergies.com/tn/customer-selection',{
+        waitUntil:'domcontentloaded',timeout:60_000,
+      }).catch(()=>undefined);
+      await page.waitForTimeout(3_000);
+      if(!/\/login(?:[/?#]|$)|access-?denied/i.test(page.url()))
+        return this.finish(this.refreshToken,this.accessToken);
+    }
+    throw new Error(`Total n’a pas terminé la connexion dans le délai prévu. Dernière page : ${page.url()}`);
   }
 
   private captureTokens(page: Page) {
@@ -276,13 +289,16 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         const token = json.refresh_token;
         if (typeof token === 'string' && token.length > 20)
           this.refreshToken = token;
+        const accessToken=json.access_token;
+        if(typeof accessToken==='string'&&accessToken.length>20)
+          this.accessToken=accessToken;
       } catch {
         /* La réponse observée n’est pas du JSON OAuth. */
       }
     });
   }
 
-  private async finish(refreshToken: string) {
+  private async finish(refreshToken?: string, accessToken?:string) {
     if (!this.actor || this.statusValue.state === 'EXTRACTING') return;
     this.setStatus(
       'EXTRACTING',
@@ -298,7 +314,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     // resélectionnait immédiatement, ce que Total refusait.
     if(!this.requestedCompanyId)await this.selectConfiguredClient();
     this.setStatus('EXTRACTING', 'Client Total sélectionné. Extraction des transactions…');
-    await this.total.reconnect(refreshToken, this.actor);
+    if(refreshToken)await this.total.reconnect(refreshToken, this.actor);
+    else if(accessToken)await this.total.syncWithAccessToken(this.actor,accessToken,'2026-08-01');
+    else throw new Error('Total n’a fourni aucun jeton de session exploitable');
     this.setStatus('EXTRACTING', this.requestedCompanyId
       ? 'Extraction des transactions du client sélectionné…'
       : 'Extraction complète des transactions de tous les clients…');

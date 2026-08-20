@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import nodemailer, { Transporter } from 'nodemailer';
+import { setDefaultResultOrder } from 'node:dns';
 
 @Injectable()
 export class MailingService {
@@ -7,6 +8,10 @@ export class MailingService {
   private readonly transporter: Transporter | null;
 
   constructor() {
+    // Render ne fournit pas toujours de route IPv6 sortante alors que Gmail
+    // publie des adresses AAAA. Préférer IPv4 évite ENETUNREACH sans désactiver
+    // les alertes opérationnelles.
+    setDefaultResultOrder('ipv4first');
     const host = process.env.SMTP_HOST?.trim();
     const user = process.env.SMTP_USER?.trim();
     const pass = process.env.SMTP_PASSWORD?.trim();

@@ -811,16 +811,42 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       );
     }
     await page.waitForTimeout(1_500);
+    const waitForManageCardsReady=async()=>{
+      const deadline=Date.now()+20_000;
+      while(Date.now()<deadline){
+        if(/\/cards\/manage-card/i.test(page.url()))return true;
+        for(const currentFrame of page.frames()){
+          // Sur la version actuelle du portail tunisien, « Gérer » charge le
+          // composant de recherche dans /tn/cards sans changer l'URL. La route
+          // /manage-card n'est donc plus un critère obligatoire.
+          const manageUi=currentFrame.locator([
+            'button:has-text("Recherche")',
+            'table tbody tr',
+            '[role="table"] [role="row"]',
+            'input[placeholder*="carte" i]',
+            'input[placeholder*="paiement" i]',
+          ].join(',')).filter({visible:true}).first();
+          if(await manageUi.isVisible({timeout:250}).catch(()=>false))return true;
+          const activeManage=currentFrame.locator('.q-tab--active, [aria-selected="true"], .active')
+            .filter({hasText:/^\s*Gérer\s*$/i}).first();
+          if(await activeManage.isVisible({timeout:250}).catch(()=>false))return true;
+        }
+        await page.waitForTimeout(300);
+      }
+      return false;
+    };
     for(const frame of page.frames()){
       const manageRoute=frame.locator('a[href*="manage-card" i], [routerlink*="manage-card" i]').filter({visible:true}).first();
       if(await manageRoute.isVisible({timeout:500}).catch(()=>false)){
         await manageRoute.click({force:true,timeout:3_000});
-        await this.waitForTotalRoute(url=>/\/cards\/manage-card/i.test(url.pathname),'ouverture de Gérer les cartes');return;
+        if(await waitForManageCardsReady())return;
+        throw new Error(`Délai dépassé pendant ouverture de Gérer les cartes. Dernière page Total : ${page.url()}`);
       }
       const manage=frame.getByText(/^\s*Gérer\s*$/i).filter({visible:true}).first();
       if(await manage.isVisible({timeout:800}).catch(()=>false)){
         await manage.click({force:true,timeout:3_000});
-        await this.waitForTotalRoute(url=>/\/cards\/manage-card/i.test(url.pathname),'ouverture de Gérer les cartes');return;
+        if(await waitForManageCardsReady())return;
+        throw new Error(`Délai dépassé pendant ouverture de Gérer les cartes. Dernière page Total : ${page.url()}`);
       }
     }
     // Ne jamais ouvrir /manage-card directement : Total renvoie alors vers

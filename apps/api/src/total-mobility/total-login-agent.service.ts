@@ -639,6 +639,16 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async openManageCardsFromMenu(){
     const page=this.page;if(!page)throw new Error('La session Total est indisponible');
     if(/\/cards\/manage-card/i.test(page.url()))return;
+    // Le date-picker Transactions laisse parfois dans le DOM un q-dialog
+    // aria-hidden="true" dont le backdrop continue pourtant à intercepter les
+    // clics. Neutraliser uniquement ces dialogues déjà fermés.
+    for(const frame of page.frames())await frame.evaluate(()=>{
+      for(const dialog of document.querySelectorAll<HTMLElement>('.q-dialog[aria-hidden="true"]')){
+        dialog.style.pointerEvents='none';
+        for(const backdrop of dialog.querySelectorAll<HTMLElement>('.q-dialog__backdrop'))
+          backdrop.style.pointerEvents='none';
+      }
+    }).catch(()=>undefined);
     // Toujours repartir du tableau de bord du client actif. Les pages métier
     // (notamment /drivers) n'affichent pas toutes le même bouton de menu.
     // On utilise le logo/lien d'accueil de la SPA, jamais une URL métier
@@ -647,7 +657,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       for(const frame of page.frames()){
         const home=frame.locator('a[href$="/tn"], a[href$="/tn/"], a[href*="/tn/dashboard"], [routerlink="/tn"], [routerlink*="dashboard" i]').filter({visible:true}).first();
         if(await home.isVisible({timeout:400}).catch(()=>false)){
-          await home.click({timeout:3_000}).catch(()=>undefined);break;
+          await home.click({force:true,timeout:3_000}).catch(()=>undefined);break;
         }
       }
       await page.waitForTimeout(1_500);
@@ -729,7 +739,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         :frame.getByText(paymentPattern).filter({visible:true}).first();
       if(await payment.isVisible({timeout:1_500}).catch(()=>false)){
         await payment.scrollIntoViewIfNeeded().catch(()=>undefined);
-        await payment.click({timeout:3_000});paymentOpened=true;break;
+        await payment.click({force:true,timeout:3_000});paymentOpened=true;break;
       }
 
       // En mode « mini », Total masque le libellé avec CSS et le q-item n'est
@@ -781,12 +791,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     for(const frame of page.frames()){
       const manageRoute=frame.locator('a[href*="manage-card" i], [routerlink*="manage-card" i]').filter({visible:true}).first();
       if(await manageRoute.isVisible({timeout:500}).catch(()=>false)){
-        await manageRoute.click({timeout:3_000});
+        await manageRoute.click({force:true,timeout:3_000});
         await page.waitForURL(/\/cards\/manage-card/i,{timeout:15_000});return;
       }
       const manage=frame.getByText(/^\s*Gérer\s*$/i).filter({visible:true}).first();
       if(await manage.isVisible({timeout:800}).catch(()=>false)){
-        await manage.click({timeout:3_000});
+        await manage.click({force:true,timeout:3_000});
         await page.waitForURL(/\/cards\/manage-card/i,{timeout:15_000});return;
       }
     }

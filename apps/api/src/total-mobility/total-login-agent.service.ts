@@ -288,6 +288,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     if(!this.actor||!this.page||['STARTING','SIGNING_IN','CODE_REQUIRED','EXTRACTING'].includes(this.statusValue.state))return;
     try{
       this.setStatus('EXTRACTING','Actualisation Total : transactions, kilométrages, chauffeurs et cartes…');
+      // La passe précédente se termine sur le dernier client. Revenir au
+      // client configuré avant chaque cycle empêche d'attribuer les données du
+      // dernier client à DELTA CUISINE lors de la prochaine extraction.
+      await this.selectConfiguredClient();
       const transactions=await this.total.syncNow(this.actor);
       const cards=await this.extractAllClientCards();
       this.statusValue={...this.status('SUCCESS','Données Total actualisées automatiquement'),result:{...transactions,clients:cards,live:true}};
@@ -759,9 +763,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     const page=this.page;if(!page||!this.actor)throw new Error('La session Total est indisponible pour les cartes');
     const knownClients=['DELTA CUISINE','IKIT TN','DELTA CUISINE DISTRIBUTION','STE LES TECHNIQUES DE MARBRE'];
     const results:unknown[]=[];
-    // Après l'extraction des chauffeurs, DELTA CUISINE est déjà le client
-    // actif. Extraire ses cartes avant d'ouvrir le sélecteur évite de tenter
-    // inutilement de resélectionner le client courant.
+    // Toujours repartir du client configuré : une passe précédente se termine
+    // sur STE LES TECHNIQUES DE MARBRE et le navigateur reste sur ce client.
+    await this.selectConfiguredClient();
     try{
       results.push(await this.extractCurrentClientData('DELTA CUISINE'));
     }catch(error){

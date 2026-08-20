@@ -104,6 +104,9 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
     private readonly transactions: TransactionsService,
   ) {}
   onModuleInit() {
+    // Le connecteur est désormais un miroir quasi temps réel : normaliser les
+    // anciennes configurations qui pouvaient encore attendre 15 à 120 min.
+    void this.db.query(`UPDATE total_mobility_connection SET sync_interval_minutes=1 WHERE sync_interval_minutes<>1`);
     this.timer = setInterval(() => void this.scheduledSync(), 60_000);
     this.timer.unref();
     setTimeout(() => void this.scheduledSync(), 15_000).unref();
@@ -406,7 +409,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         dto.userId?.trim() || null,
         dto.username?.trim() || null,
         this.encrypt(refreshToken),
-        dto.syncIntervalMinutes ?? 1,
+        1,
         actor.sub,
       ],
     );
@@ -417,14 +420,14 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         {
           customerNumber: dto.customerNumber,
           siteNumber: dto.siteNumber,
-          interval: dto.syncIntervalMinutes ?? 1,
+          interval: 1,
         },
       ],
     );
     return {
       connected: true,
       passwordStored: false,
-      syncIntervalMinutes: dto.syncIntervalMinutes ?? 1,
+      syncIntervalMinutes: 1,
     };
   }
   async reconnect(refreshTokenValue: string, actor: Actor) {
@@ -437,7 +440,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
     }
     const updated = await this.db.query<{ id: string }>(
       `UPDATE total_mobility_connection SET refresh_token_ciphertext=$1,enabled=true,last_error=null,
-       connected_by=$2,updated_at=now() RETURNING id`,
+       sync_interval_minutes=1,connected_by=$2,updated_at=now() RETURNING id`,
       [this.encrypt(refreshToken), actor.sub],
     );
     if (!updated[0])
@@ -467,7 +470,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       sub: string;
       email: string;
     }>(`SELECT c.connected_by AS sub,u.email FROM total_mobility_connection c JOIN app_user u ON u.id=c.connected_by
-      WHERE c.enabled AND (c.last_sync_at IS NULL OR c.last_sync_at<=now()-make_interval(mins=>c.sync_interval_minutes)) LIMIT 1`);
+      WHERE c.enabled AND (c.last_sync_at IS NULL OR c.last_sync_at<=now()-interval '1 minute') LIMIT 1`);
     if (due[0])
       try {
         await this.syncNow(due[0]);

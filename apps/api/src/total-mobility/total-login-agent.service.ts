@@ -985,23 +985,37 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       await page.waitForTimeout(2_000);
       const now=new Date();
       const pad=(value:number)=>String(value).padStart(2,'0');
-      const fromText=`01/${pad(now.getMonth()+1)}/${now.getFullYear()}`;
+      // Périmètre métier demandé : reprendre tout l'historique opérationnel
+      // depuis le 1er août 2026 à chaque cycle, jusqu'au jour présent.
+      // Total peut publier une transaction avec retard : une fenêtre glissante
+      // ferait alors disparaître définitivement cette ligne.
+      const extractionStart=process.env.TOTAL_EXTRACTION_START_DATE?.trim()||'2026-08-01';
+      const startMatch=extractionStart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if(!startMatch)throw new Error(`TOTAL_EXTRACTION_START_DATE invalide : ${extractionStart}`);
+      const fromText=`${startMatch[3]}/${startMatch[2]}/${startMatch[1]}`;
       const toText=`${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()}`;
       let datesFilled=false;
       for(const frame of page.frames()){
-        const dateInputs=frame.locator('input').filter({visible:true});
-        const indexes=await dateInputs.evaluateAll(elements=>elements.map((element,index)=>({index,value:(element as HTMLInputElement).value}))
-          .filter(item=>/^\d{2}\/\d{2}\/\d{4}$/.test(item.value)).map(item=>item.index)).catch(()=>[]);
-        if(indexes.length>=2){
-          await this.setTotalDateInput(dateInputs.nth(indexes[0]),fromText);
-          await this.setTotalDateInput(dateInputs.nth(indexes[1]),toText);
+        // Les mx-input sont souvent vides au premier rendu et toujours
+        // readonly. Les repérer par leur composant/nom plutôt que par leur
+        // valeur courante, qui était la cause de « filtres introuvables ».
+        const dateInputs=frame.locator(
+          '.mx-datepicker input.mx-input, input.mx-input[name="date"], input[name="date"][readonly]',
+        ).filter({visible:true});
+        if(await dateInputs.count()>=2){
+          await this.setTotalDateInput(dateInputs.first(),fromText);
+          await this.setTotalDateInput(dateInputs.nth(1),toText);
           datesFilled=true;break;
         }
       }
-      if(!datesFilled)throw new Error(`Filtres de dates introuvables pour ${clientName}`);
+      if(!datesFilled){
+        const inputs=await Promise.all(page.frames().map(frame=>frame.locator('input').filter({visible:true})
+          .evaluateAll(elements=>elements.map(element=>({name:element.getAttribute('name'),className:element.className,type:element.getAttribute('type'),value:(element as HTMLInputElement).value}))).catch(()=>[])));
+        throw new Error(`Filtres de dates introuvables pour ${clientName}. Champs visibles : ${JSON.stringify(inputs.flat().slice(0,12))}`);
+      }
       let searched=false;
       for(const frame of page.frames()){
-        const search=frame.getByRole('button',{name:/^\s*recherche\s*$/i}).first();
+        const search=frame.getByRole('button',{name:/^\s*recherch(?:e|er)\s*$/i}).first();
         if(await search.isVisible({timeout:500}).catch(()=>false)){
           await search.click();searched=true;break;
         }
@@ -1050,8 +1064,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
       const rows=[...unique.values()];
       if(!rows.length)throw new Error(`Aucune transaction Total visible pour ${clientName} du ${fromText} au ${toText}`);
-      const fromDate=`${now.getFullYear()}-${pad(now.getMonth()+1)}-01`;
-      return this.total.importBrowserTransactions(rows,this.actor,clientName,fromDate);
+      return this.total.importBrowserTransactions(rows,this.actor,clientName,extractionStart);
     }finally{page.off('response',listener);}
   }
 

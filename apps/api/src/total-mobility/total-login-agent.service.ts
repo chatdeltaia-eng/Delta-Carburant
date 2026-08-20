@@ -306,7 +306,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       ? [await this.extractSelectedCompany(this.requestedCompanyId)]
       : await this.extractAllClientCards();
     this.statusValue = {
-      ...this.status('SUCCESS', 'Transactions, kilométrages, chauffeurs et cartes Total actualisés'),
+      ...this.status('SUCCESS', 'Transactions Total actualisées'),
       result: { clients },
     };
     this.scheduleLiveRefresh();
@@ -320,7 +320,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async liveRefresh(){
     if(!this.actor||!this.page||['STARTING','SIGNING_IN','CODE_REQUIRED','EXTRACTING'].includes(this.statusValue.state))return;
     try{
-      this.setStatus('EXTRACTING','Actualisation Total : transactions, kilométrages, chauffeurs et cartes…');
+      this.setStatus('EXTRACTING','Actualisation des transactions Total…');
       // La passe précédente se termine sur le dernier client. Revenir au
       // client configuré avant chaque cycle empêche d'attribuer les données du
       // dernier client à DELTA CUISINE lors de la prochaine extraction.
@@ -960,23 +960,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private async extractCurrentClientData(clientName:string){
     if(!this.actor)throw new Error('Utilisateur de synchronisation Total absent');
-    // Les pages chauffeurs/véhicules du portail peuvent perdre le contexte de
-    // client et renvoyer silencieusement vers /customer-selection. Extraire en
-    // premier les deux flux critiques qui alimentent la jauge et les cartes,
-    // tant que la validation du client vient juste d'être confirmée.
+    // Le cycle temps réel est volontairement limité aux transactions du client
+    // sélectionné dans Delta. Ne pas poursuivre vers Cartes, Chauffeurs ou
+    // Véhicules : ces modules changent de route et peuvent perdre le contexte
+    // client alors que la jauge dépend uniquement du rapport des transactions.
     const transactions=await this.extractCurrentClientTransactions(clientName);
-    const cardRows=await this.extractCardStatuses();
-    if(!cardRows.length)return {client:clientName,extracted:0,transactions,error:`Aucune carte visible (${this.lastCardDiagnostic})`};
-    const cards=await this.total.importCardStatuses(cardRows,this.actor,clientName);
-    const driverRows=await this.extractDrivers().catch(error=>{
-      this.logger.warn(`Chauffeurs Total ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
-    });
-    const drivers=driverRows.length?await this.total.importDrivers(driverRows,this.actor,clientName):{received:0};
-    const vehicleRows=await this.extractVehicles().catch(error=>{
-      this.logger.warn(`Véhicules Total ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
-    });
-    const vehicles=vehicleRows.length?await this.total.importVehicles(vehicleRows,this.actor,clientName):{received:0};
-    return {...cards,drivers,vehicles,transactions};
+    return {client:clientName,transactions};
   }
 
   private async setTotalDateInput(input:Locator,value:string){

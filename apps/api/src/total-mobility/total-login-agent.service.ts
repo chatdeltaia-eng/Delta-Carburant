@@ -446,7 +446,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           }
         }
         if(!confirmed)throw new Error('bouton Ok de sélection du client introuvable');
-        await page.waitForURL(url=>!url.pathname.includes('customer-selection'),{timeout:15_000});
+        await this.waitForTotalRoute(
+          url=>!url.pathname.includes('customer-selection')&&!url.pathname.includes('/oauth2'),
+          'validation du client Total configuré',
+        );
         await page.waitForLoadState('domcontentloaded').catch(()=>undefined);
       }
       const site=connection.site_number?.trim();
@@ -793,7 +796,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         }
       }
       if(!confirmed){results.push({client:name,error:'Client non coché : bouton Ok désactivé'});continue;}
-      await page.waitForURL(url=>!url.pathname.includes('customer-selection'),{timeout:15_000});
+      await this.waitForTotalRoute(
+        url=>!url.pathname.includes('customer-selection')&&!url.pathname.includes('/oauth2'),
+        `validation du client ${name}`,
+      );
       await page.waitForTimeout(1_500);
       try{
         results.push(await this.extractCurrentClientData(name));
@@ -847,7 +853,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
     }
     if(!confirmed)throw new Error(`Le client Total ${clientName} n'a pas été confirmé`);
-    await this.page?.waitForURL(url=>!url.pathname.includes('customer-selection'),{timeout:15_000});
+    await this.waitForTotalRoute(
+      url=>!url.pathname.includes('customer-selection')&&!url.pathname.includes('/oauth2'),
+      `validation du client ${clientName}`,
+    );
     await this.page?.waitForTimeout(1_500);
     return this.extractCurrentClientData(clientName);
   }
@@ -920,7 +929,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           window.dispatchEvent(new PopStateEvent('popstate'));
         });
       }
-      await page.waitForURL(/\/tn\/transactions\/online-transactions/i,{timeout:15_000});
+      await this.waitForTotalRoute(
+        url=>/\/tn\/transactions\/online-transactions/i.test(url.pathname),
+        `ouverture des transactions de ${clientName}`,
+      );
       if(/customer-selection/i.test(page.url()))
         throw new Error(`Total a perdu le client ${clientName} avant l'ouverture des transactions`);
       await page.waitForTimeout(2_000);
@@ -1025,6 +1037,26 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     }
     await page.goto('https://customer.fleet.totalenergies.com/tn/customer-selection',{waitUntil:'domcontentloaded',timeout:60_000});
     await page.waitForTimeout(3_000);
+  }
+
+  private async waitForTotalRoute(
+    predicate:(url:URL)=>boolean,
+    step:string,
+    timeout=45_000,
+  ){
+    const page=this.page;if(!page)throw new Error('La session Total est indisponible');
+    // Après la sélection d'un client, Total repasse brièvement par /oauth2
+    // et peut effectuer plusieurs navigations successives. waitForURL attend
+    // l'événement load de chacune d'elles et expire alors que le SSO avance.
+    // Observer simplement l'URL finale reproduit mieux le comportement humain.
+    const deadline=Date.now()+timeout;
+    let lastUrl=page.url();
+    while(Date.now()<deadline){
+      lastUrl=page.url();
+      try{if(predicate(new URL(lastUrl)))return;}catch{/* URL transitoire */}
+      await page.waitForTimeout(300);
+    }
+    throw new Error(`Délai dépassé pendant ${step}. Dernière page Total : ${lastUrl}`);
   }
 
   private async selectTotalClientByName(name:string){

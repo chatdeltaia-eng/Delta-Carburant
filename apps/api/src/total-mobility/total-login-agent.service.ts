@@ -786,18 +786,41 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       })))).flatMap(item=>[...item.links,...item.hrefs,...item.controls]).map(value=>String(value).replace(/\s+/g,' ').trim()).filter(Boolean).slice(0,50).join(' | ');
       throw new Error(`Menu de paiement introuvable après ouverture du tableau de bord (${page.url()}). Éléments visibles: ${diagnostics||'aucun'}`);
     }
-    await page.waitForURL(/\/tn\/(?:cards|payment)/i,{timeout:15_000}).catch(()=>undefined);
+    try{
+      await this.waitForTotalRoute(
+        url=>/\/tn\/(?:cards|payment)/i.test(url.pathname),
+        'ouverture du module Méthodes de paiement',8_000,
+      );
+    }catch{
+      // Un click Playwright forcé peut être absorbé par le gestionnaire
+      // Quasar sans changer de route. Réessayer un clic DOM natif sur le lien
+      // du menu (ce n'est pas une navigation directe vers manage-card et le
+      // contexte client reste donc autorisé).
+      let retried=false;
+      for(const frame of page.frames()){
+        const route=frame.locator('.q-drawer a[href*="/cards" i], .q-drawer a[href*="payment" i], a[href*="/cards" i], a[href*="payment" i]')
+          .filter({visible:true}).first();
+        if(!await route.isVisible({timeout:500}).catch(()=>false))continue;
+        await route.evaluate((element)=>(element as HTMLElement).click());
+        retried=true;break;
+      }
+      if(!retried)throw new Error(`Le lien « Méthodes de paiement » a disparu sur ${page.url()}`);
+      await this.waitForTotalRoute(
+        url=>/\/tn\/(?:cards|payment)/i.test(url.pathname),
+        'seconde ouverture du module Méthodes de paiement',
+      );
+    }
     await page.waitForTimeout(1_500);
     for(const frame of page.frames()){
       const manageRoute=frame.locator('a[href*="manage-card" i], [routerlink*="manage-card" i]').filter({visible:true}).first();
       if(await manageRoute.isVisible({timeout:500}).catch(()=>false)){
         await manageRoute.click({force:true,timeout:3_000});
-        await page.waitForURL(/\/cards\/manage-card/i,{timeout:15_000});return;
+        await this.waitForTotalRoute(url=>/\/cards\/manage-card/i.test(url.pathname),'ouverture de Gérer les cartes');return;
       }
       const manage=frame.getByText(/^\s*Gérer\s*$/i).filter({visible:true}).first();
       if(await manage.isVisible({timeout:800}).catch(()=>false)){
         await manage.click({force:true,timeout:3_000});
-        await page.waitForURL(/\/cards\/manage-card/i,{timeout:15_000});return;
+        await this.waitForTotalRoute(url=>/\/cards\/manage-card/i.test(url.pathname),'ouverture de Gérer les cartes');return;
       }
     }
     // Ne jamais ouvrir /manage-card directement : Total renvoie alors vers

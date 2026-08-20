@@ -130,18 +130,21 @@ export class TransactionsService {
     await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'OBSERVATION','fuel_transaction',$2,$3)`,[actor.email,id,{observation}]);
     return {...created.rows[0],observation:observation.trim()};
   });}
-  async import(dto:{filename:string;rows:ImportRow[];replaceFrom?:string},actor:Actor) { return this.db.transaction(async client => {
+  async import(dto:{filename:string;rows:ImportRow[];replaceFrom?:string;companyId?:string},actor:Actor) { return this.db.transaction(async client => {
     if (!dto.rows.length) throw new BadRequestException('Le fichier ne contient aucune transaction');
     const batch = await client.query(`INSERT INTO transaction_import_batch(source_filename,source_sha256,imported_by,total_rows)
       VALUES($1,encode(digest($2 || clock_timestamp()::text,'sha256'),'hex'),$3,$4) RETURNING id`,[dto.filename,dto.filename,actor.sub,dto.rows.length]);
     let replaced=0;
     if(dto.replaceFrom){
-      const archived=await client.query(`UPDATE fuel_transaction SET deleted_at=now(),deleted_by=$2
-        WHERE deleted_at IS NULL AND transaction_date >= $1::date RETURNING id`,[dto.replaceFrom,actor.sub]);
+      if(!dto.companyId) throw new BadRequestException('Société Total absente : remplacement des transactions annulé.');
+      const archived=await client.query(`UPDATE fuel_transaction ft SET deleted_at=now(),deleted_by=$2
+        FROM fuel_card fc WHERE ft.fuel_card_id=fc.id AND fc.company_id=$3::uuid
+        AND ft.deleted_at IS NULL AND ft.transaction_date >= $1::date RETURNING ft.id`,[dto.replaceFrom,actor.sub,dto.companyId]);
       replaced=archived.rowCount??0;
       await client.query(`UPDATE transaction_review SET status='REJECTED',decided_by=$2,decided_at=now(),
         decision_reason='Remplacée par le nouvel instantané Total'
-        WHERE status='PENDING' AND transaction_date >= $1::date`,[dto.replaceFrom,actor.sub]);
+        WHERE status='PENDING' AND transaction_date >= $1::date
+          AND fuel_card_id IN (SELECT id FROM fuel_card WHERE company_id=$3::uuid)`,[dto.replaceFrom,actor.sub,dto.companyId]);
     }
     let imported=0,review=0,duplicates=0,verified=0,mismatches=0,unpriced=0;
     for (let index=0;index<dto.rows.length;index++) {
@@ -155,25 +158,25 @@ export class TransactionsService {
       if(!row.station) throw new BadRequestException(`Nom de la station absent à la ligne ${index+2}. Import annulé.`);
       const card=await client.query(`SELECT fc.id,fc.company_id,fc.official_registration,fc.holder_name,fc.card_category,fc.reference_vehicle_id,fc.status,fc.responsible_user_id,
         (SELECT max(rr.returned_at) FROM card_return_receipt rr WHERE rr.fuel_card_id=fc.id) AS last_returned_at
-        FROM fuel_card fc WHERE fc.deleted_at IS NULL AND (
+        FROM fuel_card fc WHERE fc.deleted_at IS NULL AND ($2::uuid IS NULL OR fc.company_id=$2::uuid) AND (
         fc.total_payment_number=$1
         OR (length($1)>6 AND fc.total_payment_number=right($1,6))
         OR regexp_replace(fc.masked_card_number,'[^0-9]','','g')=$1
         OR fc.official_card_number=$1
       ) ORDER BY CASE WHEN fc.total_payment_number=$1 THEN 0
         WHEN length($1)>6 AND fc.total_payment_number=right($1,6) THEN 1
-        WHEN regexp_replace(fc.masked_card_number,'[^0-9]','','g')=$1 THEN 2 ELSE 3 END LIMIT 1`,[cardKey]);
+        WHEN regexp_replace(fc.masked_card_number,'[^0-9]','','g')=$1 THEN 2 ELSE 3 END LIMIT 1`,[cardKey,dto.companyId??null]);
       const fingerprint=this.transactionFingerprint(row,cardKey);
       if(!card.rows[0]) {
         const existingReview=await client.query(`SELECT id FROM transaction_review
-          WHERE status='PENDING' AND regexp_replace(card_number,'[^0-9]','','g')=$1 AND transaction_date=$2 AND upper(coalesce(station,''))=upper($3)
+          WHERE status='PENDING' AND company_id IS NOT DISTINCT FROM $7::uuid AND regexp_replace(card_number,'[^0-9]','','g')=$1 AND transaction_date=$2 AND upper(coalesce(station,''))=upper($3)
           AND upper(coalesce(product,''))=upper($4) AND quantity_liters=$5 AND amount_incl_tax=$6 LIMIT 1`,
-        [cardKey,row.date,row.station,row.product,row.liters,row.amount]);
+        [cardKey,row.date,row.station,row.product,row.liters,row.amount,dto.companyId??null]);
         if(existingReview.rows[0]) { duplicates++; continue; }
         await client.query(`INSERT INTO transaction_review(import_batch_id,source_row_number,issue_type,card_number,vehicle_registration,
-          beneficiary_name,transaction_date,station,product,quantity_liters,amount_incl_tax,previous_mileage,reported_mileage,authorization_code)
-          VALUES($1,$2,'UNKNOWN_CARD',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-        [batch.rows[0].id,index+1,row.cardNumber,row.vehicle??null,row.beneficiary??null,row.date,row.station,row.product,row.liters,row.amount,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]);
+          beneficiary_name,transaction_date,station,product,quantity_liters,amount_incl_tax,previous_mileage,reported_mileage,authorization_code,company_id)
+          VALUES($1,$2,'UNKNOWN_CARD',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        [batch.rows[0].id,index+1,row.cardNumber,row.vehicle??null,row.beneficiary??null,row.date,row.station,row.product,row.liters,row.amount,row.previousMileage??null,row.mileage??null,row.authorizationCode??null,dto.companyId??null]);
         review++;
         continue;
       }
@@ -182,9 +185,9 @@ export class TransactionsService {
         &&new Date(row.date).getTime()<=new Date(card.rows[0].last_returned_at).getTime();
       if(!availableStatuses.includes(card.rows[0].status)&&!historicalBeforeReturn) {
         await client.query(`INSERT INTO transaction_review(import_batch_id,source_row_number,issue_type,card_number,vehicle_registration,
-          beneficiary_name,transaction_date,station,product,quantity_liters,amount_incl_tax,fuel_card_id,previous_mileage,reported_mileage,authorization_code)
-          VALUES($1,$2,'UNAVAILABLE_CARD',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-        [batch.rows[0].id,index+1,row.cardNumber,row.vehicle??null,row.beneficiary??null,row.date,row.station,row.product,row.liters,row.amount,card.rows[0].id,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]);
+          beneficiary_name,transaction_date,station,product,quantity_liters,amount_incl_tax,fuel_card_id,previous_mileage,reported_mileage,authorization_code,company_id)
+          VALUES($1,$2,'UNAVAILABLE_CARD',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+        [batch.rows[0].id,index+1,row.cardNumber,row.vehicle??null,row.beneficiary??null,row.date,row.station,row.product,row.liters,row.amount,card.rows[0].id,row.previousMileage??null,row.mileage??null,row.authorizationCode??null,dto.companyId??card.rows[0].company_id]);
         review++;
         continue;
       }
@@ -231,8 +234,8 @@ export class TransactionsService {
         :!beneficiaryName?'MISSING_BENEFICIARY':null;
       if (issue) {
         await client.query(`INSERT INTO transaction_review(import_batch_id,source_row_number,issue_type,card_number,vehicle_registration,
-          beneficiary_name,transaction_date,station,product,quantity_liters,amount_incl_tax,fuel_card_id,previous_mileage,reported_mileage,authorization_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-          [batch.rows[0].id,index+1,issue,row.cardNumber,row.vehicle??null,beneficiaryName||null,row.date,row.station??null,row.product??null,row.liters,row.amount,card.rows[0]?.id??null,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]); review++; continue;
+          beneficiary_name,transaction_date,station,product,quantity_liters,amount_incl_tax,fuel_card_id,previous_mileage,reported_mileage,authorization_code,company_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+          [batch.rows[0].id,index+1,issue,row.cardNumber,row.vehicle??null,beneficiaryName||null,row.date,row.station??null,row.product??null,row.liters,row.amount,card.rows[0]?.id??null,row.previousMileage??null,row.mileage??null,row.authorizationCode??null,dto.companyId??companyId]); review++; continue;
       }
       const department=await client.query(`INSERT INTO department(company_id,name) VALUES($1,'Transactions importées') ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id`,[companyId]);
       const beneficiary=await client.query(`INSERT INTO beneficiary(company_id,department_id,display_name) VALUES($1,$2,$3)

@@ -520,12 +520,18 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       const fromDate = requestedFromDate ?? this.initialExtractionDate;
       const remote = await this.fetchAll(config, token, fromDate);
       const rows = remote.map((r, index) => this.mapTransaction(r, index));
+      const [company] = await this.db.query<{id:string}>(`SELECT c.id FROM company c
+        JOIN driver d ON d.company_id=c.id AND d.deleted_at IS NULL
+        WHERE regexp_replace(d.customer_number,'[^0-9]','','g')=regexp_replace($1,'[^0-9]','','g')
+        ORDER BY d.updated_at DESC LIMIT 1`,[config.customer_number]);
+      if(!company) throw new Error(`aucune société Delta ne correspond au client Total ${config.customer_number}`);
       const result = rows.length
         ? await this.transactions.import(
             {
               filename: `TOTAL_MOBILITY_${new Date().toISOString()}.json`,
               rows,
               replaceFrom: fromDate,
+              companyId: company.id,
             },
             actor,
           )
@@ -648,6 +654,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       : new Date(config.last_success_at ?? `${this.initialExtractionDate}T00:00:00+01:00`);
     if (Number.isNaN(from.getTime())) throw new Error('date de début invalide');
     if (!requestedFromDate) from.setHours(from.getHours() - 6);
+    let complete = false;
     for (let page = 0; page < 100; page++) {
       const correlation = randomUUID(),
         payload: Record<string, unknown> = {
@@ -714,8 +721,9 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       const json: unknown = await response.json();
       const pageRows = this.findTransactions(json);
       results.push(...pageRows);
-      if (pageRows.length < 100) break;
+      if (pageRows.length < 100) { complete = true; break; }
     }
+    if(!complete) throw new Error('pagination Total incomplète (plus de 10 000 transactions) : données existantes conservées');
     return results;
   }
   private findTransactions(value: unknown): RemoteTransaction[] {

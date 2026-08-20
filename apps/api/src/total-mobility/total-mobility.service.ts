@@ -680,9 +680,14 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       ? new Date(`${requestedFromDate}T00:00:00+01:00`)
       : new Date(`${this.initialExtractionDate}T00:00:00+01:00`);
     if (Number.isNaN(from.getTime())) throw new Error('date de début invalide');
-    let complete = false;
     const pageSignatures=new Set<string>();
-    for (let page = 0; page < 100; page++) {
+    // Le rapport global Total est plafonné à 100 lignes sur certains comptes,
+    // même lorsque StartIndex change. Interroger chaque journée séparément
+    // garantit un historique complet et inclut les opérations publiées en
+    // retard. Une journée qui atteint 100 lignes reste paginée normalement.
+    for(const day=new Date(from);day.getTime()<=now.getTime();day.setDate(day.getDate()+1)){
+      let dayComplete=false;
+      for (let page = 0; page < 100; page++) {
       const correlation = randomUUID(),
         payload: Record<string, unknown> = {
           AccessToken: '',
@@ -693,8 +698,8 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           CustomerId: config.customer_id,
           CustomerName: '',
           CustomerNumber: config.customer_number,
-          DateFrom: this.formatDate(from, false),
-          DateTo: this.formatDate(now, true),
+          DateFrom: this.formatDate(day, false),
+          DateTo: this.formatDate(day, true),
           DivisionName: '',
           ExpandClient: 'Total',
           ExpandProduct: 'MyFuel',
@@ -730,10 +735,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           WorkFlowId: '',
           usersname: config.username ?? '',
         };
-      const raw = JSON.stringify(payload),
-        nonce = createHash('sha256')
-          .update(new Date().toString())
-          .digest('hex');
+      const raw = JSON.stringify(payload),nonce=randomUUID().replace(/-/g,'');
       const response = await fetch(this.endpoint, {
         method: 'POST',
         headers: {
@@ -756,13 +758,15 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           row.transactionTime,row.cardNumber,row.totalAmount??row.transactedAmount,
         ].join('|')).join('\n');
         if(pageSignatures.has(signature))
-          throw new Error(`pagination Total répétée à partir de la ligne ${page*100+1} : données existantes conservées`);
+          throw new Error(`pagination Total répétée le ${this.formatDate(day,false).slice(0,10)} à partir de la ligne ${page*100+1} : données existantes conservées`);
         pageSignatures.add(signature);
       }
       results.push(...pageRows);
-      if (pageRows.length < 100) { complete = true; break; }
+      if (pageRows.length < 100) { dayComplete = true; break; }
+      }
+      if(!dayComplete)
+        throw new Error(`pagination Total incomplète le ${this.formatDate(day,false).slice(0,10)} : données existantes conservées`);
     }
-    if(!complete) throw new Error('pagination Total incomplète (plus de 10 000 transactions) : données existantes conservées');
     return results;
   }
   private findStringProperty(value: unknown, property: string): string {

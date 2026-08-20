@@ -1076,22 +1076,45 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
               libreActivated=await libre.click({force:true,timeout:3_000}).then(()=>true).catch(()=>false);
           }
           const inputs=frame.locator('input');
-          const indexes=await inputs.evaluateAll(elements=>elements.map((element,index)=>{
+          const dateFields=await inputs.evaluateAll(elements=>elements.map((element,index)=>{
             const field=element as HTMLInputElement;
             const rect=field.getBoundingClientRect();
-            let context='';let parent:Element|null=field;
-            for(let level=0;level<4&&parent;level++,parent=parent.parentElement)
-              context+=` ${(parent.textContent??'').replace(/\s+/g,' ').trim()}`;
+            let context='';let parent:Element|null=field.parentElement;
+            // Le premier conteneur portant un libellé est le plus fiable. Un
+            // parent trop haut contient les deux libellés et inverse parfois
+            // la période selon l'ordre interne choisi par Quasar.
+            for(let level=0;level<3&&parent;level++,parent=parent.parentElement){
+              const text=(parent.textContent??'').replace(/\s+/g,' ').trim();
+              context+=` ${text}`;
+              if(/(?:à partir du|jusqu['’]au|date de début|date de fin)/i.test(text))break;
+            }
             return {index,value:field.value,type:field.type,placeholder:field.placeholder,
-              aria:field.getAttribute('aria-label')??'',context,visible:rect.width>0&&rect.height>0};
+              aria:field.getAttribute('aria-label')??'',context,x:rect.left,visible:rect.width>0&&rect.height>0};
           }).filter(item=>item.visible&&(
             /^\d{2}\/\d{2}\/\d{4}$/.test(item.value)||item.type==='date'||
             /(?:à partir du|jusqu['’]au|date)/i.test(`${item.placeholder} ${item.aria} ${item.context}`)
-          )).map(item=>item.index)).catch(()=>[]);
-          if(indexes.length>=2){
-            await this.setTotalDateInput(inputs.nth(indexes[0]),fromText);
-            await this.setTotalDateInput(inputs.nth(indexes[1]),toText);
-            datesFilled=true;break;
+          ))).catch(()=>[]);
+          if(dateFields.length>=2){
+            const descriptor=(item:(typeof dateFields)[number])=>
+              `${item.placeholder} ${item.aria} ${item.context}`;
+            let fromField=dateFields.find(item=>/(?:à partir du|date de début|du\s*:)/i.test(descriptor(item)));
+            let toField=dateFields.find(item=>/(?:jusqu['’]au|date de fin|au\s*:)/i.test(descriptor(item)));
+            // Sur certaines versions Total, les libellés ne sont pas liés aux
+            // inputs. Leur position visuelle reste stable : début à gauche,
+            // fin à droite.
+            const ordered=[...dateFields].sort((a,b)=>a.x-b.x||a.index-b.index);
+            fromField??=ordered[0];
+            toField??=ordered.find(item=>item.index!==fromField?.index);
+            if(fromField&&toField&&fromField.index!==toField.index){
+              await this.setTotalDateInput(inputs.nth(fromField.index),fromText);
+              await this.setTotalDateInput(inputs.nth(toField.index),toText);
+              const [actualFrom,actualTo]=await Promise.all([
+                inputs.nth(fromField.index).inputValue(),inputs.nth(toField.index).inputValue(),
+              ]);
+              if(actualFrom!==fromText||actualTo!==toText)
+                throw new Error(`Période Total incorrecte : début=${actualFrom||'vide'}, fin=${actualTo||'vide'}`);
+              datesFilled=true;break;
+            }
           }
         }
         if(!datesFilled){

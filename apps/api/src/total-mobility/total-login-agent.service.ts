@@ -215,7 +215,20 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     if (!page) throw new Error('Le navigateur Total a été fermé');
     const deadline = Date.now() + 90_000;
     while (Date.now() < deadline) {
-      if (this.refreshToken) return this.finish(this.refreshToken);
+      // La réponse OAuth contenant le refresh_token arrive avant que la SPA
+      // Total ait terminé sa redirection de callback. Démarrer finish() à ce
+      // moment laisse le navigateur sur /oauth2?code=… et toute ouverture de
+      // Transactions expire. Attendre une vraie route applicative Total.
+      if (this.refreshToken) {
+        const currentUrl=page.url();
+        let portalReady=false;
+        try{
+          const parsed=new URL(currentUrl);
+          portalReady=parsed.hostname==='customer.fleet.totalenergies.com'&&
+            !/\/oauth2(?:[/?#]|$)|\/login(?:[/?#]|$)/i.test(parsed.pathname);
+        }catch{/* navigation OAuth transitoire */}
+        if(portalReady)return this.finish(this.refreshToken);
+      }
       const body = (
         await page
           .locator('body')

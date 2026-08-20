@@ -936,7 +936,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     const clientName=totalNames[company.code.trim().toUpperCase()];
     if(!clientName)throw new Error(`Aucun client Total associé à la société Delta ${company.code}`);
     if(this.activeClientName===clientName.toUpperCase()&&
-      this.page&&!/customer-selection|\/oauth2/i.test(this.page.url()))
+      this.page&&!/customer-selection|\/oauth2|access-?denied/i.test(this.page.url()))
       return this.extractCurrentClientData(clientName);
     await this.openTotalCustomerSelection();
     if(!await this.selectTotalClientByName(clientName))
@@ -996,38 +996,42 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     };
     page.on('response',listener);
     try{
+      // Total interdit une navigation directe vers online-transactions et la
+      // transforme en /accessdenied. Reproduire strictement le parcours humain
+      // depuis le menu latéral du client sélectionné.
       let opened=false;
-      let transactionUrl='https://customer.fleet.totalenergies.com/tn/transactions/online-transactions';
-      for(const frame of page.frames()){
-        const link=frame.locator('a[href*="/transactions/online-transactions"]').filter({visible:true}).first();
-        if(await link.isVisible({timeout:600}).catch(()=>false)){
-          const href=await link.getAttribute('href').catch(()=>null);
-          if(href)transactionUrl=new URL(href,page.url()).toString();
-          // Le tiroir Quasar peut recouvrir brièvement le lien avec son
-          // backdrop. Le lien est pourtant déjà visible et stable : un clic
-          // forcé reproduit ici le choix humain sans attendre 30 secondes.
-          opened=await link.click({force:true,timeout:4_000}).then(()=>true).catch(()=>false);
+      for(let attempt=0;attempt<3&&!opened;attempt++){
+        for(const frame of page.frames()){
+          const toggles=[
+            frame.locator('button[aria-label*="menu" i], button[title*="menu" i]').filter({visible:true}).first(),
+            frame.locator('.q-icon').filter({hasText:/^\s*menu\s*$/i}).filter({visible:true}).first(),
+          ];
+          for(const toggle of toggles){
+            if(await toggle.isVisible({timeout:300}).catch(()=>false)){
+              await toggle.click({force:true,timeout:3_000}).catch(()=>undefined);
+              await frame.waitForTimeout(700);break;
+            }
+          }
+        }
+        for(const frame of page.frames()){
+          const candidates=[
+            frame.locator('a[href*="/transactions/online-transactions"], [routerlink*="online-transactions" i]').filter({visible:true}).first(),
+            frame.getByText(/^\s*Transactions\s*$/i).filter({visible:true}).first(),
+          ];
+          for(const candidate of candidates){
+            if(!await candidate.isVisible({timeout:700}).catch(()=>false))continue;
+            const clicked=await candidate.click({force:true,timeout:4_000}).then(()=>true).catch(()=>false);
+            if(!clicked)continue;
+            opened=await page.waitForURL(/\/tn\/transactions\/online-transactions/i,{timeout:12_000})
+              .then(()=>true).catch(()=>false);
+            if(opened)break;
+          }
           if(opened)break;
         }
+        if(!opened)await page.waitForTimeout(1_000);
       }
-      if(!opened){
-        await page.evaluate(url=>window.location.assign(url),transactionUrl);
-      }
-      try{
-        await this.waitForTotalRoute(
-          url=>/\/tn\/transactions\/online-transactions/i.test(url.pathname),
-          `ouverture SPA des transactions de ${clientName}`,8_000,
-        );
-      }catch{
-        // Certaines versions Quasar absorbent le clic du lien et restent sur
-        // /dashboard. Une navigation navigateur vers le href réel conserve
-        // les cookies/session et garantit l'ouverture du module demandé.
-        await page.evaluate(url=>window.location.assign(url),transactionUrl);
-        await this.waitForTotalRoute(
-          url=>/\/tn\/transactions\/online-transactions/i.test(url.pathname),
-          `ouverture des transactions de ${clientName}`,
-        );
-      }
+      if(!opened)
+        throw new Error(`Le menu « Transactions » de ${clientName} n'a pas ouvert online-transactions. Dernière page Total : ${page.url()}`);
       if(/customer-selection/i.test(page.url()))
         throw new Error(`Total a perdu le client ${clientName} avant l'ouverture des transactions`);
       await page.waitForLoadState('domcontentloaded',{timeout:15_000}).catch(()=>undefined);
@@ -1037,7 +1041,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const reportDeadline=Date.now()+45_000;
       let reportReady=false;
       while(!reportReady&&Date.now()<reportDeadline){
-        if(/customer-selection|\/oauth2|access-denied/i.test(page.url()))
+        if(/customer-selection|\/oauth2|access-?denied/i.test(page.url()))
           throw new Error(`Total a quitté les transactions de ${clientName} pendant le chargement : ${page.url()}`);
         for(const frame of page.frames()){
           const marker=frame.getByText(/Rapport des transactions|^\s*Libre\s*$/i).filter({visible:true}).first();

@@ -658,6 +658,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
     if (Number.isNaN(from.getTime())) throw new Error('date de début invalide');
     if (!requestedFromDate) from.setHours(from.getHours() - 6);
     let complete = false;
+    let requestId = '';
     for (let page = 0; page < 100; page++) {
       const correlation = randomUUID(),
         payload: Record<string, unknown> = {
@@ -680,14 +681,17 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           LanguageId: 'b25a7eda-f295-11e2-a0ca-000c2976e124',
           Locale: '',
           NameOnCard: '',
-          NewSearch: false,
+          // Total creates a fresh report snapshot on the first page, then
+          // expects its RequestId back for every following page. Reusing an
+          // empty/old search can return the previous transaction snapshot.
+          NewSearch: page === 0,
           NodeNumber: '',
           NodeTypeNumber: 10,
           PageSize: 100,
           PartnerId: '0',
           PhantomCardNumber: '',
           ReportType: 4,
-          RequestId: '',
+          RequestId: requestId,
           SendEmail: false,
           SiteNumber: config.site_number,
           SortExpression: '',
@@ -722,12 +726,29 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       });
       if (!response.ok) throw new Error(`API Total ${response.status}`);
       const json: unknown = await response.json();
+      if (page === 0) requestId = this.findStringProperty(json, 'RequestId');
       const pageRows = this.findTransactions(json);
       results.push(...pageRows);
       if (pageRows.length < 100) { complete = true; break; }
     }
     if(!complete) throw new Error('pagination Total incomplète (plus de 10 000 transactions) : données existantes conservées');
     return results;
+  }
+  private findStringProperty(value: unknown, property: string): string {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = this.findStringProperty(item, property);
+        if (found) return found;
+      }
+    } else if (value && typeof value === 'object') {
+      for (const [key, item] of Object.entries(value)) {
+        if (key.toLowerCase() === property.toLowerCase() && typeof item === 'string')
+          return item;
+        const found = this.findStringProperty(item, property);
+        if (found) return found;
+      }
+    }
+    return '';
   }
   private findTransactions(value: unknown): RemoteTransaction[] {
     if (Array.isArray(value)) {

@@ -1047,8 +1047,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     const page=this.page;
     if(!page||!this.actor)throw new Error('La session Total est indisponible pour les transactions');
     const captured:unknown[]=[];
+    let reportAccessToken='';
     const listener=async(response:import('playwright').Response)=>{
       if(!/transaction\/online\/api\/v1\/report\/list/i.test(response.url()))return;
+      const headers=await response.request().allHeaders().catch(()=>({} as Record<string,string>));
+      const authorization=headers.authorization;
+      if(authorization)reportAccessToken=authorization;
       try{captured.push(await response.json());}catch{/* Réponse Total non JSON. */}
     };
     page.on('response',listener);
@@ -1220,6 +1224,17 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
       if(!captured.length)
         throw new Error(`Total n'a renvoyé aucun résultat après Recherche pour ${clientName} (${fromText} au ${toText})`);
+      // Le date-picker Total peut afficher la bonne période tout en conservant
+      // une ancienne valeur dans son modèle Vue. La session navigateur reste
+      // indispensable pour le login et la sélection du client, mais le rapport
+      // final est demandé à l'API officielle avec des DateFrom/DateTo explicites
+      // et sa pagination complète. C'est l'unique source importée en base.
+      if(clientName.trim().toUpperCase()==='DELTA CUISINE'&&reportAccessToken){
+        const authoritative=await this.total.syncWithAccessToken(this.actor,reportAccessToken,extractionStart) as Record<string,unknown>;
+        if(Number(authoritative.fetched??0)<1)
+          throw new Error(`Le rapport officiel Total est vide pour ${clientName} du ${fromText} au ${toText}`);
+        return {client:clientName,...authoritative};
+      }
       const visibleRows:string[][]=[];
       for(let pageIndex=0;pageIndex<1000;pageIndex++){
         for(const frame of page.frames()){

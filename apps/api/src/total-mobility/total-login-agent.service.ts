@@ -269,12 +269,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     await this.selectConfiguredClient();
     this.setStatus('EXTRACTING', 'Client Total sélectionné. Extraction des transactions…');
     await this.total.reconnect(refreshToken, this.actor);
-    const transactions = await this.total.syncNow(this.actor, '2026-08-01');
-    this.setStatus('EXTRACTING', 'Transactions actualisées. Extraction complète de tous les clients…');
-    const cards=await this.extractAllClientCards();
+    this.setStatus('EXTRACTING', 'Extraction complète des transactions de tous les clients…');
+    const clients=await this.extractAllClientCards();
     this.statusValue = {
       ...this.status('SUCCESS', 'Transactions, kilométrages, chauffeurs et cartes Total actualisés'),
-      result: { ...transactions, clients: cards },
+      result: { clients },
     };
     this.scheduleLiveRefresh();
   }
@@ -292,9 +291,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // client configuré avant chaque cycle empêche d'attribuer les données du
       // dernier client à DELTA CUISINE lors de la prochaine extraction.
       await this.selectConfiguredClient();
-      const transactions=await this.total.syncNow(this.actor);
-      const cards=await this.extractAllClientCards();
-      this.statusValue={...this.status('SUCCESS','Données Total actualisées automatiquement'),result:{...transactions,clients:cards,live:true}};
+      const clients=await this.extractAllClientCards();
+      this.statusValue={...this.status('SUCCESS','Données Total actualisées automatiquement'),result:{clients,live:true}};
     }catch(error){this.fail(error);}
   }
 
@@ -304,7 +302,6 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     const listener=async(response:import('playwright').Response)=>{if(!/driver|chauffeur/i.test(response.url()))return;try{captured.push(await response.json());}catch{/* non JSON */}};
     page.on('response',listener);
     try{
-      await this.selectConfiguredClient();
       await this.openDriversFromTotalMenu();
       await page.waitForTimeout(4_000);
       const jsonDrivers=this.driversFromUnknown(captured);
@@ -808,6 +805,14 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         return `${row.client??'Client inconnu'}: ${row.error??row.message??'0 carte'}`;
       }).join(' | ');
       throw new Error(`Aucune carte Total importée. ${details}`);
+    }
+    const failed=results.filter(result=>result&&typeof result==='object'&&Boolean((result as Record<string,unknown>).error));
+    if(failed.length){
+      const details=failed.map(result=>{
+        const row=result as Record<string,unknown>;
+        return `${row.client??'Client inconnu'}: ${row.error??'extraction incomplète'}`;
+      }).join(' | ');
+      throw new Error(`Extraction Total multi-clients incomplète. ${details}`);
     }
     return results;
   }

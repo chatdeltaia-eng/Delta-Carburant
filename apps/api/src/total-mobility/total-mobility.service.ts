@@ -466,6 +466,10 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
     return { enabled };
   }
   private async scheduledSync() {
+    // Lorsque l'agent navigateur autonome est configuré, il est la source de
+    // vérité multi-clients. L'ancien connecteur API ne connaît qu'un seul
+    // customer_id et ne doit plus remplacer en parallèle son lot historique.
+    if (process.env.TOTAL_USERNAME?.trim() && process.env.TOTAL_PASSWORD) return;
     const due = await this.db.query<{
       sub: string;
       email: string;

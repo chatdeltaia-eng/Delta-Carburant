@@ -1081,11 +1081,24 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           .evaluateAll(elements=>elements.map(element=>({name:element.getAttribute('name'),className:element.className,type:element.getAttribute('type'),value:(element as HTMLInputElement).value,placeholder:element.getAttribute('placeholder')}))).catch(()=>[])));
         throw new Error(`Filtres de dates introuvables pour ${clientName}. Champs visibles : ${JSON.stringify(inputs.flat().slice(0,12))}`);
       }
+      // Le sélecteur « Libre » de Quasar peut être visuellement fermé tout en
+      // laissant un q-dialog aria-hidden et son backdrop au-dessus du bouton
+      // Recherche. Il ne s'agit plus d'une fenêtre active : neutraliser
+      // uniquement ces calques cachés avant de soumettre le filtre.
+      for(const frame of page.frames())await frame.evaluate(()=>{
+        for(const dialog of document.querySelectorAll<HTMLElement>('.q-dialog[aria-hidden="true"]')){
+          dialog.style.pointerEvents='none';
+          for(const backdrop of dialog.querySelectorAll<HTMLElement>('.q-dialog__backdrop'))
+            backdrop.style.pointerEvents='none';
+        }
+      }).catch(()=>undefined);
       let searched=false;
       for(const frame of page.frames()){
         const search=frame.getByRole('button',{name:/^\s*recherch(?:e|er)\s*$/i}).first();
         if(await search.isVisible({timeout:500}).catch(()=>false)){
-          await search.click();searched=true;break;
+          // Le bouton est visible et activé. `force` évite qu'un ancien
+          // backdrop Quasar réapparu pendant le rendu intercepte le clic.
+          await search.click({force:true,timeout:4_000});searched=true;break;
         }
       }
       if(!searched)throw new Error(`Bouton Recherche introuvable pour ${clientName}`);

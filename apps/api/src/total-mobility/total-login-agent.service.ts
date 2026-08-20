@@ -39,6 +39,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private browser?: Browser;
   private page?: Page;
   private actor?: Actor;
+  private requestedCompanyId?: string;
   private refreshToken?: string;
   private liveTimer?: NodeJS.Timeout;
   private watchdogTimer?: NodeJS.Timeout;
@@ -90,7 +91,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     return this.statusValue;
   }
 
-  start(actor: Actor) {
+  start(actor: Actor, companyId?: string) {
     if (
       ['STARTING', 'SIGNING_IN', 'CODE_REQUIRED', 'EXTRACTING'].includes(
         this.statusValue.state,
@@ -104,8 +105,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         'Les secrets TOTAL_USERNAME et TOTAL_PASSWORD ne sont pas configurés sur le service API',
       );
     this.actor = actor;
+    this.requestedCompanyId = companyId;
     this.refreshToken = undefined;
-    this.setStatus('STARTING', 'Démarrage sécurisé de l’agent Total…');
+    this.setStatus('STARTING', companyId
+      ? 'Démarrage de l’agent pour le client sélectionné…'
+      : 'Démarrage sécurisé de l’agent Total…');
     void this.run(username, password).catch((error) => this.fail(error));
     return this.statusValue;
   }
@@ -269,8 +273,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     await this.selectConfiguredClient();
     this.setStatus('EXTRACTING', 'Client Total sélectionné. Extraction des transactions…');
     await this.total.reconnect(refreshToken, this.actor);
-    this.setStatus('EXTRACTING', 'Extraction complète des transactions de tous les clients…');
-    const clients=await this.extractAllClientCards();
+    this.setStatus('EXTRACTING', this.requestedCompanyId
+      ? 'Extraction des transactions du client sélectionné…'
+      : 'Extraction complète des transactions de tous les clients…');
+    const clients=this.requestedCompanyId
+      ? [await this.extractSelectedCompany(this.requestedCompanyId)]
+      : await this.extractAllClientCards();
     this.statusValue = {
       ...this.status('SUCCESS', 'Transactions, kilométrages, chauffeurs et cartes Total actualisés'),
       result: { clients },
@@ -290,8 +298,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // La passe précédente se termine sur le dernier client. Revenir au
       // client configuré avant chaque cycle empêche d'attribuer les données du
       // dernier client à DELTA CUISINE lors de la prochaine extraction.
-      await this.selectConfiguredClient();
-      const clients=await this.extractAllClientCards();
+      const clients=this.requestedCompanyId
+        ? [await this.extractSelectedCompany(this.requestedCompanyId)]
+        : await this.extractAllClientCards();
       this.statusValue={...this.status('SUCCESS','Données Total actualisées automatiquement'),result:{clients,live:true}};
     }catch(error){this.fail(error);}
   }
@@ -817,6 +826,32 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     return results;
   }
 
+  private async extractSelectedCompany(companyId:string){
+    const [company]=await this.db.query<{code:string;name:string}>(
+      `SELECT code,name FROM company WHERE id=$1 AND active LIMIT 1`,[companyId],
+    );
+    if(!company)throw new Error('La société sélectionnée dans Delta est introuvable ou inactive');
+    const totalNames:Record<string,string>={
+      DC:'DELTA CUISINE',IKIT:'IKIT TN',DCD:'DELTA CUISINE DISTRIBUTION',TCM:'STE LES TECHNIQUES DE MARBRE',
+    };
+    const clientName=totalNames[company.code.trim().toUpperCase()];
+    if(!clientName)throw new Error(`Aucun client Total associé à la société Delta ${company.code}`);
+    await this.openTotalCustomerSelection();
+    if(!await this.selectTotalClientByName(clientName))
+      throw new Error(`Le client Total ${clientName} n'est pas sélectionnable`);
+    let confirmed=false;
+    for(const frame of this.page?.frames()??[]){
+      const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).first();
+      if(await ok.isVisible({timeout:500}).catch(()=>false)&&await ok.isEnabled().catch(()=>false)){
+        await ok.click({timeout:3_000});confirmed=true;break;
+      }
+    }
+    if(!confirmed)throw new Error(`Le client Total ${clientName} n'a pas été confirmé`);
+    await this.page?.waitForURL(url=>!url.pathname.includes('customer-selection'),{timeout:15_000});
+    await this.page?.waitForTimeout(1_500);
+    return this.extractCurrentClientData(clientName);
+  }
+
   private async extractCurrentClientData(clientName:string){
     if(!this.actor)throw new Error('Utilisateur de synchronisation Total absent');
     // Les pages chauffeurs/véhicules du portail peuvent perdre le contexte de
@@ -868,12 +903,26 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     try{
       let opened=false;
       for(const frame of page.frames()){
-        const link=frame.locator('a[href*="/transactions/online-transactions"]').first();
+        const link=frame.locator('a[href*="/transactions/online-transactions"]').filter({visible:true}).first();
         if(await link.isVisible({timeout:600}).catch(()=>false)){
-          await link.click({timeout:3_000});opened=true;break;
+          // Le tiroir Quasar peut recouvrir brièvement le lien avec son
+          // backdrop. Le lien est pourtant déjà visible et stable : un clic
+          // forcé reproduit ici le choix humain sans attendre 30 secondes.
+          opened=await link.click({force:true,timeout:4_000}).then(()=>true).catch(()=>false);
+          if(opened)break;
         }
       }
-      if(!opened)await page.goto('https://customer.fleet.totalenergies.com/tn/transactions/online-transactions',{waitUntil:'domcontentloaded',timeout:60_000});
+      if(!opened){
+        // Conserver l'état SPA contenant le client sélectionné. Un page.goto
+        // rechargeait l'application et revenait à customer-selection.
+        await page.evaluate(()=>{
+          history.pushState({},'', '/tn/transactions/online-transactions');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        });
+      }
+      await page.waitForURL(/\/tn\/transactions\/online-transactions/i,{timeout:15_000});
+      if(/customer-selection/i.test(page.url()))
+        throw new Error(`Total a perdu le client ${clientName} avant l'ouverture des transactions`);
       await page.waitForTimeout(2_000);
       const now=new Date();
       const pad=(value:number)=>String(value).padStart(2,'0');

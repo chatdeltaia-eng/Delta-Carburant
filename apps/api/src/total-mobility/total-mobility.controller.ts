@@ -14,6 +14,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   Min,
   MinLength,
@@ -48,6 +49,9 @@ class SyncTotalMobilitySessionDto {
 class TotalVerificationCodeDto {
   @IsString() @MinLength(4) code!: string;
 }
+class StartTotalAgentDto {
+  @IsOptional() @IsUUID() companyId?: string;
+}
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Roles('SUPER_ADMIN', 'DIRECTION_GENERAL')
@@ -61,9 +65,10 @@ export class TotalMobilityController {
     return this.agent.getStatus();
   }
   @Post('agent/start') startAgent(
+    @Body() dto: StartTotalAgentDto,
     @Req() req: { user: { sub: string; email: string } },
   ) {
-    return this.agent.start(req.user);
+    return this.agent.start(req.user, dto.companyId);
   }
   @Post('agent/code') submitAgentCode(@Body() dto: TotalVerificationCodeDto) {
     return this.agent.submitCode(dto.code);

@@ -2091,6 +2091,7 @@ export default function Home() {
           <Settings
             token={token}
             user={user}
+            companyId={selectedClientId??""}
             notify={notify}
             onSynced={() => setRefreshTick((current) => current + 1)}
             reset={() => {
@@ -4079,7 +4080,7 @@ function readTotalMobilityPayload(raw:string):TotalMobilityPayload{
   };
   return {CustomerId:read("CustomerId"),CustomerNumber:read("CustomerNumber"),SiteNumber:read("SiteNumber"),UserId:read("UserId"),usersname:read("usersname")};
 }
-function Settings({ reset,token,user,notify,onSynced }: { reset:()=>void;token:string|null;user:User;notify:(message:string)=>void;onSynced:()=>void }) {
+function Settings({ reset,token,user,companyId,notify,onSynced }: { reset:()=>void;token:string|null;user:User;companyId:string;notify:(message:string)=>void;onSynced:()=>void }) {
   const [total,setTotal]=useState<TotalMobilityStatus>({});
   const [runs,setRuns]=useState<TotalMobilityRun[]>([]);
   const [busy,setBusy]=useState(false);
@@ -4091,7 +4092,7 @@ function Settings({ reset,token,user,notify,onSynced }: { reset:()=>void;token:s
     if(!token)return;
     setBusy(true);
     try{
-      const response=await fetch(`${API}/total-mobility/agent/start`,{method:"POST",headers:{Authorization:`Bearer ${token}`}});
+      const response=await fetch(`${API}/total-mobility/agent/start`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({companyId:companyId||undefined})});
       const body=await response.json().catch(()=>({})) as TotalAgentStatus&{message?:string|string[]};
       if(!response.ok)throw new Error(Array.isArray(body.message)?body.message.join(" · "):body.message||"Impossible de démarrer l’agent Total");
       setAgent(body);notify("L’agent se connecte à Total Mobility en arrière-plan.");

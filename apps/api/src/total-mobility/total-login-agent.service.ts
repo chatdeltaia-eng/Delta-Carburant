@@ -40,6 +40,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private page?: Page;
   private actor?: Actor;
   private requestedCompanyId?: string;
+  private activeClientName?: string;
   private refreshToken?: string;
   private liveTimer?: NodeJS.Timeout;
   private watchdogTimer?: NodeJS.Timeout;
@@ -114,6 +115,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       );
     this.actor = actor;
     this.requestedCompanyId = companyId;
+    this.activeClientName = undefined;
     this.refreshToken = undefined;
     this.setStatus('STARTING', companyId
       ? 'Démarrage de l’agent pour le client sélectionné…'
@@ -291,7 +293,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     // ouvert avant que le client configuré ait été réellement sélectionné et
     // validé avec « Ok », sinon le portail charge des données sans périmètre
     // fiable ou renvoie vers access-denied.
-    await this.selectConfiguredClient();
+    // En mode ciblé, extractSelectedCompany réalise lui-même l'unique
+    // sélection demandée. L'ancien enchaînement sélectionnait DC ici puis le
+    // resélectionnait immédiatement, ce que Total refusait.
+    if(!this.requestedCompanyId)await this.selectConfiguredClient();
     this.setStatus('EXTRACTING', 'Client Total sélectionné. Extraction des transactions…');
     await this.total.reconnect(refreshToken, this.actor);
     this.setStatus('EXTRACTING', this.requestedCompanyId
@@ -472,6 +477,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           'validation du client Total configuré',
         );
         await page.waitForLoadState('domcontentloaded').catch(()=>undefined);
+        this.activeClientName=(names[0]??'DELTA CUISINE').trim().toUpperCase();
       }
       const site=connection.site_number?.trim();
       if(site){
@@ -828,6 +834,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         `validation du client ${name}`,
       );
       await page.waitForTimeout(1_500);
+      this.activeClientName=name.trim().toUpperCase();
       try{
         results.push(await this.extractCurrentClientData(name));
       }catch(error){
@@ -869,6 +876,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     };
     const clientName=totalNames[company.code.trim().toUpperCase()];
     if(!clientName)throw new Error(`Aucun client Total associé à la société Delta ${company.code}`);
+    if(this.activeClientName===clientName.toUpperCase()&&
+      this.page&&!/customer-selection|\/oauth2/i.test(this.page.url()))
+      return this.extractCurrentClientData(clientName);
     await this.openTotalCustomerSelection();
     if(!await this.selectTotalClientByName(clientName))
       throw new Error(`Le client Total ${clientName} n'est pas sélectionnable`);
@@ -885,6 +895,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       `validation du client ${clientName}`,
     );
     await this.page?.waitForTimeout(1_500);
+    this.activeClientName=clientName.toUpperCase();
     return this.extractCurrentClientData(clientName);
   }
 

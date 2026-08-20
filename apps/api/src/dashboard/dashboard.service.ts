@@ -32,14 +32,14 @@ export class DashboardService {
         WHERE ft.deleted_at IS NULL
           AND ft.transaction_date>=date_trunc('month',current_date)
           AND ft.transaction_date<date_trunc('month',current_date)+interval '1 month'
-          AND ($1::boolean=false OR fc.responsible_user_id=$2) AND ($3='' OR coalesce(tr.company_id,fc.company_id)=$3::uuid)
+          AND ($1::boolean=false OR fc.responsible_user_id=$2) AND ($3='' OR fc.company_id=$3::uuid)
         UNION ALL
         SELECT tr.amount_incl_tax AS amount
         FROM transaction_review tr LEFT JOIN fuel_card fc ON fc.id=tr.fuel_card_id
         WHERE tr.status='PENDING'
           AND tr.transaction_date>=date_trunc('month',current_date)
           AND tr.transaction_date<date_trunc('month',current_date)+interval '1 month'
-          AND ($1::boolean=false OR fc.responsible_user_id=$2) AND ($3='' OR fc.company_id=$3::uuid)
+          AND ($1::boolean=false OR fc.responsible_user_id=$2) AND ($3='' OR coalesce(tr.company_id,fc.company_id)=$3::uuid)
       ) source) AS "officialMonthAmount",
       (SELECT count(*)::int FROM card_request cr LEFT JOIN fuel_card fc ON fc.id=cr.fuel_card_id WHERE cr.status NOT IN ('CLOSED','REJECTED','CANCELLED')
         AND ($1::boolean=false OR cr.requested_by=$2) AND ($3='' OR fc.company_id=$3::uuid)) AS "openRequests"`, [ownCards, actor.sub,companyId]);
@@ -65,13 +65,13 @@ export class DashboardService {
         FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
         WHERE ft.deleted_at IS NULL AND ft.transaction_date>=date_trunc('month',$1::date)
           AND ft.transaction_date<date_trunc('month',$1::date)+interval '1 month'
-          AND ($2::boolean=false OR fc.responsible_user_id=$3) AND ($4='' OR coalesce(tr.company_id,fc.company_id)=$4::uuid)
+          AND ($2::boolean=false OR fc.responsible_user_id=$3) AND ($4='' OR fc.company_id=$4::uuid)
         UNION ALL
         SELECT tr.amount_incl_tax,tr.quantity_liters
         FROM transaction_review tr LEFT JOIN fuel_card fc ON fc.id=tr.fuel_card_id
         WHERE tr.status='PENDING' AND tr.transaction_date>=date_trunc('month',$1::date)
           AND tr.transaction_date<date_trunc('month',$1::date)+interval '1 month'
-          AND ($2::boolean=false OR fc.responsible_user_id=$3) AND ($4='' OR fc.company_id=$4::uuid)
+          AND ($2::boolean=false OR fc.responsible_user_id=$3) AND ($4='' OR coalesce(tr.company_id,fc.company_id)=$4::uuid)
       ) source`,[selected,own,actor.sub,companyId]);
     return {month:selected.slice(0,7),amount:Number(official.amount),liters:Number(official.liters),transactions:Number(official.transactions),cards};
   }

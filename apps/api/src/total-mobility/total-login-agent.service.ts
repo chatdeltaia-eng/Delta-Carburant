@@ -819,6 +819,14 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private async extractCurrentClientData(clientName:string){
     if(!this.actor)throw new Error('Utilisateur de synchronisation Total absent');
+    // Les pages chauffeurs/véhicules du portail peuvent perdre le contexte de
+    // client et renvoyer silencieusement vers /customer-selection. Extraire en
+    // premier les deux flux critiques qui alimentent la jauge et les cartes,
+    // tant que la validation du client vient juste d'être confirmée.
+    const transactions=await this.extractCurrentClientTransactions(clientName);
+    const cardRows=await this.extractCardStatuses();
+    if(!cardRows.length)return {client:clientName,extracted:0,transactions,error:`Aucune carte visible (${this.lastCardDiagnostic})`};
+    const cards=await this.total.importCardStatuses(cardRows,this.actor,clientName);
     const driverRows=await this.extractDrivers().catch(error=>{
       this.logger.warn(`Chauffeurs Total ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
     });
@@ -827,11 +835,25 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(`Véhicules Total ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
     });
     const vehicles=vehicleRows.length?await this.total.importVehicles(vehicleRows,this.actor,clientName):{received:0};
-    const cardRows=await this.extractCardStatuses();
-    if(!cardRows.length)return {client:clientName,extracted:0,drivers,vehicles,error:`Aucune carte visible (${this.lastCardDiagnostic})`};
-    const cards=await this.total.importCardStatuses(cardRows,this.actor,clientName);
-    const transactions=await this.extractCurrentClientTransactions(clientName);
     return {...cards,drivers,vehicles,transactions};
+  }
+
+  private async setTotalDateInput(input:Locator,value:string){
+    // Le date-picker mx-datepicker expose intentionnellement un input readonly.
+    // `locator.fill()` attend alors 30 s avant d'échouer. Le composant Vue
+    // écoute les événements input/change : utiliser son setter natif permet
+    // de reproduire la sélection d'une date sans dépendre du calendrier visuel.
+    await input.evaluate((element,nextValue)=>{
+      const field=element as HTMLInputElement;
+      field.removeAttribute('readonly');
+      const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;
+      if(setter)setter.call(field,nextValue);else field.value=nextValue;
+      field.dispatchEvent(new Event('input',{bubbles:true}));
+      field.dispatchEvent(new Event('change',{bubbles:true}));
+      field.dispatchEvent(new Event('blur',{bubbles:true}));
+    },value);
+    const actual=await input.inputValue();
+    if(actual!==value)throw new Error(`Le filtre de date Total a refusé ${value} (valeur actuelle : ${actual||'vide'})`);
   }
 
   private async extractCurrentClientTransactions(clientName:string){
@@ -863,8 +885,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         const indexes=await dateInputs.evaluateAll(elements=>elements.map((element,index)=>({index,value:(element as HTMLInputElement).value}))
           .filter(item=>/^\d{2}\/\d{2}\/\d{4}$/.test(item.value)).map(item=>item.index)).catch(()=>[]);
         if(indexes.length>=2){
-          await dateInputs.nth(indexes[0]).fill(fromText);
-          await dateInputs.nth(indexes[1]).fill(toText);
+          await this.setTotalDateInput(dateInputs.nth(indexes[0]),fromText);
+          await this.setTotalDateInput(dateInputs.nth(indexes[1]),toText);
           datesFilled=true;break;
         }
       }

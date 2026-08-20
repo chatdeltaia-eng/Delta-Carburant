@@ -1004,6 +1004,45 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     if(actual!==value)throw new Error(`Le filtre de date Total a refusé ${value} (valeur actuelle : ${actual||'vide'})`);
   }
 
+  private async selectTotalDateFromCalendar(input:Locator,isoDate:string,displayDate:string){
+    // `mx-input` est readonly et sa valeur DOM n'est pas la source de vérité du
+    // composant Vue. Modifier `input.value` affiche la bonne date mais Total
+    // envoie encore l'ancienne période au rapport. Reproduire le geste humain
+    // dans le calendrier met réellement à jour le modèle interne.
+    await input.click({force:true,timeout:4_000});
+    const page=this.page;
+    if(!page)throw new Error('Le navigateur Total a été fermé pendant la sélection des dates');
+    const target=new Date(`${isoDate}T12:00:00`);
+    const today=new Date();
+    const targetMonth=target.getFullYear()*12+target.getMonth();
+    const currentMonth=today.getFullYear()*12+today.getMonth();
+    const direction=targetMonth<=currentMonth?-1:1;
+    for(let attempt=0;attempt<36;attempt++){
+      for(const frame of page.frames()){
+        const popup=frame.locator('.mx-datepicker-popup:visible, .mx-calendar:visible, [class*="datepicker"][class*="popup"]:visible').first();
+        if(!await popup.isVisible({timeout:300}).catch(()=>false))continue;
+        const exact=popup.locator(`[title="${isoDate}"], [data-date="${isoDate}"]`).filter({visible:true}).first();
+        if(await exact.isVisible({timeout:300}).catch(()=>false)){
+          await exact.click({force:true,timeout:4_000});
+          await page.waitForTimeout(350);
+          const actual=await input.inputValue().catch(()=>'');
+          if(actual!==displayDate)
+            throw new Error(`Le calendrier Total a sélectionné ${actual||'une valeur vide'} au lieu de ${displayDate}`);
+          return;
+        }
+        const navigation=direction<0
+          ? popup.locator('.mx-btn-icon-left, button[aria-label*="mois précédent" i], button[title*="mois précédent" i]').filter({visible:true})
+          : popup.locator('.mx-btn-icon-right, button[aria-label*="mois suivant" i], button[title*="mois suivant" i]').filter({visible:true});
+        if(await navigation.count()){
+          await navigation.first().click({force:true,timeout:3_000});
+          await page.waitForTimeout(250);
+          break;
+        }
+      }
+    }
+    throw new Error(`La date ${displayDate} est introuvable dans le calendrier Total`);
+  }
+
   private async extractCurrentClientTransactions(clientName:string){
     const page=this.page;
     if(!page||!this.actor)throw new Error('La session Total est indisponible pour les transactions');
@@ -1124,8 +1163,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
             fromField??=ordered[0];
             toField??=ordered.find(item=>item.index!==fromField?.index);
             if(fromField&&toField&&fromField.index!==toField.index){
-              await this.setTotalDateInput(inputs.nth(fromField.index),fromText);
-              await this.setTotalDateInput(inputs.nth(toField.index),toText);
+              await this.selectTotalDateFromCalendar(inputs.nth(fromField.index),extractionStart,fromText);
+              const todayIso=`${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+              await this.selectTotalDateFromCalendar(inputs.nth(toField.index),todayIso,toText);
               const [actualFrom,actualTo]=await Promise.all([
                 inputs.nth(fromField.index).inputValue(),inputs.nth(toField.index).inputValue(),
               ]);

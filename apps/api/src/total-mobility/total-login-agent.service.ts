@@ -305,9 +305,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     const clients=this.requestedCompanyId
       ? [await this.extractSelectedCompany(this.requestedCompanyId)]
       : await this.extractAllClientCards();
+    const summary=this.summarizeClientResults(clients);
+    if(summary.fetched<1)
+      throw new Error('Total n’a renvoyé aucune transaction : actualisation refusée');
     this.statusValue = {
-      ...this.status('SUCCESS', 'Transactions Total actualisées'),
-      result: { clients },
+      ...this.status('SUCCESS', `${summary.visible} transaction(s) Total actualisée(s)`),
+      result: { clients, ...summary },
     };
     this.scheduleLiveRefresh();
   }
@@ -327,8 +330,18 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const clients=this.requestedCompanyId
         ? [await this.extractSelectedCompany(this.requestedCompanyId)]
         : await this.extractAllClientCards();
-      this.statusValue={...this.status('SUCCESS','Données Total actualisées automatiquement'),result:{clients,live:true}};
+      const summary=this.summarizeClientResults(clients);
+      if(summary.fetched<1)
+        throw new Error('Total n’a renvoyé aucune transaction : données existantes conservées');
+      this.statusValue={...this.status('SUCCESS',`${summary.visible} transaction(s) Total actualisée(s) automatiquement`),result:{clients,...summary,live:true}};
     }catch(error){this.fail(error);}
+  }
+
+  private summarizeClientResults(clients:unknown[]){
+    const values=clients.filter((value):value is Record<string,unknown>=>Boolean(value)&&typeof value==='object');
+    const sum=(key:string)=>values.reduce((total,value)=>total+Number(value[key]??0),0);
+    const imported=sum('imported'),pendingReview=sum('pendingReview');
+    return {fetched:sum('fetched'),imported,pendingReview,duplicates:sum('duplicates'),visible:imported+pendingReview};
   }
 
   private async extractDrivers():Promise<RemoteDriver[]>{
@@ -1129,6 +1142,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           .evaluateAll(elements=>elements.map(element=>({name:element.getAttribute('name'),className:element.className,type:element.getAttribute('type'),value:(element as HTMLInputElement).value,placeholder:element.getAttribute('placeholder')}))).catch(()=>[])));
         throw new Error(`Filtres de dates introuvables pour ${clientName}. Champs visibles : ${JSON.stringify(inputs.flat().slice(0,12))}`);
       }
+      // Ne jamais réutiliser la réponse chargée automatiquement à l'ouverture
+      // du rapport (souvent la journée précédente). Seules les réponses
+      // déclenchées après la soumission de notre période complète sont valides.
+      captured.splice(0,captured.length);
       // Le sélecteur « Libre » de Quasar peut être visuellement fermé tout en
       // laissant un q-dialog aria-hidden et son backdrop au-dessus du bouton
       // Recherche. Il ne s'agit plus d'une fenêtre active : neutraliser
@@ -1150,7 +1167,14 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         }
       }
       if(!searched)throw new Error(`Bouton Recherche introuvable pour ${clientName}`);
-      await page.waitForTimeout(2_000);
+      const resultDeadline=Date.now()+45_000;
+      while(!captured.length&&Date.now()<resultDeadline){
+        if(/customer-selection|\/oauth2|access-?denied/i.test(page.url()))
+          throw new Error(`Total a quitté le rapport pendant la recherche de ${clientName} : ${page.url()}`);
+        await page.waitForTimeout(500);
+      }
+      if(!captured.length)
+        throw new Error(`Total n'a renvoyé aucun résultat après Recherche pour ${clientName} (${fromText} au ${toText})`);
       const visibleRows:string[][]=[];
       for(let pageIndex=0;pageIndex<1000;pageIndex++){
         for(const frame of page.frames()){

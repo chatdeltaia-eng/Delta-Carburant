@@ -339,7 +339,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private summarizeClientResults(clients:unknown[]){
     const values=clients.filter((value):value is Record<string,unknown>=>Boolean(value)&&typeof value==='object');
-    const sum=(key:string)=>values.reduce((total,value)=>total+Number(value[key]??0),0);
+    const sum=(key:string)=>values.reduce((total,value)=>{
+      const nested=value.transactions&&typeof value.transactions==='object'
+        ? value.transactions as Record<string,unknown>
+        : undefined;
+      return total+Number(value[key]??nested?.[key]??0);
+    },0);
     const imported=sum('imported'),pendingReview=sum('pendingReview');
     return {fetched:sum('fetched'),imported,pendingReview,duplicates:sum('duplicates'),visible:imported+pendingReview};
   }

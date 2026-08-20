@@ -676,16 +676,20 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
   ) {
     const results: RemoteTransaction[] = [];
     const now = new Date();
-    const from = requestedFromDate
-      ? new Date(`${requestedFromDate}T00:00:00+01:00`)
-      : new Date(`${this.initialExtractionDate}T00:00:00+01:00`);
+    const today = new Date(now);
+    today.setUTCHours(12, 0, 0, 0);
+    const requestedStart = requestedFromDate ?? this.initialExtractionDate;
+    // Utiliser midi UTC pour représenter une journée civile. À minuit avec
+    // `+01:00`, Render (UTC) voyait la veille à 23 h : la requête du 20 août
+    // devenait alors une seconde requête du 19 août.
+    const from = new Date(`${requestedStart}T12:00:00Z`);
     if (Number.isNaN(from.getTime())) throw new Error('date de début invalide');
     const pageSignatures=new Set<string>();
     // Le rapport global Total est plafonné à 100 lignes sur certains comptes,
     // même lorsque StartIndex change. Interroger chaque journée séparément
     // garantit un historique complet et inclut les opérations publiées en
     // retard. Une journée qui atteint 100 lignes reste paginée normalement.
-    for(const day=new Date(from);day.getTime()<=now.getTime();day.setDate(day.getDate()+1)){
+    for(const day=new Date(from);day.getTime()<=today.getTime();day.setUTCDate(day.getUTCDate()+1)){
       let dayComplete=false;
       for (let page = 0; page < 100; page++) {
       const correlation = randomUUID(),
@@ -810,7 +814,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
   }
   private formatDate(date: Date, end: boolean) {
     const pad = (n: number) => String(n).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${end ? '23:59:59' : '00:00:00'}`;
+    return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${end ? '23:59:59' : '00:00:00'}`;
   }
   private mapTransaction(row: RemoteTransaction, index: number) {
     if (!row.transactionDate || !row.cardNumber)

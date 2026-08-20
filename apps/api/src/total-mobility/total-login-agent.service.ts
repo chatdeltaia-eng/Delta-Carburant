@@ -1030,7 +1030,23 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
       if(/customer-selection/i.test(page.url()))
         throw new Error(`Total a perdu le client ${clientName} avant l'ouverture des transactions`);
-      await page.waitForTimeout(2_000);
+      await page.waitForLoadState('domcontentloaded',{timeout:15_000}).catch(()=>undefined);
+      // La route SPA est disponible avant que le module Transactions ait fini
+      // son rendu (particulièrement sur Render). Attendre un élément métier au
+      // lieu d'utiliser un délai fixe qui peut expirer trop tôt.
+      const reportDeadline=Date.now()+45_000;
+      let reportReady=false;
+      while(!reportReady&&Date.now()<reportDeadline){
+        if(/customer-selection|\/oauth2|access-denied/i.test(page.url()))
+          throw new Error(`Total a quitté les transactions de ${clientName} pendant le chargement : ${page.url()}`);
+        for(const frame of page.frames()){
+          const marker=frame.getByText(/Rapport des transactions|^\s*Libre\s*$/i).filter({visible:true}).first();
+          if(await marker.isVisible({timeout:300}).catch(()=>false)){reportReady=true;break;}
+        }
+        if(!reportReady)await page.waitForTimeout(500);
+      }
+      if(!reportReady)
+        throw new Error(`Le rapport des transactions de ${clientName} ne s'est pas chargé. Dernière page Total : ${page.url()}`);
       const now=new Date();
       const pad=(value:number)=>String(value).padStart(2,'0');
       // Périmètre métier demandé : reprendre tout l'historique opérationnel
@@ -1042,19 +1058,19 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(!startMatch)throw new Error(`TOTAL_EXTRACTION_START_DATE invalide : ${extractionStart}`);
       const fromText=`${startMatch[3]}/${startMatch[2]}/${startMatch[1]}`;
       const toText=`${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()}`;
-      // Le portail masque les deux champs tant que le mode « Libre » n'est
-      // pas actif (Jour/Semaine/Mois utilisent leurs propres périodes).
-      for(const frame of page.frames()){
-        const libre=frame.getByText(/^\s*Libre\s*$/i).filter({visible:true}).first();
-        if(await libre.isVisible({timeout:500}).catch(()=>false)){
-          await libre.click({force:true,timeout:3_000}).catch(()=>undefined);
-          break;
-        }
-      }
       let datesFilled=false;
-      const dateDeadline=Date.now()+30_000;
+      let libreActivated=false;
+      const dateDeadline=Date.now()+45_000;
       while(!datesFilled&&Date.now()<dateDeadline){
         for(const frame of page.frames()){
+          // Le portail masque les champs tant que « Libre » n'est pas actif.
+          // La SPA peut rerendre ce contrôle après notre premier clic : le
+          // retenter jusqu'à l'apparition effective des deux champs.
+          if(!libreActivated){
+            const libre=frame.getByText(/^\s*Libre\s*$/i).filter({visible:true}).first();
+            if(await libre.isVisible({timeout:250}).catch(()=>false))
+              libreActivated=await libre.click({force:true,timeout:3_000}).then(()=>true).catch(()=>false);
+          }
           const inputs=frame.locator('input');
           const indexes=await inputs.evaluateAll(elements=>elements.map((element,index)=>{
             const field=element as HTMLInputElement;
@@ -1074,7 +1090,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
             datesFilled=true;break;
           }
         }
-        if(!datesFilled)await page.waitForTimeout(500);
+        if(!datesFilled){
+          // Si le composant a été remonté, son état local « Libre » peut être
+          // perdu : autoriser un nouveau clic lors de l'itération suivante.
+          libreActivated=false;
+          await page.waitForTimeout(500);
+        }
       }
       if(!datesFilled){
         const inputs=await Promise.all(page.frames().map(frame=>frame.locator('input')

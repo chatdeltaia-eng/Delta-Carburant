@@ -144,7 +144,7 @@ export class TransactionsService {
       await client.query(`UPDATE transaction_review SET status='REJECTED',decided_by=$2,decided_at=now(),
         decision_reason='Remplacée par le nouvel instantané Total'
         WHERE status='PENDING' AND transaction_date >= $1::date
-          AND fuel_card_id IN (SELECT id FROM fuel_card WHERE company_id=$3::uuid)`,[dto.replaceFrom,actor.sub,dto.companyId]);
+          AND (company_id=$3::uuid OR fuel_card_id IN (SELECT id FROM fuel_card WHERE company_id=$3::uuid))`,[dto.replaceFrom,actor.sub,dto.companyId]);
     }
     let imported=0,review=0,duplicates=0,verified=0,mismatches=0,unpriced=0;
     for (let index=0;index<dto.rows.length;index++) {

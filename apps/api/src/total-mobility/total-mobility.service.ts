@@ -520,7 +520,14 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       );
       // Chaque passage est un instantané complet. L'ancien état de la période
       // est remplacé dans la même transaction seulement après réception de Total.
-      const fromDate = requestedFromDate ?? this.initialExtractionDate;
+      // Toujours rapprocher le mois complet. Une transaction Total peut être
+      // publiée plusieurs heures (voire plusieurs jours) après son passage en
+      // station. Une fenêtre glissante basée sur last_success_at la perdait
+      // définitivement dès qu'elle arrivait après les 6 heures de tolérance.
+      const monthStart = new Date();
+      monthStart.setDate(1);
+      const currentMonthStart = this.formatDate(monthStart, false).slice(0, 10);
+      const fromDate = requestedFromDate ?? currentMonthStart;
       const remote = await this.fetchAll(config, token, fromDate);
       const rows = remote.map((r, index) => this.mapTransaction(r, index));
       const [company] = await this.db.query<{id:string}>(`SELECT c.id FROM company c
@@ -528,6 +535,16 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         WHERE regexp_replace(d.customer_number,'[^0-9]','','g')=regexp_replace($1,'[^0-9]','','g')
         ORDER BY d.updated_at DESC LIMIT 1`,[config.customer_number]);
       if(!company) throw new Error(`aucune société Delta ne correspond au client Total ${config.customer_number}`);
+      const [existing] = await this.db.query<{count:number}>(`SELECT count(*)::int AS count
+        FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
+        WHERE fc.company_id=$1 AND ft.deleted_at IS NULL AND ft.transaction_date >= $2::date`,
+        [company.id,fromDate]);
+      if (!rows.length && Number(existing?.count ?? 0) > 0)
+        throw new Error('Total a retourné un instantané vide pour une période déjà consommée : données existantes conservées');
+      const remoteAmount = rows.reduce((sum,row)=>sum+Number(row.amount||0),0);
+      const remoteLiters = rows.reduce((sum,row)=>sum+Number(row.liters||0),0);
+      const latestRemoteTransaction = rows.reduce<string|null>((latest,row)=>
+        !latest || row.date>latest ? row.date : latest,null);
       const result = rows.length
         ? await this.transactions.import(
             {
@@ -552,6 +569,9 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
             source: sessionAccessToken ? 'TOTAL_MOBILITY_BROWSER_SESSION' : 'TOTAL_MOBILITY_API',
             dateFrom: fromDate,
             dateTo: new Date().toISOString(),
+            remoteAmount,
+            remoteLiters,
+            latestRemoteTransaction,
           },
         ],
       );
@@ -654,9 +674,8 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
     const now = new Date();
     const from = requestedFromDate
       ? new Date(`${requestedFromDate}T00:00:00+01:00`)
-      : new Date(config.last_success_at ?? `${this.initialExtractionDate}T00:00:00+01:00`);
+      : new Date(`${this.initialExtractionDate}T00:00:00+01:00`);
     if (Number.isNaN(from.getTime())) throw new Error('date de début invalide');
-    if (!requestedFromDate) from.setHours(from.getHours() - 6);
     let complete = false;
     let requestId = '';
     for (let page = 0; page < 100; page++) {

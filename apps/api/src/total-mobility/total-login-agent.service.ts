@@ -14,7 +14,7 @@ import {
 } from 'playwright';
 import { TotalMobilityService } from './total-mobility.service';
 import { DatabaseService } from '../database/database.service';
-import type { RemoteCardStatus, RemoteDriver, RemoteVehicle } from './total-mobility.service';
+import type { RemoteCardStatus, RemoteDriver, RemoteTransaction, RemoteVehicle } from './total-mobility.service';
 
 type Actor = { sub: string; email: string };
 type AgentState =
@@ -825,7 +825,99 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     const cardRows=await this.extractCardStatuses();
     if(!cardRows.length)return {client:clientName,extracted:0,drivers,vehicles,error:`Aucune carte visible (${this.lastCardDiagnostic})`};
     const cards=await this.total.importCardStatuses(cardRows,this.actor,clientName);
-    return {...cards,drivers,vehicles};
+    const transactions=await this.extractCurrentClientTransactions(clientName);
+    return {...cards,drivers,vehicles,transactions};
+  }
+
+  private async extractCurrentClientTransactions(clientName:string){
+    const page=this.page;
+    if(!page||!this.actor)throw new Error('La session Total est indisponible pour les transactions');
+    const captured:unknown[]=[];
+    const listener=async(response:import('playwright').Response)=>{
+      if(!/transaction\/online\/api\/v1\/report\/list/i.test(response.url()))return;
+      try{captured.push(await response.json());}catch{/* Réponse Total non JSON. */}
+    };
+    page.on('response',listener);
+    try{
+      let opened=false;
+      for(const frame of page.frames()){
+        const link=frame.locator('a[href*="/transactions/online-transactions"]').first();
+        if(await link.isVisible({timeout:600}).catch(()=>false)){
+          await link.click({timeout:3_000});opened=true;break;
+        }
+      }
+      if(!opened)await page.goto('https://customer.fleet.totalenergies.com/tn/transactions/online-transactions',{waitUntil:'domcontentloaded',timeout:60_000});
+      await page.waitForTimeout(2_000);
+      const now=new Date();
+      const pad=(value:number)=>String(value).padStart(2,'0');
+      const fromText=`01/${pad(now.getMonth()+1)}/${now.getFullYear()}`;
+      const toText=`${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()}`;
+      let datesFilled=false;
+      for(const frame of page.frames()){
+        const dateInputs=frame.locator('input').filter({visible:true});
+        const indexes=await dateInputs.evaluateAll(elements=>elements.map((element,index)=>({index,value:(element as HTMLInputElement).value}))
+          .filter(item=>/^\d{2}\/\d{2}\/\d{4}$/.test(item.value)).map(item=>item.index)).catch(()=>[]);
+        if(indexes.length>=2){
+          await dateInputs.nth(indexes[0]).fill(fromText);
+          await dateInputs.nth(indexes[1]).fill(toText);
+          datesFilled=true;break;
+        }
+      }
+      if(!datesFilled)throw new Error(`Filtres de dates introuvables pour ${clientName}`);
+      let searched=false;
+      for(const frame of page.frames()){
+        const search=frame.getByRole('button',{name:/^\s*recherche\s*$/i}).first();
+        if(await search.isVisible({timeout:500}).catch(()=>false)){
+          await search.click();searched=true;break;
+        }
+      }
+      if(!searched)throw new Error(`Bouton Recherche introuvable pour ${clientName}`);
+      await page.waitForTimeout(2_000);
+      const visibleRows:string[][]=[];
+      for(let pageIndex=0;pageIndex<1000;pageIndex++){
+        for(const frame of page.frames()){
+          visibleRows.push(...await frame.locator('table tbody tr, mat-row, [role="row"]').evaluateAll(elements=>elements.map(row=>
+            Array.from(row.querySelectorAll('td, [role="cell"], mat-cell')).map(cell=>(cell.textContent??'').replace(/\s+/g,' ').trim()))
+            .filter(cells=>cells.length>=10&&/^\d{2}\/\d{2}\/\d{4}$/.test(cells[0]??''))).catch(()=>[]));
+        }
+        let advanced=false;
+        for(const frame of page.frames()){
+          const buttons=frame.locator('button');
+          const nextIndex=await buttons.evaluateAll(elements=>elements.findIndex(element=>{
+            const button=element as HTMLButtonElement;
+            const token=[button.textContent,button.getAttribute('aria-label'),button.getAttribute('title')].filter(Boolean).join(' ').trim().toLowerCase();
+            const visible=Boolean(button.offsetWidth||button.offsetHeight||button.getClientRects().length);
+            return visible&&!button.disabled&&button.getAttribute('aria-disabled')!=='true'&&
+              (/chevron_right|navigate_next|keyboard_arrow_right/.test(token)||/next page|page suivante|suivant/.test(token));
+          })).catch(()=>-1);
+          if(nextIndex<0)continue;
+          const before=await frame.locator('table tbody tr, mat-row, [role="row"]').allTextContents().catch(()=>[]);
+          await buttons.nth(nextIndex).click({force:true});
+          await page.waitForTimeout(900);
+          const after=await frame.locator('table tbody tr, mat-row, [role="row"]').allTextContents().catch(()=>[]);
+          advanced=after.join('|')!==before.join('|');
+          if(advanced)break;
+        }
+        if(!advanced)break;
+      }
+      const fromJson=captured.flatMap(value=>this.total.transactionsFromUnknown(value));
+      const fromTable:RemoteTransaction[]=visibleRows.map(cells=>({
+        transactionDate:cells[0],transactionTime:cells[1],approvalNumber:cells[2],
+        cardNumber:cells[4],cardHolderName:cells[5],productName:cells[7],
+        transactionVolume:Number(String(cells[8]).replace(',','.')),
+        totalAmount:Number(String(cells[9]).replace(',','.')),
+        stationName:cells[11],transactionStatus:cells[13],
+      }));
+      const unique=new Map<string,RemoteTransaction>();
+      for(const row of [...fromJson,...fromTable]){
+        const key=[row.approvalNumber??row.authorisationCode,row.transactionDate,row.transactionTime,row.cardNumber,row.totalAmount??row.transactedAmount].join('|');
+        if(row.transactionDate&&row.cardNumber)unique.set(key,row);
+      }
+      const rows=[...unique.values()];
+      if(!rows.length)throw new Error(`Aucune transaction Total visible pour ${clientName} du ${fromText} au ${toText}`);
+      const fromDate=`${now.getFullYear()}-${pad(now.getMonth()+1)}-01`;
+      return this.total.importBrowserTransactions(rows,this.actor,clientName,fromDate);
+    }finally{page.off('response',listener);}
   }
 
   private async openTotalCustomerSelection(){

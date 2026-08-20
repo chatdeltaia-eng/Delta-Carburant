@@ -37,7 +37,7 @@ type ConnectionRow = {
   refresh_token_ciphertext: string;
   last_success_at: Date | string | null;
 };
-type RemoteTransaction = {
+export type RemoteTransaction = {
   transactionDate?: string;
   transactionTime?: string;
   samTransactionNumber?: number;
@@ -829,6 +829,62 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       mileage: Number(row.currentMileage) || undefined,
       authorizationCode: approval || providerIdentity,
       externalId: providerIdentity,
+    };
+  }
+
+  transactionsFromUnknown(value: unknown) {
+    return this.findTransactions(value);
+  }
+
+  async importBrowserTransactions(
+    remote: RemoteTransaction[],
+    actor: Actor,
+    clientName: string,
+    fromDate: string,
+  ) {
+    const aliases: Record<string, string> = {
+      'DELTA CUISINE': 'DC',
+      'IKIT TN': 'IKIT',
+      'STE LES TECHNIQUES DE MARBRE': 'TCM',
+      'DELTA CUISINE DISTRIBUTION': 'DCD',
+    };
+    const code = aliases[clientName.trim().toUpperCase()];
+    if (!code) throw new Error(`Client Total non reconnu : ${clientName}`);
+    const [company] = await this.db.query<{ id: string }>(
+      `SELECT id FROM company WHERE active AND upper(code)=upper($1) LIMIT 1`,
+      [code],
+    );
+    if (!company) throw new Error(`Société Delta ${code} introuvable`);
+    const rows = remote.map((row, index) => this.mapTransaction(row, index));
+    const [existing] = await this.db.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM fuel_transaction ft
+       JOIN fuel_card fc ON fc.id=ft.fuel_card_id
+       WHERE fc.company_id=$1 AND ft.deleted_at IS NULL
+         AND ft.transaction_date >= $2::date`,
+      [company.id, fromDate],
+    );
+    if (!rows.length && Number(existing?.count ?? 0) > 0)
+      throw new Error(`Total n'a retourné aucune transaction pour ${clientName}; données conservées`);
+    if (!rows.length)
+      return { client: clientName, fetched: 0, imported: 0, duplicates: 0, pendingReview: 0 };
+    const result = await this.transactions.import(
+      {
+        filename: `TOTAL_BROWSER_${code}_${new Date().toISOString()}.json`,
+        rows,
+        replaceFrom: fromDate,
+        companyId: company.id,
+      },
+      actor,
+    );
+    return {
+      client: clientName,
+      fetched: rows.length,
+      amount: rows.reduce((sum, row) => sum + Number(row.amount || 0), 0),
+      latestTransaction: rows.reduce<string | null>(
+        (latest, row) => (!latest || row.date > latest ? row.date : latest),
+        null,
+      ),
+      ...result,
     };
   }
   private async notifyFailure(message: string) {

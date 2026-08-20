@@ -163,9 +163,16 @@ export class TransactionsService {
         OR (length($1)>6 AND fc.total_payment_number=right($1,6))
         OR regexp_replace(fc.masked_card_number,'[^0-9]','','g')=$1
         OR fc.official_card_number=$1
+        OR (length($1)>4
+          AND right(regexp_replace(fc.masked_card_number,'[^0-9]','','g'),4)=right($1,4)
+          AND 1=(SELECT count(*) FROM fuel_card suffix_card
+            WHERE suffix_card.deleted_at IS NULL
+              AND suffix_card.company_id=fc.company_id
+              AND right(regexp_replace(coalesce(suffix_card.official_card_number,suffix_card.masked_card_number),'[^0-9]','','g'),4)=right($1,4)))
       ) ORDER BY CASE WHEN fc.total_payment_number=$1 THEN 0
         WHEN length($1)>6 AND fc.total_payment_number=right($1,6) THEN 1
-        WHEN regexp_replace(fc.masked_card_number,'[^0-9]','','g')=$1 THEN 2 ELSE 3 END LIMIT 1`,[cardKey,dto.companyId??null]);
+        WHEN regexp_replace(fc.masked_card_number,'[^0-9]','','g')=$1 THEN 2
+        WHEN fc.official_card_number=$1 THEN 3 ELSE 4 END LIMIT 1`,[cardKey,dto.companyId??null]);
       const fingerprint=this.transactionFingerprint(row,cardKey);
       if(!card.rows[0]) {
         const existingReview=await client.query(`SELECT id FROM transaction_review
@@ -395,7 +402,13 @@ export class TransactionsService {
       let card=dto.fuelCardId?await client.query(`SELECT id,company_id,holder_name FROM fuel_card
         WHERE id=$1 AND deleted_at IS NULL LIMIT 1 FOR UPDATE`,[dto.fuelCardId]):await client.query(`SELECT id,company_id,holder_name FROM fuel_card WHERE deleted_at IS NULL
           AND company_id=$2 AND (total_payment_number=$1 OR (length($1)>6 AND total_payment_number=right($1,6))
-          OR regexp_replace(masked_card_number,'[^0-9]','','g')=$1 OR official_card_number=$1)
+          OR regexp_replace(masked_card_number,'[^0-9]','','g')=$1 OR official_card_number=$1
+          OR (length($1)>4
+            AND right(regexp_replace(masked_card_number,'[^0-9]','','g'),4)=right($1,4)
+            AND 1=(SELECT count(*) FROM fuel_card suffix_card
+              WHERE suffix_card.deleted_at IS NULL
+                AND suffix_card.company_id=$2
+                AND right(regexp_replace(coalesce(suffix_card.official_card_number,suffix_card.masked_card_number),'[^0-9]','','g'),4)=right($1,4))))
         ORDER BY CASE WHEN total_payment_number=$1 THEN 0 WHEN length($1)>6 AND total_payment_number=right($1,6) THEN 1 ELSE 2 END
         LIMIT 1 FOR UPDATE`,[cardKey,companyId]);
       if(!card.rows[0]) card=await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,masked_card_number,monthly_limit,status,card_category)

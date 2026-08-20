@@ -994,23 +994,43 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(!startMatch)throw new Error(`TOTAL_EXTRACTION_START_DATE invalide : ${extractionStart}`);
       const fromText=`${startMatch[3]}/${startMatch[2]}/${startMatch[1]}`;
       const toText=`${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()}`;
-      let datesFilled=false;
+      // Le portail masque les deux champs tant que le mode « Libre » n'est
+      // pas actif (Jour/Semaine/Mois utilisent leurs propres périodes).
       for(const frame of page.frames()){
-        // Les mx-input sont souvent vides au premier rendu et toujours
-        // readonly. Les repérer par leur composant/nom plutôt que par leur
-        // valeur courante, qui était la cause de « filtres introuvables ».
-        const dateInputs=frame.locator(
-          '.mx-datepicker input.mx-input, input.mx-input[name="date"], input[name="date"][readonly]',
-        ).filter({visible:true});
-        if(await dateInputs.count()>=2){
-          await this.setTotalDateInput(dateInputs.first(),fromText);
-          await this.setTotalDateInput(dateInputs.nth(1),toText);
-          datesFilled=true;break;
+        const libre=frame.getByText(/^\s*Libre\s*$/i).filter({visible:true}).first();
+        if(await libre.isVisible({timeout:500}).catch(()=>false)){
+          await libre.click({force:true,timeout:3_000}).catch(()=>undefined);
+          break;
         }
       }
+      let datesFilled=false;
+      const dateDeadline=Date.now()+30_000;
+      while(!datesFilled&&Date.now()<dateDeadline){
+        for(const frame of page.frames()){
+          const inputs=frame.locator('input');
+          const indexes=await inputs.evaluateAll(elements=>elements.map((element,index)=>{
+            const field=element as HTMLInputElement;
+            const rect=field.getBoundingClientRect();
+            let context='';let parent:Element|null=field;
+            for(let level=0;level<4&&parent;level++,parent=parent.parentElement)
+              context+=` ${(parent.textContent??'').replace(/\s+/g,' ').trim()}`;
+            return {index,value:field.value,type:field.type,placeholder:field.placeholder,
+              aria:field.getAttribute('aria-label')??'',context,visible:rect.width>0&&rect.height>0};
+          }).filter(item=>item.visible&&(
+            /^\d{2}\/\d{2}\/\d{4}$/.test(item.value)||item.type==='date'||
+            /(?:à partir du|jusqu['’]au|date)/i.test(`${item.placeholder} ${item.aria} ${item.context}`)
+          )).map(item=>item.index)).catch(()=>[]);
+          if(indexes.length>=2){
+            await this.setTotalDateInput(inputs.nth(indexes[0]),fromText);
+            await this.setTotalDateInput(inputs.nth(indexes[1]),toText);
+            datesFilled=true;break;
+          }
+        }
+        if(!datesFilled)await page.waitForTimeout(500);
+      }
       if(!datesFilled){
-        const inputs=await Promise.all(page.frames().map(frame=>frame.locator('input').filter({visible:true})
-          .evaluateAll(elements=>elements.map(element=>({name:element.getAttribute('name'),className:element.className,type:element.getAttribute('type'),value:(element as HTMLInputElement).value}))).catch(()=>[])));
+        const inputs=await Promise.all(page.frames().map(frame=>frame.locator('input')
+          .evaluateAll(elements=>elements.map(element=>({name:element.getAttribute('name'),className:element.className,type:element.getAttribute('type'),value:(element as HTMLInputElement).value,placeholder:element.getAttribute('placeholder')}))).catch(()=>[])));
         throw new Error(`Filtres de dates introuvables pour ${clientName}. Champs visibles : ${JSON.stringify(inputs.flat().slice(0,12))}`);
       }
       let searched=false;

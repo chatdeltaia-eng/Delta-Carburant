@@ -54,7 +54,7 @@ services:
       - key: TOTAL_LIVE_SYNC_MINUTES
         value: 1
       - key: TOTAL_AGENT_RESTART_SECONDS
-        value: 300
+        value: 60
 
   - type: web
     name: delta-carburant-web

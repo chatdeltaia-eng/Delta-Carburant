@@ -14,7 +14,7 @@ import {
 } from 'playwright';
 import { TotalMobilityService } from './total-mobility.service';
 import { DatabaseService } from '../database/database.service';
-import type { RemoteCardStatus, RemoteDriver, RemoteTransaction, RemoteVehicle } from './total-mobility.service';
+import type { RemoteCardStatus, RemoteDriver, RemoteTransaction, RemoteVehicle, TotalTransactionContext } from './total-mobility.service';
 
 type Actor = { sub: string; email: string };
 type AgentState =
@@ -71,10 +71,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async autoStart() {
     if (!['IDLE', 'FAILED'].includes(this.statusValue.state)) return;
     if (!process.env.TOTAL_USERNAME?.trim() || !process.env.TOTAL_PASSWORD) return;
-    const [connection] = await this.db.query<{ enabled: boolean; company_id: string | null }>(
-      `SELECT t.enabled,
-        (SELECT c.id FROM company c WHERE c.active AND upper(c.code)='DC' LIMIT 1) company_id
-       FROM total_mobility_connection t WHERE t.enabled LIMIT 1`,
+    const [connection] = await this.db.query<{ enabled: boolean }>(
+      `SELECT t.enabled FROM total_mobility_connection t WHERE t.enabled LIMIT 1`,
     );
     if (!connection) return;
     const [user] = await this.db.query<{ id: string; email: string }>(
@@ -85,9 +83,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     if (!user) return;
     try {
       this.logger.log('Redémarrage automatique de l’agent Total Mobility');
-      // Sans action humaine, le compte configuré correspond à DELTA CUISINE.
-      // Ne jamais lancer implicitement un mélange des quatre clients.
-      this.start({ sub: user.id, email: user.email }, connection.company_id??undefined);
+      // Sans sélection humaine, synchroniser successivement les quatre clients.
+      // Une sélection explicite dans Delta continue de limiter le cycle à une société.
+      this.start({ sub: user.id, email: user.email });
     } catch (error) {
       this.logger.warn(`Agent Total non redémarré : ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -315,8 +313,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     if(!this.requestedCompanyId)await this.selectConfiguredClient();
     this.setStatus('EXTRACTING', 'Client Total sélectionné. Extraction des transactions…');
     if(refreshToken)await this.total.reconnect(refreshToken, this.actor);
-    else if(accessToken)await this.total.syncWithAccessToken(this.actor,accessToken,'2026-08-01');
-    else throw new Error('Total n’a fourni aucun jeton de session exploitable');
+    else if(!accessToken)throw new Error('Total n’a fourni aucun jeton de session exploitable');
     this.setStatus('EXTRACTING', this.requestedCompanyId
       ? 'Extraction des transactions du client sélectionné…'
       : 'Extraction complète des transactions de tous les clients…');
@@ -938,25 +935,13 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         results.push({client:name,error:message});
       }
     }
-    const successful=results.filter(result=>{
-      if(!result||typeof result!=='object')return false;
-      const row=result as Record<string,unknown>;
-      return !row.error&&Number(row.extracted??0)>0;
-    });
-    if(!successful.length){
-      const details=results.map(result=>{
-        const row=result as Record<string,unknown>;
-        return `${row.client??'Client inconnu'}: ${row.error??row.message??'0 carte'}`;
-      }).join(' | ');
-      throw new Error(`Aucune carte Total importée. ${details}`);
-    }
     const failed=results.filter(result=>result&&typeof result==='object'&&Boolean((result as Record<string,unknown>).error));
     if(failed.length){
       const details=failed.map(result=>{
         const row=result as Record<string,unknown>;
         return `${row.client??'Client inconnu'}: ${row.error??'extraction incomplète'}`;
       }).join(' | ');
-      throw new Error(`Extraction Total multi-clients incomplète. ${details}`);
+      throw new Error(`Extraction Total multi-clients incomplète. Données existantes conservées pour les clients en erreur. ${details}`);
     }
     return results;
   }
@@ -1000,7 +985,13 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     // sélectionné dans Delta. Ne pas poursuivre vers Cartes, Chauffeurs ou
     // Véhicules : ces modules changent de route et peuvent perdre le contexte
     // client alors que la jauge dépend uniquement du rapport des transactions.
-    const transactions=await this.extractCurrentClientTransactions(clientName);
+    const companyCodes:Record<string,string>={
+      'DELTA CUISINE':'DC','IKIT TN':'IKIT','DELTA CUISINE DISTRIBUTION':'DCD','STE LES TECHNIQUES DE MARBRE':'TCM',
+    };
+    const code=companyCodes[clientName.trim().toUpperCase()];
+    const [company]=await this.db.query<{id:string}>(`SELECT id FROM company WHERE active AND upper(code)=$1 LIMIT 1`,[code]);
+    if(!company)throw new Error(`Société Delta ${code??clientName} introuvable`);
+    const transactions=await this.extractCurrentClientTransactions(clientName,company.id);
     return {client:clientName,transactions};
   }
 
@@ -1061,16 +1052,25 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     throw new Error(`La date ${displayDate} est introuvable dans le calendrier Total`);
   }
 
-  private async extractCurrentClientTransactions(clientName:string){
+  private async extractCurrentClientTransactions(clientName:string,companyId:string){
     const page=this.page;
     if(!page||!this.actor)throw new Error('La session Total est indisponible pour les transactions');
     const captured:unknown[]=[];
     let reportAccessToken='';
+    let reportContext:TotalTransactionContext|undefined;
     const listener=async(response:import('playwright').Response)=>{
       if(!/transaction\/online\/api\/v1\/report\/list/i.test(response.url()))return;
       const headers=await response.request().allHeaders().catch(()=>({} as Record<string,string>));
       const authorization=headers.authorization;
       if(authorization)reportAccessToken=authorization;
+      try{
+        const payload=response.request().postDataJSON() as Record<string,unknown>;
+        const next={
+          customerId:String(payload.CustomerId??''),customerNumber:String(payload.CustomerNumber??''),
+          siteNumber:String(payload.SiteNumber??''),userId:String(payload.UserId??''),username:String(payload.usersname??''),
+        };
+        if(next.customerId&&next.customerNumber&&next.siteNumber)reportContext=next;
+      }catch{/* La requête observée n'expose pas de corps JSON. */}
       try{captured.push(await response.json());}catch{/* Réponse Total non JSON. */}
     };
     page.on('response',listener);
@@ -1247,10 +1247,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // indispensable pour le login et la sélection du client, mais le rapport
       // final est demandé à l'API officielle avec des DateFrom/DateTo explicites
       // et sa pagination complète. C'est l'unique source importée en base.
-      if(clientName.trim().toUpperCase()==='DELTA CUISINE'&&reportAccessToken){
-        const authoritative=await this.total.syncWithAccessToken(this.actor,reportAccessToken,extractionStart) as Record<string,unknown>;
-        if(Number(authoritative.fetched??0)<1)
-          throw new Error(`Le rapport officiel Total est vide pour ${clientName} du ${fromText} au ${toText}`);
+      if(reportAccessToken&&reportContext){
+        const authoritative=await this.total.syncClientWithAccessToken(
+          this.actor,reportAccessToken,companyId,clientName,reportContext,extractionStart,
+        ) as Record<string,unknown>;
         return {client:clientName,...authoritative};
       }
       const visibleRows:string[][]=[];

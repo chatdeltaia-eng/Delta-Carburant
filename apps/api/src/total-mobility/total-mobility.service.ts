@@ -37,6 +37,13 @@ type ConnectionRow = {
   refresh_token_ciphertext: string;
   last_success_at: Date | string | null;
 };
+export type TotalTransactionContext = {
+  customerId: string;
+  customerNumber: string;
+  siteNumber: string;
+  userId?: string;
+  username?: string;
+};
 export type RemoteTransaction = {
   transactionDate?: string;
   transactionTime?: string;
@@ -488,6 +495,40 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
     const token = accessToken.trim().replace(/^Bearer\s+/i, '');
     if (token.length < 20) throw new BadRequestException('Session Total absente ou incomplète');
     return this.syncNow(actor, requestedFromDate, token);
+  }
+  async syncClientWithAccessToken(
+    actor: Actor,
+    accessToken: string,
+    companyId: string,
+    clientName: string,
+    context: TotalTransactionContext,
+    requestedFromDate = this.initialExtractionDate,
+  ) {
+    const token = accessToken.trim().replace(/^Bearer\s+/i, '');
+    if (token.length < 20) throw new BadRequestException('Session Total absente ou incomplète');
+    const required=[context.customerId,context.customerNumber,context.siteNumber];
+    if(required.some(value=>!String(value??'').trim()))
+      throw new BadRequestException(`Contexte du client Total ${clientName} incomplet`);
+    const aliases:Record<string,string>={
+      'DELTA CUISINE':'DC',
+      'IKIT TN':'IKIT',
+      'DELTA CUISINE DISTRIBUTION':'DCD',
+      'STE LES TECHNIQUES DE MARBRE':'TCM',
+    };
+    const expectedCode=aliases[clientName.trim().toUpperCase()];
+    const [company]=await this.db.query<{code:string}>(
+      `SELECT code FROM company WHERE id=$1 AND active LIMIT 1`,[companyId],
+    );
+    if(!company||!expectedCode||company.code.trim().toUpperCase()!==expectedCode)
+      throw new BadRequestException(`Le client Total ${clientName} ne correspond pas à la société Delta sélectionnée`);
+    const config:ConnectionRow={
+      id:'browser-session',customer_id:context.customerId,
+      customer_number:context.customerNumber,site_number:context.siteNumber,
+      user_id:context.userId?.trim()||null,username:context.username?.trim()||null,
+      refresh_token_ciphertext:'',last_success_at:null,
+    };
+    const remote=await this.fetchAll(config,token,requestedFromDate);
+    return this.importBrowserTransactions(remote,actor,clientName,requestedFromDate);
   }
   async syncNow(actor: Actor, requestedFromDate?: string, sessionAccessToken?: string) {
     const lock = await this.db.query<{ locked: boolean }>(

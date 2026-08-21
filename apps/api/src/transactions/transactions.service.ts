@@ -202,15 +202,17 @@ export class TransactionsService {
       const vehicleKeys=this.registrationKeys(vehicleKey);
       const unavailableVehicle=vehicleKey ? await client.query(`SELECT id FROM vehicle
         WHERE regexp_replace(upper(coalesce(registration_normalized::text,registration_display)),'[^A-Z0-9]','','g')=ANY($1::text[])
-        AND (NOT active OR deleted_at IS NOT NULL) LIMIT 1`,[vehicleKeys]) : {rows:[]};
+        AND ($2::uuid IS NULL OR company_id=$2::uuid)
+        AND (NOT active OR deleted_at IS NOT NULL) LIMIT 1`,[vehicleKeys,dto.companyId??null]) : {rows:[]};
       let vehicle=vehicleKey ? await client.query(`SELECT v.id,v.company_id,v.driver_name,d.full_name AS driver_full_name
         FROM vehicle v LEFT JOIN driver d ON d.id=v.driver_id AND d.deleted_at IS NULL AND d.active
         WHERE regexp_replace(upper(coalesce(v.registration_normalized::text,v.registration_display)),'[^A-Z0-9]','','g')=ANY($1::text[])
+        AND ($5::uuid IS NULL OR v.company_id=$5::uuid)
         AND v.active AND v.deleted_at IS NULL
         ORDER BY CASE WHEN v.company_id=$3::uuid THEN 0 ELSE 1 END,
           CASE WHEN regexp_replace(upper(coalesce(d.full_name,v.driver_name,'')),'[^A-Z0-9]','','g')=$4 THEN 0 ELSE 1 END,
           CASE WHEN regexp_replace(upper(v.registration_display),'[^A-Z0-9]','','g')=$2 THEN 0 ELSE 1 END LIMIT 1`,
-        [vehicleKeys,vehicleKey,card.rows[0]?.company_id??null,String(row.beneficiary??card.rows[0]?.holder_name??'').toUpperCase().replace(/[^A-Z0-9]/g,'')]) : {rows:[]};
+        [vehicleKeys,vehicleKey,card.rows[0]?.company_id??null,String(row.beneficiary??card.rows[0]?.holder_name??'').toUpperCase().replace(/[^A-Z0-9]/g,''),dto.companyId??null]) : {rows:[]};
       const currentAssignment=card.rows[0]?await client.query(`SELECT v.id,v.company_id,v.driver_name,d.full_name AS driver_full_name,
         ca.beneficiary_id,coalesce(b.display_name,fc.holder_name) AS beneficiary_name
         FROM fuel_card fc
@@ -229,10 +231,11 @@ export class TransactionsService {
       // Une redistribution (ex. carte Najib D-Max vers Malek Poseur) est créée
       // ensuite dans transaction_allocation et ne modifie jamais la carte.
       const beneficiaryName=(currentAssignment.rows[0]?.beneficiary_name??card.rows[0]?.holder_name??row.beneficiary??vehicle.rows[0]?.driver_full_name??vehicle.rows[0]?.driver_name??'').trim();
-      const companyId=vehicle.rows[0]?.company_id??card.rows[0]?.company_id;
-      // Le véhicule est la source de vérité pour la société. Une carte Total
-      // créée auparavant sous DELTA ne doit pas bloquer une transaction DCD/DC.
-      if(card.rows[0]&&vehicle.rows[0]&&card.rows[0].company_id!==companyId) {
+      const companyId=dto.companyId??vehicle.rows[0]?.company_id??card.rows[0]?.company_id;
+      // Les imports Total ciblés sont strictement isolés par société. Le
+      // déplacement automatique d'une carte entre sociétés est réservé aux
+      // imports manuels historiques sans companyId explicite.
+      if(!dto.companyId&&card.rows[0]&&vehicle.rows[0]&&card.rows[0].company_id!==companyId) {
         await client.query(`UPDATE fuel_card SET company_id=$2,updated_at=now() WHERE id=$1`,[card.rows[0].id,companyId]);
         card.rows[0].company_id=companyId;
       }

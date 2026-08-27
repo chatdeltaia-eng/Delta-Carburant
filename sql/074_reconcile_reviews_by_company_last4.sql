@@ -28,7 +28,7 @@ FROM unique_matches m WHERE tr.id=m.review_id;
 -- Lorsqu'une carte et son véhicule sont tous les deux identifiés dans la même
 -- société, convertir le contrôle historique en transaction normale.
 WITH candidates AS (
-  SELECT DISTINCT ON (tr.id) tr.*,fc.id AS card_id,fc.company_id,
+  SELECT DISTINCT ON (tr.id) tr.*,fc.id AS card_id,fc.company_id AS matched_company_id,
     v.id AS vehicle_id,v.registration_display,
     coalesce(nullif(trim(tr.beneficiary_name),''),nullif(trim(fc.holder_name),''),
       nullif(trim(d.full_name),''),nullif(trim(v.driver_name),''),
@@ -46,15 +46,15 @@ WITH candidates AS (
   ORDER BY tr.id,v.created_at
 ), departments AS (
   INSERT INTO department(company_id,name)
-  SELECT DISTINCT company_id,'Transactions importées' FROM candidates
+  SELECT DISTINCT matched_company_id,'Transactions importées' FROM candidates
   ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name
-  RETURNING id,company_id
+  RETURNING department.id,department.company_id
 ), beneficiaries AS (
   INSERT INTO beneficiary(company_id,department_id,display_name)
-  SELECT DISTINCT c.company_id,d.id,c.resolved_beneficiary_name
-  FROM candidates c JOIN departments d USING(company_id)
+  SELECT DISTINCT c.matched_company_id,d.id,c.resolved_beneficiary_name
+  FROM candidates c JOIN departments d ON d.company_id=c.matched_company_id
   ON CONFLICT(company_id,display_name) DO UPDATE SET active=true
-  RETURNING id,company_id,display_name
+  RETURNING beneficiary.id,beneficiary.company_id,beneficiary.display_name
 ), inserted AS (
   INSERT INTO fuel_transaction(external_transaction_id,fuel_card_id,beneficiary_id,vehicle_id,
     transaction_date,station,product,quantity_liters,amount_incl_tax,source,import_batch_id,
@@ -63,7 +63,7 @@ WITH candidates AS (
     c.card_id,b.id,c.vehicle_id,c.transaction_date,c.station,c.product,c.quantity_liters,
     c.amount_incl_tax,'TOTAL_EXCEL',c.import_batch_id,c.source_row_number,
     c.previous_mileage,c.reported_mileage,c.authorization_code
-  FROM candidates c JOIN beneficiaries b ON b.company_id=c.company_id
+  FROM candidates c JOIN beneficiaries b ON b.company_id=c.matched_company_id
     AND b.display_name=c.resolved_beneficiary_name
   ON CONFLICT(external_transaction_id,source) DO UPDATE SET
     fuel_card_id=excluded.fuel_card_id,beneficiary_id=excluded.beneficiary_id,

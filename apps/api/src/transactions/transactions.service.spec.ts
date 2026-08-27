@@ -7,6 +7,8 @@ describe('TransactionsService import identity', () => {
   const fingerprint = (row: Record<string, unknown>) =>
     (service as unknown as { transactionFingerprint(value: Record<string, unknown>, card: string): string })
       .transactionFingerprint(row, '790351');
+  const isVehicleRegistration = (value:string) =>
+    (service as unknown as {isVehicleRegistration(value:string):boolean}).isVehicleRegistration(value);
 
   const transaction = {
     date: '2026-08-11T08:42:17.000Z',
@@ -28,6 +30,13 @@ describe('TransactionsService import identity', () => {
 
   it('refuse un moyen de paiement incomplet', () => {
     expect(cardLast4('123')).toBe('');
+  });
+
+  it('distingue une vraie immatriculation Total des libellés descriptifs',()=>{
+    expect(isVehicleRegistration('9459 TU 240')).toBe(true);
+    expect(isVehicleRegistration('240-TU-9459')).toBe(true);
+    expect(isVehicleRegistration('HORS PARC')).toBe(false);
+    expect(isVehicleRegistration('C4')).toBe(false);
   });
 
   it('produit la même empreinte quel que soit le fichier ou la ligne source', () => {

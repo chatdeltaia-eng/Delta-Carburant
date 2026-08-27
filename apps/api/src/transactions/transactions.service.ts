@@ -31,6 +31,10 @@ export class TransactionsService {
     const match=normalized.match(/^(\d+)TU(\d+)$/);
     return match?[normalized,`${match[2]}TU${match[1]}`]:[normalized];
   }
+  private isVehicleRegistration(value:string) {
+    const normalized=value.toUpperCase().replace(/[^A-Z0-9]/g,'');
+    return /^\d{1,4}(?:TU|TN)\d{1,4}$/.test(normalized);
+  }
   private transactionFingerprint(row: ImportRow, cardKey: string) {
     const normalized = [
       cardKey,
@@ -227,6 +231,22 @@ export class TransactionsService {
       // prime sur une plaque absente, mal espacée ou descriptive dans le fichier
       // Total (par exemple "C4").
       if(currentAssignment.rows[0]?.id) vehicle={rows:[currentAssignment.rows[0]]} as any;
+      // Une vraie plaque Total absente du référentiel devient immédiatement un
+      // véhicule de la société de la carte. Les libellés descriptifs comme
+      // HORS PARC ou C4 restent exclus et suivent leur workflow dédié.
+      if(!vehicle.rows[0]&&this.isVehicleRegistration(vehicleKey)){
+        vehicle=await client.query(`INSERT INTO vehicle(company_id,registration_normalized,registration_display,
+          active,driver_name,total_mobility_status,total_mobility_checked_at,total_mobility_raw)
+          VALUES($1,$2,$3,true,nullif($4,''),'DETECTED_FROM_TRANSACTION',now(),$5)
+          ON CONFLICT(company_id,registration_normalized) DO UPDATE SET
+            registration_display=excluded.registration_display,active=true,deleted_at=NULL,deleted_by=NULL,
+            driver_name=coalesce(nullif(excluded.driver_name,''),vehicle.driver_name),
+            total_mobility_status='DETECTED_FROM_TRANSACTION',total_mobility_checked_at=now(),
+            total_mobility_raw=excluded.total_mobility_raw,updated_at=now()
+          RETURNING id,company_id,driver_name,null::text AS driver_full_name,registration_display`,
+          [card.rows[0].company_id,vehicleKey,String(row.vehicle??'').trim().toUpperCase(),String(row.beneficiary??'').trim(),
+            {source:'TOTAL_TRANSACTION',cardNumber:cardKey,transactionDate:row.date}]);
+      }
       const isOffPark=card.rows[0]?.card_category==='OFF_PARK' ||
         String(row.vehicle??card.rows[0]?.official_registration??'').toUpperCase().replace(/[\s-]/g,'')==='HORSPARC';
       // Le titulaire du référentiel prime sur le libellé libre de l'export.

@@ -43,12 +43,14 @@ WITH candidates AS (
 ), departments AS (
   INSERT INTO department(company_id,name)
   SELECT DISTINCT matched_company_id,'Transactions importées' FROM candidates
-  ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id,company_id
+  ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name
+  RETURNING department.id,department.company_id
 ), beneficiaries AS (
   INSERT INTO beneficiary(company_id,department_id,display_name)
   SELECT DISTINCT c.matched_company_id,d.id,c.resolved_name FROM candidates c
   JOIN departments d ON d.company_id=c.matched_company_id
-  ON CONFLICT(company_id,display_name) DO UPDATE SET active=true RETURNING id,company_id,display_name
+  ON CONFLICT(company_id,display_name) DO UPDATE SET active=true
+  RETURNING beneficiary.id,beneficiary.company_id,beneficiary.display_name
 ), inserted AS (
   INSERT INTO fuel_transaction(external_transaction_id,fuel_card_id,beneficiary_id,vehicle_id,
     transaction_date,station,product,quantity_liters,amount_incl_tax,source,import_batch_id,

@@ -316,7 +316,14 @@ export class TransactionsService {
               card.rows[0].responsible_user_id??actor.sub,{vehicle:row.vehicle??null,cardPaymentNumber:cardKey}]);
         }
         if(vehicle.rows[0]?.id&&row.mileage!=null){
-          const previous=Number(row.previousMileage??0),reported=Number(row.mileage),liters=Number(row.liters);
+          const known=await client.query(`SELECT greatest(
+            coalesce((SELECT max(mr.mileage) FROM mileage_reading mr WHERE mr.vehicle_id=$1
+              AND mr.status='VALIDATED' AND mr.reading_date<$2),0),
+            coalesce((SELECT max(ft.reported_mileage) FROM fuel_transaction ft WHERE ft.vehicle_id=$1
+              AND ft.id<>$3 AND ft.deleted_at IS NULL AND ft.transaction_date<$2),0)
+          )::float AS mileage`,[vehicle.rows[0].id,row.date,inserted.rows[0].id]);
+          const previous=Math.max(Number(row.previousMileage??0),Number(known.rows[0]?.mileage??0));
+          const reported=Number(row.mileage),liters=Number(row.liters);
           const rates=await client.query(`SELECT percentile_cont(0.5) WITHIN GROUP(ORDER BY rate)::float AS rate FROM (
             SELECT 100*quantity_liters/(reported_mileage-previous_mileage) AS rate FROM fuel_transaction
             WHERE vehicle_id=$1 AND id<>$2 AND deleted_at IS NULL AND previous_mileage IS NOT NULL
@@ -324,11 +331,36 @@ export class TransactionsService {
           const reference=Number(rates.rows[0]?.rate??0)||10;
           const estimated=previous+100*liters/reference;
           const minimum=previous+100*liters/(reference*1.35),maximum=previous+100*liters/(reference*.65);
-          if((reported<minimum||reported>maximum)&&card.rows[0].responsible_user_id){
+          const regressed=reported<previous;
+          const implausible=previous>0&&liters>0&&(reported<minimum||reported>maximum);
+          if(regressed||implausible){
+            await client.query(`INSERT INTO anomaly(fuel_transaction_id,fuel_card_id,vehicle_id,anomaly_type,severity,status,description,assigned_to,metadata)
+              SELECT $1,$2,$3,'MILEAGE_MISMATCH','HIGH','OPEN',$4,$5,$6
+              WHERE NOT EXISTS(SELECT 1 FROM anomaly WHERE fuel_transaction_id=$1 AND anomaly_type='MILEAGE_MISMATCH' AND status IN('OPEN','IN_REVIEW'))`,
+              [inserted.rows[0].id,card.rows[0].id,vehicle.rows[0].id,
+                regressed
+                  ?`Kilométrage Total en régression : ${reported} km, dernier kilométrage connu ${previous} km.`
+                  :`Kilométrage Total incohérent : ${reported} km, plage estimée ${minimum.toFixed(0)}–${maximum.toFixed(0)} km selon ${liters.toFixed(3)} L.`,
+                card.rows[0].responsible_user_id??actor.sub,{reported,previous,estimated,minimum,maximum,liters}]);
+          }else{
+            await client.query(`UPDATE vehicle SET total_mobility_mileage=greatest(coalesce(total_mobility_mileage,0),$2),
+              total_mobility_checked_at=now(),updated_at=now() WHERE id=$1`,[vehicle.rows[0].id,reported]);
+            await client.query(`INSERT INTO mileage_reading(vehicle_id,beneficiary_id,reading_date,mileage,status,source,
+              created_by,validated_by,validated_at,previous_mileage,expected_mileage,detected_distance,anomaly,
+              period_liters,reference_liters_per_100km,estimated_distance,estimated_mileage,reconciliation_message)
+              VALUES($1,$2,$3,$4,'VALIDATED','TOTAL_MOBILITY',$5,$5,now(),$6,$4,greatest(0,$4-$6),false,
+                $7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`,
+              [vehicle.rows[0].id,beneficiary.rows[0].id,row.date,reported,actor.sub,previous,liters,reference,
+                100*liters/reference,estimated,`Kilométrage ${reported} km validé depuis la transaction Total.`]);
+            await client.query(`UPDATE anomaly SET status='RESOLVED',resolved_at=now(),resolution='Kilométrage Total cohérent validé'
+              WHERE vehicle_id=$1 AND anomaly_type='MILEAGE_MISMATCH' AND status IN('OPEN','IN_REVIEW')
+                AND fuel_transaction_id<>$2`,[vehicle.rows[0].id,inserted.rows[0].id]);
+          }
+          if((regressed||implausible)&&card.rows[0].responsible_user_id){
             await client.query(`INSERT INTO notification(user_id,title,message,severity,target_view,entity_type,entity_id)
               SELECT $1,'Kilométrage véhicule à vérifier',$2,'HIGH','mileage','fuel_transaction',$3
               WHERE NOT EXISTS(SELECT 1 FROM notification WHERE user_id=$1 AND entity_type='fuel_transaction' AND entity_id=$3 AND title='Kilométrage véhicule à vérifier')`,
-              [card.rows[0].responsible_user_id,`${vehicle.rows[0].registration_display??row.vehicle??'Véhicule'} : ${reported} km extraits, estimation ${estimated.toFixed(0)} km (plage ${minimum.toFixed(0)}–${maximum.toFixed(0)}) selon ${liters.toFixed(3)} L. Kilométrage non conforme : veuillez contacter le chauffeur du véhicule.`,inserted.rows[0].id]);
+              [card.rows[0].responsible_user_id,`${vehicle.rows[0].registration_display??row.vehicle??'Véhicule'} : ${reported} km extraits, dernier KM ${previous}, estimation ${estimated.toFixed(0)} km (plage ${minimum.toFixed(0)}–${maximum.toFixed(0)}) selon ${liters.toFixed(3)} L. Kilométrage non conforme : veuillez contacter le chauffeur du véhicule.`,inserted.rows[0].id]);
           }
         }
         const canonicalProduct=this.canonicalFuelProduct(row.product);

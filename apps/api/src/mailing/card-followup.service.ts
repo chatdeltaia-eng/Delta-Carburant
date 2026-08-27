@@ -69,13 +69,13 @@ export class CardFollowupService implements OnModuleInit, OnModuleDestroy {
       FROM jsonb_to_recordset($1::jsonb) AS r(transaction_id uuid,card text,company text)
       JOIN app_user u ON u.active AND u.role::text IN ('ZIN_FINANCE','DIRECTION_GENERAL','SUPER_ADMIN')
       WHERE NOT EXISTS(SELECT 1 FROM notification n WHERE n.user_id=u.id AND n.entity_type='fuel_transaction' AND n.entity_id=r.transaction_id
-        AND n.title='Consommation sur carte non distribuée')`,[rows.map(row=>({transaction_id:row.transactionId,card:row.card,company:row.company}))]);
+        AND n.title='Consommation sur carte non distribuée')`,[JSON.stringify(rows.map(row=>({transaction_id:row.transactionId,card:row.card,company:row.company})))]);
     const recipients=(process.env.UNDISTRIBUTED_CARD_MAIL_TO||'khaled.sfaxi@deltacuisine.com').split(',').map(value=>value.trim()).filter(Boolean);
     const details=rows.map(row=>`<tr><td>${this.escape(row.company)}</td><td><b>${this.escape(row.card)}</b></td><td>${this.escape(new Date(row.date).toLocaleString('fr-TN'))}</td><td>${row.liters.toFixed(3)} L</td><td>${row.amount.toFixed(3)} TND</td><td>${this.escape(row.status)}</td></tr>`).join('');
     const result=await this.mail.send(recipients,'Alerte — consommation sur carte non distribuée',`<div style="font-family:Arial,sans-serif;max-width:900px;color:#173b2b"><h2>Carte non distribuée ayant consommé du carburant</h2><p>La consommation a été affectée à la carte conforme grâce aux 4 derniers chiffres et à sa société.</p><p><b>Veuillez vérifier avec Zin ou la Direction Générale qui a distribué cette carte</b>, puis mettre à jour son affectation dans Delta Carburant. La consommation actuelle est déjà conservée sur la carte.</p><table style="width:100%;border-collapse:collapse"><thead><tr><th>Société</th><th>Carte</th><th>Date</th><th>Litres</th><th>Montant</th><th>Statut</th></tr></thead><tbody>${details}</tbody></table></div>`);
     await this.db.query(`INSERT INTO management_mail_log(report_type,recipients,status,details) VALUES('UNDISTRIBUTED_CARD_CONSUMPTION',$1,$2,$3)`,[recipients,result.sent?'SENT':'SKIPPED',{transactions:rows.map(row=>row.transactionId),...result}]);
     if(result.sent)await this.db.query(`INSERT INTO undistributed_card_consumption_alert(fuel_transaction_id,recipients)
-      SELECT value::uuid,$2 FROM jsonb_array_elements_text($1::jsonb) ON CONFLICT(fuel_transaction_id) DO NOTHING`,[rows.map(row=>row.transactionId),recipients]);
+      SELECT value::uuid,$2 FROM jsonb_array_elements_text($1::jsonb) ON CONFLICT(fuel_transaction_id) DO NOTHING`,[JSON.stringify(rows.map(row=>row.transactionId)),recipients]);
   }
   private async createCardAlerts() {
     const threshold = Number(process.env.CARD_LIMIT_ALERT_PERCENT || 90);

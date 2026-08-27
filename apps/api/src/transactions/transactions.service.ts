@@ -8,6 +8,10 @@ type ImportRow = { date:string; cardNumber:string; vehicle?:string; beneficiary?
 @Injectable()
 export class TransactionsService {
   constructor(private readonly db: DatabaseService) {}
+  private cardLast4(value:string) {
+    const digits=String(value??'').replace(/\D/g,'');
+    return digits.length>=4?digits.slice(-4):'';
+  }
   private async archiveCompletedMonths() {
     await this.db.query(`UPDATE fuel_transaction SET archived_at=now()
       WHERE deleted_at IS NULL AND archived_at IS NULL
@@ -77,7 +81,7 @@ export class TransactionsService {
     ORDER BY ft.transaction_date DESC`, [actor.role==='NAJIB_ASSIGNER',actor.sub,companyId]);
     if (actor.role === 'NAJIB_ASSIGNER') {
       const pending = await this.db.query(`SELECT ('review:'||tr.id::text) AS id,tr.transaction_date AS date,
-        tr.card_number AS card,tr.station,tr.product,tr.quantity_liters AS liters,tr.amount_incl_tax AS amount,
+        tr.card_number AS card,fc.company_id AS "companyId",c.code AS "companyCode",tr.station,tr.product,tr.quantity_liters AS liters,tr.amount_incl_tax AS amount,
         tib.source_filename AS file,tr.beneficiary_name AS beneficiary,tr.vehicle_registration AS vehicle,
         null::timestamptz AS "correctedAt",fc.card_category AS "cardCategory",fc.monthly_limit AS "monthlyLimit",
         0::numeric AS "allocatedAmount",tr.amount_incl_tax AS "remainingAmount",null::uuid AS "pendingAllocationId",
@@ -85,29 +89,39 @@ export class TransactionsService {
         FROM transaction_review tr
         JOIN transaction_import_batch tib ON tib.id=tr.import_batch_id
         JOIN fuel_card fc ON fc.id=tr.fuel_card_id
-        WHERE tr.status='PENDING' AND fc.responsible_user_id=$1
-        ORDER BY tr.transaction_date DESC`, [actor.sub]);
+        JOIN company c ON c.id=fc.company_id
+        WHERE tr.status='PENDING' AND fc.responsible_user_id=$1 AND ($2='' OR fc.company_id=$2::uuid)
+        ORDER BY tr.transaction_date DESC`, [actor.sub,companyId]);
       return [...pending,...transactions].sort((a:any,b:any)=>new Date(b.date).getTime()-new Date(a.date).getTime());
     }
     const pending = await this.db.query(`SELECT ('review:'||tr.id::text) AS id,tr.transaction_date AS date,
-      tr.card_number AS card,tr.station,tr.product,tr.quantity_liters AS liters,tr.amount_incl_tax AS amount,
+      tr.card_number AS card,coalesce(tr.company_id,fc.company_id) AS "companyId",c.code AS "companyCode",tr.station,tr.product,tr.quantity_liters AS liters,tr.amount_incl_tax AS amount,
       tib.source_filename AS file,tr.beneficiary_name AS beneficiary,tr.vehicle_registration AS vehicle,
       null::timestamptz AS "correctedAt",null::text AS "cardCategory",null::numeric AS "monthlyLimit",
       0::numeric AS "allocatedAmount",tr.amount_incl_tax AS "remainingAmount",null::uuid AS "pendingAllocationId",
       '[]'::jsonb AS allocations,tr.id AS "reviewId",tr.issue_type AS "reviewIssue",tr.status AS "reviewStatus"
       FROM transaction_review tr JOIN transaction_import_batch tib ON tib.id=tr.import_batch_id
-      WHERE tr.status='PENDING' ORDER BY tr.transaction_date DESC`);
+      LEFT JOIN fuel_card fc ON fc.id=tr.fuel_card_id
+      LEFT JOIN company c ON c.id=coalesce(tr.company_id,fc.company_id)
+      WHERE tr.status='PENDING' AND ($1='' OR coalesce(tr.company_id,fc.company_id)=$1::uuid)
+      ORDER BY tr.transaction_date DESC`,[companyId]);
     return [...pending,...transactions].sort((a:any,b:any)=>new Date(b.date).getTime()-new Date(a.date).getTime());
   }
-  reviews() { return this.db.query(`SELECT id,issue_type AS "issueType",status,card_number AS "cardNumber",
+  reviews(companyId='') { return this.db.query(`SELECT id,issue_type AS "issueType",status,
+    right(regexp_replace(card_number,'[^0-9]','','g'),4) AS "cardNumber",
     vehicle_registration AS vehicle,beneficiary_name AS beneficiary,transaction_date AS date,station,product,quantity_liters AS liters,
-    amount_incl_tax AS amount,created_at AS "createdAt" FROM transaction_review WHERE status='PENDING' ORDER BY created_at DESC`); }
-  imports(){return this.db.query(`SELECT tib.id,tib.source_filename AS filename,tib.imported_at AS "importedAt",tib.total_rows AS "totalRows",
+    amount_incl_tax AS amount,created_at AS "createdAt" FROM transaction_review
+    WHERE status='PENDING' AND ($1='' OR company_id=$1::uuid) ORDER BY created_at DESC`,[companyId]); }
+  imports(companyId=''){return this.db.query(`SELECT tib.id,tib.source_filename AS filename,tib.imported_at AS "importedAt",tib.total_rows AS "totalRows",
     tib.imported_rows AS "importedRows",tib.duplicate_rows AS "duplicateRows",tib.rejected_rows AS "rejectedRows",tib.status,
     tib.reverted_at AS "revertedAt",tib.revert_reason AS "revertReason",u.display_name AS "importedBy",
     count(ft.id) FILTER(WHERE ft.deleted_at IS NULL)::int AS "activeTransactions"
     FROM transaction_import_batch tib LEFT JOIN app_user u ON u.id=tib.imported_by
-    LEFT JOIN fuel_transaction ft ON ft.import_batch_id=tib.id GROUP BY tib.id,u.display_name ORDER BY tib.imported_at DESC LIMIT 100`);}
+    LEFT JOIN fuel_transaction ft ON ft.import_batch_id=tib.id
+    WHERE ($1='' OR EXISTS(SELECT 1 FROM fuel_transaction scoped_ft JOIN fuel_card scoped_fc ON scoped_fc.id=scoped_ft.fuel_card_id
+      WHERE scoped_ft.import_batch_id=tib.id AND scoped_fc.company_id=$1::uuid)
+      OR EXISTS(SELECT 1 FROM transaction_review scoped_tr WHERE scoped_tr.import_batch_id=tib.id AND scoped_tr.company_id=$1::uuid))
+    GROUP BY tib.id,u.display_name ORDER BY tib.imported_at DESC LIMIT 100`,[companyId]);}
   async revertImport(id:string,reason:string,actor:Actor){return this.db.transaction(async client=>{
     const batch=await client.query(`SELECT id,status,source_filename FROM transaction_import_batch WHERE id=$1 FOR UPDATE`,[id]);
     if(!batch.rows[0])throw new NotFoundException('Import introuvable');
@@ -148,7 +162,7 @@ export class TransactionsService {
     }
     let imported=0,review=0,duplicates=0,verified=0,mismatches=0,unpriced=0;
     for (let index=0;index<dto.rows.length;index++) {
-      const row=dto.rows[index], cardKey=row.cardNumber.replace(/\D/g,'');
+      const row=dto.rows[index], cardKey=this.cardLast4(row.cardNumber);
       if (!cardKey) throw new BadRequestException(
         `Numéro du mode de paiement absent à la ligne ${index+2}. Import annulé : aucune consommation n'a été regroupée sur une carte inconnue.`,
       );
@@ -156,23 +170,18 @@ export class TransactionsService {
       row.product=String(row.product??'').trim();
       if(!row.product) throw new BadRequestException(`Nom de produit absent à la ligne ${index+2}. Import annulé.`);
       if(!row.station) throw new BadRequestException(`Nom de la station absent à la ligne ${index+2}. Import annulé.`);
-      const card=await client.query(`SELECT fc.id,fc.company_id,fc.official_registration,fc.holder_name,fc.card_category,fc.reference_vehicle_id,fc.status,fc.responsible_user_id,
+      const card=await client.query(`SELECT fc.id,fc.company_id,fc.masked_card_number,fc.official_card_number,fc.official_registration,fc.holder_name,fc.card_category,fc.reference_vehicle_id,fc.status,fc.responsible_user_id,
         (SELECT max(rr.returned_at) FROM card_return_receipt rr WHERE rr.fuel_card_id=fc.id) AS last_returned_at
-        FROM fuel_card fc WHERE fc.deleted_at IS NULL AND ($2::uuid IS NULL OR fc.company_id=$2::uuid) AND (
-        fc.total_payment_number=$1
-        OR (length($1)>6 AND fc.total_payment_number=right($1,6))
-        OR regexp_replace(fc.masked_card_number,'[^0-9]','','g')=$1
-        OR fc.official_card_number=$1
-        OR (length($1)>4
-          AND right(regexp_replace(fc.masked_card_number,'[^0-9]','','g'),4)=right($1,4)
-          AND 1=(SELECT count(*) FROM fuel_card suffix_card
-            WHERE suffix_card.deleted_at IS NULL
-              AND suffix_card.company_id=fc.company_id
-              AND right(regexp_replace(coalesce(suffix_card.official_card_number,suffix_card.masked_card_number),'[^0-9]','','g'),4)=right($1,4)))
-      ) ORDER BY CASE WHEN fc.total_payment_number=$1 THEN 0
-        WHEN length($1)>6 AND fc.total_payment_number=right($1,6) THEN 1
-        WHEN regexp_replace(fc.masked_card_number,'[^0-9]','','g')=$1 THEN 2
-        WHEN fc.official_card_number=$1 THEN 3 ELSE 4 END LIMIT 1`,[cardKey,dto.companyId??null]);
+        FROM fuel_card fc WHERE fc.deleted_at IS NULL AND ($2::uuid IS NULL OR fc.company_id=$2::uuid)
+          AND (right(regexp_replace(fc.masked_card_number,'[^0-9]','','g'),4)=$1
+            OR right(regexp_replace(coalesce(fc.total_payment_number,''),'[^0-9]','','g'),4)=$1
+            OR right(regexp_replace(coalesce(fc.official_card_number,''),'[^0-9]','','g'),4)=$1)
+          AND 1=(SELECT count(*) FROM fuel_card matching_card
+            WHERE matching_card.deleted_at IS NULL AND matching_card.company_id=fc.company_id
+              AND (right(regexp_replace(matching_card.masked_card_number,'[^0-9]','','g'),4)=$1
+                OR right(regexp_replace(coalesce(matching_card.total_payment_number,''),'[^0-9]','','g'),4)=$1
+                OR right(regexp_replace(coalesce(matching_card.official_card_number,''),'[^0-9]','','g'),4)=$1))
+        LIMIT 1`,[cardKey,dto.companyId??null]);
       const fingerprint=this.transactionFingerprint(row,cardKey);
       if(!card.rows[0]) {
         const existingReview=await client.query(`SELECT id FROM transaction_review
@@ -187,17 +196,10 @@ export class TransactionsService {
         review++;
         continue;
       }
-      const availableStatuses=['ACTIVE','DISTRIBUTED','ASSIGNED'];
-      const historicalBeforeReturn=card.rows[0].status==='SAFE'&&card.rows[0].last_returned_at
-        &&new Date(row.date).getTime()<=new Date(card.rows[0].last_returned_at).getTime();
-      if(!availableStatuses.includes(card.rows[0].status)&&!historicalBeforeReturn) {
-        await client.query(`INSERT INTO transaction_review(import_batch_id,source_row_number,issue_type,card_number,vehicle_registration,
-          beneficiary_name,transaction_date,station,product,quantity_liters,amount_incl_tax,fuel_card_id,previous_mileage,reported_mileage,authorization_code,company_id)
-          VALUES($1,$2,'UNAVAILABLE_CARD',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-        [batch.rows[0].id,index+1,row.cardNumber,row.vehicle??null,row.beneficiary??null,row.date,row.station,row.product,row.liters,row.amount,card.rows[0].id,row.previousMileage??null,row.mileage??null,row.authorizationCode??null,dto.companyId??card.rows[0].company_id]);
-        review++;
-        continue;
-      }
+      // Le statut courant (coffre, suspendue, à affecter...) ne change pas
+      // l'identité d'une carte. Dès que le suffixe est unique dans la société,
+      // sa consommation Total doit être rattachée à cette carte. Les contrôles
+      // de statut restent un workflow de gestion de carte séparé.
       const vehicleKey=(row.vehicle??'').toUpperCase().replace(/[^A-Z0-9]/g,'');
       const vehicleKeys=this.registrationKeys(vehicleKey);
       const unavailableVehicle=vehicleKey ? await client.query(`SELECT id FROM vehicle
@@ -401,18 +403,19 @@ export class TransactionsService {
       }
       if(!vehicle.rows[0]) throw new BadRequestException('Sélectionnez un véhicule existant pour enregistrer cette transaction.');
       const companyId=vehicle.rows[0].company_id;
-      const cardKey=String(row.card_number).replace(/\D/g,'');
+      const cardKey=this.cardLast4(String(row.card_number));
+      if(!cardKey)throw new BadRequestException('Le moyen de paiement doit contenir au moins 4 chiffres.');
       let card=dto.fuelCardId?await client.query(`SELECT id,company_id,holder_name FROM fuel_card
         WHERE id=$1 AND deleted_at IS NULL LIMIT 1 FOR UPDATE`,[dto.fuelCardId]):await client.query(`SELECT id,company_id,holder_name FROM fuel_card WHERE deleted_at IS NULL
-          AND company_id=$2 AND (total_payment_number=$1 OR (length($1)>6 AND total_payment_number=right($1,6))
-          OR regexp_replace(masked_card_number,'[^0-9]','','g')=$1 OR official_card_number=$1
-          OR (length($1)>4
-            AND right(regexp_replace(masked_card_number,'[^0-9]','','g'),4)=right($1,4)
-            AND 1=(SELECT count(*) FROM fuel_card suffix_card
-              WHERE suffix_card.deleted_at IS NULL
-                AND suffix_card.company_id=$2
-                AND right(regexp_replace(coalesce(suffix_card.official_card_number,suffix_card.masked_card_number),'[^0-9]','','g'),4)=right($1,4))))
-        ORDER BY CASE WHEN total_payment_number=$1 THEN 0 WHEN length($1)>6 AND total_payment_number=right($1,6) THEN 1 ELSE 2 END
+          AND company_id=$2
+          AND (right(regexp_replace(masked_card_number,'[^0-9]','','g'),4)=$1
+            OR right(regexp_replace(coalesce(total_payment_number,''),'[^0-9]','','g'),4)=$1
+            OR right(regexp_replace(coalesce(official_card_number,''),'[^0-9]','','g'),4)=$1)
+          AND 1=(SELECT count(*) FROM fuel_card matching_card
+            WHERE matching_card.deleted_at IS NULL AND matching_card.company_id=$2
+              AND (right(regexp_replace(matching_card.masked_card_number,'[^0-9]','','g'),4)=$1
+                OR right(regexp_replace(coalesce(matching_card.total_payment_number,''),'[^0-9]','','g'),4)=$1
+                OR right(regexp_replace(coalesce(matching_card.official_card_number,''),'[^0-9]','','g'),4)=$1))
         LIMIT 1 FOR UPDATE`,[cardKey,companyId]);
       if(!card.rows[0]) card=await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,masked_card_number,monthly_limit,status,card_category)
         VALUES($1,pgp_sym_encrypt($2,$3,'cipher-algo=aes256'),hmac($2,$4,'sha256'),$2,0,'ACTIVE','PERSONALIZED')

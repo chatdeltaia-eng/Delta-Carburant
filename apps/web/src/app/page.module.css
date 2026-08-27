@@ -1844,3 +1844,107 @@
   .sidebar nav button,.railGroup button,.referenceIntroActions button,.referenceKpis article,.referenceActivity>div,
   .referenceBars>div i,.referenceVehicles>div,.moduleFilters input,.moduleFilters select,.pageButtons button{transition:none!important}
 }
+
+/* Rapport Direction 2.0 — langage visuel décisionnel et lisibilité renforcée. */
+.reportShell{
+  border:1px solid #326a9c!important;border-radius:26px!important;
+  background:linear-gradient(145deg,#071d34,#06172b)!important;
+  box-shadow:0 35px 95px rgba(0,0,0,.44),0 0 0 1px rgba(76,161,245,.06)!important
+}
+.reportTitle{
+  min-height:116px!important;padding:25px 30px!important;border-bottom:1px solid rgba(97,177,255,.34)!important;
+  background:radial-gradient(circle at 78% -30%,rgba(83,164,255,.42),transparent 21rem),radial-gradient(circle at 15% 140%,rgba(58,86,196,.3),transparent 22rem),linear-gradient(115deg,#071c35,#0a3662 58%,#092448)!important
+}
+.reportTitle:after{height:4px!important;background:linear-gradient(90deg,#49a9ff 0 53%,#f59e0b 53% 76%,#ef4444 76%)!important}
+.reportBrand>span{border-color:#5795c9!important;background:linear-gradient(145deg,#1c65a5,#293ea7)!important;color:#fff!important;box-shadow:0 12px 28px rgba(14,82,155,.38)!important}
+.reportBrand b,.reportHeading h2{color:#fff!important}.reportBrand small,.reportHeading small{color:#a9c9e8!important}
+.reportHeading h2{font-size:clamp(21px,1.7vw,28px)!important;letter-spacing:-.5px!important}
+.reportLive{border-color:#3e82ba!important;background:#0c3156!important;color:#dceeff!important;box-shadow:inset 0 1px rgba(255,255,255,.07)}
+.reportLive i{background:#4ba8ff!important;box-shadow:0 0 0 5px rgba(75,168,255,.16)!important}
+.reportContext{min-height:56px!important;padding:10px 22px!important;border-color:#2d5a83!important;background:#0a2542!important}
+.reportContext span,.reportContext strong{padding:8px 12px!important;border-color:#36668f!important;background:#102f50!important;color:#c7dcef!important;font-size:9px!important}
+.reportContext .contextPrimary{border-color:#4b9ce2!important;background:#164e7d!important;color:#fff!important}
+.reportContext strong{border-color:#4b9ce2!important;background:linear-gradient(135deg,#1767a9,#273fa5)!important;color:#fff!important;box-shadow:0 7px 17px rgba(0,0,0,.18)}
+.reportLayout{gap:20px!important;padding:20px!important}
+
+.executiveStrip,.reportKpis,.flowKpiGrid,.dgAnalysisKpis{gap:13px!important}
+.reportKpiCard{
+  position:relative!important;min-height:126px!important;padding:18px 16px 16px 62px!important;
+  border:1px solid #356993!important;border-radius:17px!important;
+  background:linear-gradient(145deg,#10365d,#0a2544)!important;
+  box-shadow:0 14px 34px rgba(0,0,0,.22),inset 0 1px rgba(255,255,255,.055)!important;
+  transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease!important
+}
+.reportKpiCard:hover{transform:translateY(-4px)!important;border-color:#5aaaf0!important;box-shadow:0 21px 44px rgba(0,0,0,.31)!important}
+.reportKpiCard:before{width:5px!important;background:linear-gradient(#4ba8ff,#3155d0)!important}
+.reportKpiCard:after{content:"";position:absolute;right:-30px;top:-40px;width:120px;height:120px;border-radius:50%;background:radial-gradient(circle,rgba(72,164,255,.13),transparent 68%);pointer-events:none}
+.reportKpiIcon{width:36px!important;height:36px!important;border:1px solid rgba(113,188,255,.3)!important;border-radius:11px!important;background:#164b78!important;color:#8dccff!important;box-shadow:0 9px 20px rgba(0,0,0,.2)!important}
+.reportKpiCard small{color:#b6cee4!important;font-size:8.5px!important;line-height:1.4!important;letter-spacing:.8px!important}
+.reportKpiCard strong{margin-top:8px!important;color:#fff!important;font-size:clamp(21px,1.55vw,28px)!important;letter-spacing:-.45px!important}
+.reportKpiCard em{margin-top:9px!important;color:#9fb8d0!important;font-size:8.5px!important;line-height:1.45!important}
+.reportKpi_money{border-color:#337db5!important;background:linear-gradient(145deg,#0d4167,#092942)!important}.reportKpi_money:before{background:linear-gradient(#38bdf8,#2563eb)!important}.reportKpi_money .reportKpiIcon{background:#115783!important;color:#b9e8ff!important}
+.reportKpi_volume{border-color:#4c62bd!important;background:linear-gradient(145deg,#1c376b,#101f48)!important}.reportKpi_volume:before{background:linear-gradient(#60a5fa,#4f46e5)!important}.reportKpi_volume .reportKpiIcon{background:#263f7b!important;color:#c3d8ff!important}
+.reportKpi_good{border-color:#25865a!important;background:linear-gradient(145deg,#124d43,#0a302d)!important}.reportKpi_good:before{background:linear-gradient(#4ade80,#16a34a)!important}.reportKpi_good .reportKpiIcon{background:#155b45!important;color:#a7f3c1!important}
+.reportKpi_warning{border-color:#b97812!important;background:linear-gradient(145deg,#5a421a,#30291e)!important}.reportKpi_warning:before{background:linear-gradient(#fbbf24,#d97706)!important}.reportKpi_warning .reportKpiIcon{background:#725018!important;color:#ffe298!important}.reportKpi_warning strong{color:#ffdc84!important}
+.reportKpi_danger{border-color:#cf4545!important;background:linear-gradient(145deg,#65202d,#351927)!important}.reportKpi_danger:before{background:linear-gradient(#ff6b6b,#dc2626)!important}.reportKpi_danger .reportKpiIcon{background:#7c2632!important;color:#ffc2c2!important}.reportKpi_danger strong{color:#ff9d9d!important}
+
+.totalWorkflowSection,.flowKpiSection,.dgAnalysisSection,.dgCompanySection,.dailyConsumptionPanel{
+  margin-block:18px!important;padding:21px!important;border:1px solid #34658f!important;border-radius:19px!important;
+  background:radial-gradient(circle at 100% 0,rgba(67,148,230,.13),transparent 25rem),linear-gradient(145deg,#0c2d4e,#081f39)!important;
+  box-shadow:0 17px 42px rgba(0,0,0,.21),inset 0 1px rgba(255,255,255,.035)!important
+}
+.flowKpiHeading{padding-bottom:15px;border-bottom:1px solid #2c587f!important}
+.flowKpiHeading small{color:#73baff!important;font-size:9px!important}.flowKpiHeading h3{color:#fff!important;font-size:18px!important}.flowKpiHeading p{color:#aac2d8!important}.flowKpiHeading>span{border:1px solid #3974a7!important;background:#123d68!important;color:#a9d6ff!important}
+.totalWorkflowSteps{margin-top:18px!important}.totalWorkflowSteps:before{background:linear-gradient(90deg,#4ba8ff,#5471df)!important}
+.totalWorkflowSteps article{border-color:#35678f!important;background:linear-gradient(145deg,#11375c,#0b2746)!important;box-shadow:0 12px 28px rgba(0,0,0,.18)!important}
+.totalWorkflowSteps article:hover{border-color:#60adf0!important;box-shadow:0 18px 38px rgba(0,0,0,.27)!important}.totalWorkflowSteps article>span{background:#174f7e!important;color:#b9e0ff!important}.totalWorkflowSteps b{color:#fff!important}.totalWorkflowSteps small,.totalWorkflowSteps em{color:#a9c2d9!important}
+
+.dailyConsumptionPanel{padding:0!important}.dailyConsumptionPanel:before{height:4px!important;background:linear-gradient(90deg,#4ba8ff,#6366f1)!important}
+.dailyConsumptionHead{padding:20px 22px!important;border-color:#2d5c84!important;background:linear-gradient(100deg,#10365b,#0b2948)!important}.dailyConsumptionHead h3{color:#fff!important;font-size:17px!important}.dailyConsumptionHead p,.dailyConsumptionHead small{color:#abc4db!important}.dailyTotals span{border:1px solid #356990!important;border-radius:11px!important;background:#0b2744!important}.dailyTotals b{color:#fff!important}
+.dailyHistogram{background:repeating-linear-gradient(to bottom,transparent 0,transparent 63px,rgba(95,164,232,.1) 64px)!important}.dailyLitersBar{background:linear-gradient(#60c5ff,#1976d2)!important;box-shadow:0 0 14px rgba(75,168,255,.2)}.dailyAmountBar{background:linear-gradient(#929cff,#4f46e5)!important;box-shadow:0 0 14px rgba(99,102,241,.18)}
+.dailyColumn>b{color:#dcecff!important}.dailyColumn>small{color:#91acc7!important}
+
+.dgInsightGrid>article,.dgControlGrid>article,.intelligenceGrid>article{
+  border:1px solid #35678f!important;border-radius:16px!important;background:#0a2745!important;
+  box-shadow:0 13px 32px rgba(0,0,0,.19)!important
+}
+.dgPanelHead,.dgControlGrid>article>h3{padding:16px 18px!important;border-color:#315e87!important;background:linear-gradient(100deg,#123b63,#0d2d4f)!important;color:#fff!important}
+.dgPanelHead small{color:#70b9ff!important}.dgPanelHead h4,.dgControlGrid>article>h3{color:#fff!important}
+.dgVehicleTable>div,.dgCompanyTable>div,.dgCardTable>div{min-height:45px;border-color:#285275!important;color:#c4d8ea!important}
+.dgVehicleTable>div:first-child,.dgCompanyTable>div:first-child,.dgCardTableHead{background:#12395f!important;color:#bad5ed!important}
+.dgVehicleTable strong,.dgCompanyTable strong,.dgCardTable b{color:#fff!important}
+.dgCompanyTable>div:not(:first-child):hover,.dgVehicleTable>div:not(:first-child):hover{background:#10365b!important}
+.dgDecisionPanel>div:not(.dgPanelHead){padding:13px 14px!important;border-width:0 0 0 5px!important;background:#10374e!important}.dgDecisionPanel>div:not(.dgPanelHead) b{color:#fff!important}.dgDecisionPanel>div:not(.dgPanelHead) span{color:#b4cadd!important}
+.dgDecisionPanel .decisionDanger{border-color:#ef4444!important;background:#4e1d2a!important}.dgDecisionPanel .decisionDanger b{color:#ff9c9c!important}
+.dgDecisionPanel .decisionWarning{border-color:#f59e0b!important;background:#49351d!important}.dgDecisionPanel .decisionWarning b{color:#ffd17a!important}
+.dgDecisionPanel .decisionGood{border-color:#22c55e!important;background:#123b35!important}.dgDecisionPanel .decisionGood b{color:#8ce5ad!important}
+.riskPanel>div{padding:13px 14px!important;border:1px solid rgba(239,68,68,.45)!important;border-left:5px solid #ef4444!important;border-radius:10px!important;background:#481d29!important}.riskPanel b{color:#ff9c9c!important}.riskPanel span{color:#c9d9e8!important}
+
+.reportFilters{
+  top:92px!important;padding:19px!important;gap:15px!important;border:1px solid #39709d!important;border-radius:17px!important;
+  background:linear-gradient(180deg,#10375c,#0a2441)!important;box-shadow:0 18px 42px rgba(0,0,0,.29)!important
+}
+.filterHeading{border-color:#34658d!important}.filterHeading>span{border:1px solid #4780af!important;background:#174b76!important;color:#9ed3ff!important}.reportFilters h3{color:#fff!important}.filterHeading small,.reportFilters label{color:#bed1e3!important}
+.reportFilters select{min-height:43px!important;border-color:#5a83a7!important;background:#f7fbff!important;color:#102a43!important;color-scheme:light!important;font-size:10px!important}
+.reportFilters select:focus{outline:3px solid rgba(75,168,255,.25)!important;border-color:#4ba8ff!important}
+.reportFilters>button{min-height:43px!important;border-color:#62aef0!important;background:linear-gradient(135deg,#1976d2,#164f8a)!important;color:#fff!important}
+
+/* Tous les modules : titres et blocs cohérents avec le rapport Direction. */
+.fullPanel>.panelHead,.panel>.panelHead,.overviewToolbar{
+  position:relative;padding:19px 21px!important;border-bottom:1px solid #35658d!important;
+  background:linear-gradient(100deg,#123b62,#0b2949)!important
+}
+.fullPanel>.panelHead:before,.panel>.panelHead:before,.overviewToolbar:before{
+  content:"";position:absolute;left:0;top:17px;bottom:17px;width:4px;border-radius:0 5px 5px 0;background:#4ba8ff;box-shadow:0 0 12px rgba(75,168,255,.45)
+}
+.panelHead h2,.overviewToolbar h2{font-size:15px!important;letter-spacing:-.15px}.panelHead p,.overviewToolbar p{margin-top:5px!important;color:#b1c7da!important}
+.actions button{min-height:92px!important;border-radius:14px!important;transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease!important}.actions button:hover{transform:translateY(-4px)!important;border-color:#5caaf0!important;box-shadow:0 17px 35px rgba(0,0,0,.25)!important}
+.actions button i{border:1px solid #3f75a2!important;background:#164871!important;color:#9ad1ff!important}
+.settings article{padding:25px!important}.settings article h2{font-size:17px!important}.settings article p{line-height:1.65!important}
+
+@media(max-width:1120px){.reportFilters{position:static!important}.reportLayout{padding:14px!important}.reportKpiCard{min-height:116px!important}}
+@media(max-width:720px){
+  .reportShell{border-radius:18px!important}.reportTitle{padding:21px!important}.reportContext{padding-inline:13px!important}
+  .totalWorkflowSection,.flowKpiSection,.dgAnalysisSection,.dgCompanySection{padding:15px!important}.dailyConsumptionPanel{padding:0!important}
+  .reportKpiCard{padding:17px 14px 15px 58px!important}.actions{grid-template-columns:1fr!important}
+}

@@ -648,8 +648,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         const statusIndex=cells.findIndex(value=>/valid|active|inactive|bloqu|suspend|oppos|actif|inactif|annul|expir/i.test(value));
         const expiry=cells.find(value=>/^\d{2}-\d{2}-\d{4}$/.test(value));
         const registration=cells.find(value=>/\b(?:TU|TN)\b|\d{1,4}\s*(?:TU|TN)\s*\d{1,4}/i.test(value));
-        const paymentMethodNumber=cells.find(value=>/^\d{4}(?:\s+\d+){1,3}$/.test(value));
-        const cardNumber=cells.find(value=>/^\d{4}$/.test(value))??paymentMethodNumber?.slice(0,4)??'';
+        const paymentMethodNumber=cells.find(value=>/^(?:\d{6,18}|\d{4}(?:\s+\d+){1,3})$/.test(value));
+        const paymentDigits=String(paymentMethodNumber??'').replace(/\D/g,'');
+        const cardNumber=paymentDigits.length>=4?paymentDigits.slice(-4):cells.find(value=>/^\d{4}$/.test(value))??'';
         const holderName=expiry&&cells.indexOf(expiry)>0?cells[cells.indexOf(expiry)-1]:statusIndex>=0?cells[statusIndex+3]??'':'';
         const limitCell=cells.find(value=>/(?:plafond|limit)/i.test(value)&&/\d/.test(value));
         return {cardNumber,paymentMethodNumber,status:statusIndex>=0?cells[statusIndex]:'',holderName,registration,
@@ -1432,7 +1433,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const number=cardNumber??paymentNumber;
       const status=read(/card.*status|status.*card|payment.*method.*status|status.*payment.*method|statut|status|state/i);
       if((typeof number==='string'||typeof number==='number')&&(typeof status==='string'||typeof status==='number'))
-        result.push({cardNumber:String(cardNumber??String(number).slice(0,4)),paymentMethodNumber:String(paymentNumber??''),status:String(status),
+        result.push({cardNumber:String(paymentNumber??cardNumber??number).replace(/\D/g,'').slice(-4),paymentMethodNumber:String(paymentNumber??''),status:String(status),
           holderName:String(read(/holder|titulaire|beneficiary|owner/i)??''),registration:String(read(/registration|immatriculation|plate/i)??''),
           expiresOn:this.parseTotalDate(read(/expir|expiry|valid.*until/i)),monthlyLimit:this.parseAmount(read(/monthly.*limit|card.*limit|plafond|ceiling/i)),raw:row});
       Object.values(row).forEach(visit);
@@ -1455,9 +1456,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         !/\b(?:TU|TN)\b|\d{2,4}\s*(?:TU|TN)/i.test(value)&&
         !/^\d{2}-\d{2}-\d{4}$/.test(value)&&
         !/postpay|prépay|debit|crédit/i.test(value))??'';
-      const paymentMethodNumber=window.find(value=>/^\d{4}(?:\s+\d+){1,3}$/.test(value));
+      const paymentMethodNumber=window.find(value=>/^(?:\d{6,18}|\d{4}(?:\s+\d+){1,3})$/.test(value));
       const expiresOn=this.parseTotalDate(window.find(value=>/^\d{2}-\d{2}-\d{4}$/.test(value)));
-      result.push({cardNumber:lines[index],paymentMethodNumber,status,registration,holderName,expiresOn,raw:{source:'visible-text'}});
+      result.push({cardNumber:String(paymentMethodNumber??lines[index]).replace(/\D/g,'').slice(-4),paymentMethodNumber,status,registration,holderName,expiresOn,raw:{source:'visible-text'}});
     }
     // Dans la q-table actuelle, innerText peut réunir toutes les cellules
     // d'une ligne. Exemple : « 0004 Postpayée VALIDE 0004 0 8 6987 TU 219
@@ -1471,8 +1472,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const beforeExpiry=expiry>=0?tail.slice(0,expiry):tail;
       const holderName=beforeExpiry.replace(/^\s*\d{4}(?:\s+\d+)+\s*/,'')
         .replace(registration??'','').trim().split(/\s{2,}/)[0]??'';
-      const paymentMethodNumber=tail.match(/^\s*(\d{4}(?:\s+\d+){1,3})\b/)?.[1];
-      result.push({cardNumber:match[1],paymentMethodNumber,status:match[2],registration,holderName,
+      const paymentMethodNumber=tail.match(/^\s*((?:\d{6,18}|\d{4}(?:\s+\d+){1,3}))\b/)?.[1];
+      result.push({cardNumber:String(paymentMethodNumber??match[1]).replace(/\D/g,'').slice(-4),paymentMethodNumber,status:match[2],registration,holderName,
         expiresOn:this.parseTotalDate(tail.match(/\b\d{2}-\d{2}-\d{4}\b/)?.[0]),raw:{source:'flat-visible-text'}});
     }
     return result;
@@ -1493,7 +1494,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // quatre chiffres. Cette validation évite de prendre les compteurs du
       // paginator (0, 1, 10...) pour des cartes.
       if(digits.length!==4||!corroborated)continue;
-      const key=digits;
+      const key=(paymentDigits.length>=4?paymentDigits:digits).slice(-4);
       const previous=merged.get(key);
       merged.set(key,{...previous,...card,cardNumber:key,
         paymentMethodNumber:card.paymentMethodNumber||previous?.paymentMethodNumber,

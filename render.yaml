@@ -45,6 +45,8 @@ services:
         sync: false
       - key: DIRECTION_MAIL_TO
         value: khaled.sfaxi@deltacuisine.com
+      - key: UNDISTRIBUTED_CARD_MAIL_TO
+        value: khaled.sfaxi@deltacuisine.com
       - key: APPLICATION_URL
         sync: false
       - key: TOTAL_USERNAME

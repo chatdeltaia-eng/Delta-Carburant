@@ -151,23 +151,26 @@ export class DashboardService {
       risks: risks.filter((row:{reason:string|null})=>row.reason).slice(0,25) };
   }
 
-  anomalies() {
+  anomalies(companyId='') {
     return this.db.query(`SELECT * FROM (SELECT a.id,a.created_at AS date,a.anomaly_type AS type,
-      coalesce(fc.masked_card_number,'—') AS card,coalesce(v.registration_display,'—') AS vehicle,
+      coalesce(right(regexp_replace(fc.masked_card_number,'[^0-9]','','g'),4),'—') AS card,coalesce(v.registration_display,'—') AS vehicle,
       coalesce(ft.station,'—') AS station,coalesce(ft.product,'—') AS product,
       coalesce(ft.quantity_liters,0)::float AS liters,coalesce(ft.amount_incl_tax,0)::float AS amount,
-      a.severity::text,a.status,a.description,'ANOMALY'::text AS kind
+      a.severity::text,a.status,
+      CASE WHEN fc.masked_card_number IS NULL THEN a.description
+        ELSE replace(a.description,fc.masked_card_number,right(regexp_replace(fc.masked_card_number,'[^0-9]','','g'),4)) END AS description,
+      'ANOMALY'::text AS kind
       FROM anomaly a
       LEFT JOIN fuel_card fc ON fc.id=a.fuel_card_id
       LEFT JOIN fuel_transaction ft ON ft.id=a.fuel_transaction_id
       LEFT JOIN vehicle v ON v.id=coalesce(a.vehicle_id,ft.vehicle_id)
-      WHERE a.status IN('OPEN','IN_REVIEW')
+      WHERE a.status IN('OPEN','IN_REVIEW') AND ($1='' OR coalesce(fc.company_id,(SELECT company_id FROM fuel_card WHERE id=ft.fuel_card_id),(SELECT company_id FROM vehicle WHERE id=a.vehicle_id))=$1::uuid)
       UNION ALL
-      SELECT tr.id,tr.created_at,tr.issue_type,tr.card_number,coalesce(tr.vehicle_registration,'—'),
+      SELECT tr.id,tr.created_at,tr.issue_type,right(regexp_replace(tr.card_number,'[^0-9]','','g'),4),coalesce(tr.vehicle_registration,'—'),
       coalesce(tr.station,'—'),coalesce(tr.product,'—'),tr.quantity_liters::float,tr.amount_incl_tax::float,
       'HIGH','PENDING','Transaction Total nécessitant un rapprochement','REVIEW'
-      FROM transaction_review tr WHERE tr.status='PENDING') open_items
-      ORDER BY CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'WARNING' THEN 3 ELSE 4 END,date DESC`);
+      FROM transaction_review tr WHERE tr.status='PENDING' AND ($1='' OR tr.company_id=$1::uuid)) open_items
+      ORDER BY CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'WARNING' THEN 3 ELSE 4 END,date DESC`,[companyId]);
   }
 
   async resolveAnomaly(id:string,actor:{sub:string;email:string}) {

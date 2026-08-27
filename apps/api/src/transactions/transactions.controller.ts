@@ -35,6 +35,8 @@ class ImportRowDto {
 }
 class ImportTransactionsDto {
   @IsString() filename!: string;
+  @IsUUID() companyId!: string;
+  @IsOptional() @IsDateString() replaceFrom?: string;
   @IsArray() @ValidateNested({each:true}) @Type(() => ImportRowDto) rows!: ImportRowDto[];
 }
 class ReviewDecisionDto {
@@ -57,8 +59,8 @@ export class TransactionsController {
   constructor(private readonly transactions: TransactionsService) {}
   @Get() @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE','NAJIB_ASSIGNER') list(@Query('companyId') companyId='',@Req() req: { user: { sub: string; role: string } }) { return this.transactions.list(req.user,companyId); }
   @Post('import') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') import(@Body() dto: ImportTransactionsDto, @Req() req: { user: { sub:string; email:string } }) { return this.transactions.import(dto,req.user); }
-  @Get('reviews') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') reviews() { return this.transactions.reviews(); }
-  @Get('imports') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') imports() { return this.transactions.imports(); }
+  @Get('reviews') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') reviews(@Query('companyId') companyId='') { return this.transactions.reviews(companyId); }
+  @Get('imports') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') imports(@Query('companyId') companyId='') { return this.transactions.imports(companyId); }
   @Patch('imports/:id/revert') @Roles('SUPER_ADMIN','DIRECTION_GENERAL') revertImport(@Param('id',ParseUUIDPipe) id:string,@Body() dto:RevertBatchDto,@Req() req:{user:{sub:string;email:string}}){return this.transactions.revertImport(id,dto.reason,req.user);}
   @Patch('reviews/:id') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') review(@Param('id',ParseUUIDPipe) id:string,@Body() dto:ReviewDecisionDto,@Req() req:{user:{sub:string;email:string}}) { return this.transactions.review(id,dto,req.user); }
   @Patch('allocations/:id/decision') @Roles('SUPER_ADMIN','DIRECTION_GENERAL','ZIN_FINANCE') decideAllocation(@Param('id',ParseUUIDPipe) id:string,@Body() dto:AllocationDecisionDto,@Req() req:{user:{sub:string;email:string}}){return this.transactions.decideAllocation(id,dto,req.user);}

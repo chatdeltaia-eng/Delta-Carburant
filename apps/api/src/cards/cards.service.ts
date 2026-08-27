@@ -7,6 +7,11 @@ type Actor = { sub: string; email: string; role: string };
 @Injectable()
 export class CardsService {
   constructor(private readonly db: DatabaseService) {}
+  private canonicalCardNumber(value:string) {
+    const digits=value.replace(/\D/g,'');
+    if(digits.length<4)throw new BadRequestException('Le numéro de carte doit contenir au moins 4 chiffres');
+    return digits.slice(-4);
+  }
   responsibles(companyId=''){return this.db.query(`SELECT u.id,
       CASE WHEN u.role='ZIN_FINANCE' THEN 'Zin Finance'
            WHEN u.role='SUPER_ADMIN' AND lower(u.display_name) IN ('mahdi','mahdi bi','super admin','superadmin') THEN 'Mahdi BI'
@@ -85,7 +90,7 @@ export class CardsService {
       if (dto.vehicleId && !row.vehicle_company) throw new BadRequestException('Véhicule introuvable');
       if ((row.beneficiary_company && row.beneficiary_company !== row.company_id) || (row.vehicle_company && row.vehicle_company !== row.company_id))
         throw new BadRequestException('La carte, le bénéficiaire et le véhicule doivent appartenir à la même société');
-      const number = dto.cardNumber.trim();
+      const number = this.canonicalCardNumber(dto.cardNumber);
       const responsible = await client.query(`SELECT id,company_id FROM app_user WHERE id=$1 AND role='NAJIB_ASSIGNER' AND active`, [dto.responsibleUserId??null]);
       if (!responsible.rows[0]) throw new BadRequestException('Le responsable de la carte est obligatoire');
       const responsibleUserId: string = responsible.rows[0].id;
@@ -185,7 +190,7 @@ export class CardsService {
         FROM fuel_card fc WHERE fc.id=$1 FOR UPDATE`, [id]);
       if (!before.rows[0]) throw new NotFoundException('Carte introuvable');
       const current = before.rows[0];
-      const cardNumber=change.cardNumber?.trim();
+      const cardNumber=change.cardNumber===undefined?undefined:this.canonicalCardNumber(change.cardNumber);
       if(change.cardNumber!==undefined&&!cardNumber)throw new BadRequestException('Le numéro de carte est obligatoire');
       const beneficiaryName=change.beneficiary?.trim();
       if(change.beneficiary!==undefined&&!beneficiaryName)throw new BadRequestException('Le bénéficiaire est obligatoire');
@@ -198,7 +203,9 @@ export class CardsService {
         monthly_limit=coalesce($3,monthly_limit), threshold_alert_enabled=coalesce($4,threshold_alert_enabled),
         card_number_ciphertext=CASE WHEN $5::text IS NULL THEN card_number_ciphertext ELSE pgp_sym_encrypt($5,$6,'cipher-algo=aes256') END,
         card_number_hmac=CASE WHEN $5::text IS NULL THEN card_number_hmac ELSE hmac($5,$7,'sha256') END,
-        masked_card_number=coalesce($5,masked_card_number) WHERE id=$1
+        masked_card_number=coalesce($5,masked_card_number),
+        official_card_number=coalesce($5,official_card_number),
+        total_payment_number=coalesce($5,total_payment_number) WHERE id=$1
         RETURNING id,status,monthly_limit AS "monthlyLimit",
         masked_card_number AS "cardNumber",threshold_alert_enabled AS "thresholdAlertEnabled",version,updated_at AS "updatedAt"`,
         [id, change.status ?? null, change.monthlyLimit ?? null, change.thresholdAlertEnabled ?? null,cardNumber??null,

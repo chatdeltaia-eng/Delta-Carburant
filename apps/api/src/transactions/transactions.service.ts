@@ -232,7 +232,7 @@ export class TransactionsService {
       // Le titulaire du référentiel prime sur le libellé libre de l'export.
       // Une redistribution (ex. carte Najib D-Max vers Malek Poseur) est créée
       // ensuite dans transaction_allocation et ne modifie jamais la carte.
-      const beneficiaryName=(currentAssignment.rows[0]?.beneficiary_name??card.rows[0]?.holder_name??row.beneficiary??vehicle.rows[0]?.driver_full_name??vehicle.rows[0]?.driver_name??'').trim();
+      const beneficiaryName=(currentAssignment.rows[0]?.beneficiary_name??card.rows[0]?.holder_name??row.beneficiary??vehicle.rows[0]?.driver_full_name??vehicle.rows[0]?.driver_name??`Carte ${card.rows[0].masked_card_number}`).trim();
       const companyId=dto.companyId??vehicle.rows[0]?.company_id??card.rows[0]?.company_id;
       // Les imports Total ciblés sont strictement isolés par société. Le
       // déplacement automatique d'une carte entre sociétés est réservé aux
@@ -241,9 +241,11 @@ export class TransactionsService {
         await client.query(`UPDATE fuel_card SET company_id=$2,updated_at=now() WHERE id=$1`,[card.rows[0].id,companyId]);
         card.rows[0].company_id=companyId;
       }
-      const issue=!companyId||(!vehicle.rows[0]&&!isOffPark)
-        ?(unavailableVehicle.rows[0]?'UNAVAILABLE_VEHICLE':'UNKNOWN_VEHICLE')
-        :!beneficiaryName?'MISSING_BENEFICIARY':null;
+      // Une carte connue doit toujours recevoir sa consommation. L'absence ou
+      // l'indisponibilité du véhicule est une anomalie de gestion distincte :
+      // elle ne remet pas l'opération Total en attente et ne laisse donc plus
+      // le cumul de la carte à zéro.
+      const issue=!companyId?'UNKNOWN_VEHICLE':null;
       if (issue) {
         await client.query(`INSERT INTO transaction_review(import_batch_id,source_row_number,issue_type,card_number,vehicle_registration,
           beneficiary_name,transaction_date,station,product,quantity_liters,amount_incl_tax,fuel_card_id,previous_mileage,reported_mileage,authorization_code,company_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
@@ -254,7 +256,7 @@ export class TransactionsService {
         ON CONFLICT(company_id,display_name) DO UPDATE SET active=true RETURNING id`,[companyId,department.rows[0].id,beneficiaryName]);
       // L'import enregistre une consommation mais ne distribue pas une carte
       // en coffre et ne remplace pas son affectation de référence.
-      if(!card.rows[0].reference_vehicle_id) {
+      if(!card.rows[0].reference_vehicle_id&&vehicle.rows[0]?.id) {
         const assignment=await client.query(`SELECT id FROM card_assignment WHERE fuel_card_id=$1 AND ends_at IS NULL AND is_primary LIMIT 1 FOR UPDATE`,[card.rows[0].id]);
         if(assignment.rows[0]) await client.query(`UPDATE card_assignment SET beneficiary_id=$2,vehicle_id=$3,
           workflow_status='APPROVED_ZIN',reviewed_by=$4,reviewed_at=now() WHERE id=$1`,[assignment.rows[0].id,beneficiary.rows[0].id,vehicle.rows[0]?.id??null,actor.sub]);
@@ -284,6 +286,15 @@ export class TransactionsService {
         RETURNING id`,[external,card.rows[0].id,beneficiary.rows[0].id,vehicle.rows[0]?.id??null,row.date,row.station??null,row.product??null,row.liters,row.amount,batch.rows[0].id,index+1,row.previousMileage??null,row.mileage??null,row.authorizationCode??null]);
       if(inserted.rowCount){
         imported++;
+        if(!vehicle.rows[0]&&!isOffPark){
+          const anomalyType=unavailableVehicle.rows[0]?'UNAVAILABLE_VEHICLE':'UNKNOWN_VEHICLE';
+          await client.query(`INSERT INTO anomaly(fuel_transaction_id,fuel_card_id,anomaly_type,severity,status,description,assigned_to,metadata)
+            SELECT $1,$2,$3,'HIGH','OPEN',$4,$5,$6
+            WHERE NOT EXISTS(SELECT 1 FROM anomaly WHERE fuel_transaction_id=$1 AND anomaly_type=$3 AND status IN('OPEN','IN_REVIEW'))`,
+            [inserted.rows[0].id,card.rows[0].id,anomalyType,
+              `La consommation est affectée à la carte ${card.rows[0].masked_card_number}, mais le véhicule ${row.vehicle??'non renseigné'} doit être vérifié.`,
+              card.rows[0].responsible_user_id??actor.sub,{vehicle:row.vehicle??null,cardPaymentNumber:cardKey}]);
+        }
         if(vehicle.rows[0]?.id&&row.mileage!=null){
           const previous=Number(row.previousMileage??0),reported=Number(row.mileage),liters=Number(row.liters);
           const rates=await client.query(`SELECT percentile_cont(0.5) WITHIN GROUP(ORDER BY rate)::float AS rate FROM (

@@ -9,6 +9,17 @@ describe('TotalMobilityService multi-company session sync', () => {
   };
   const token='a'.repeat(64);
 
+  it('harmonise uniquement les numéros Total contenant au moins 4 chiffres',()=>{
+    const service=new TotalMobilityService({} as never,{} as never);
+    const canonical=(value:string)=>(service as unknown as {canonicalTotalCardNumber(value:string):string})
+      .canonicalTotalCardNumber(value);
+    expect(canonical('790351010836001503')).toBe('1503');
+    expect(canonical('001503')).toBe('1503');
+    expect(canonical('15-03')).toBe('1503');
+    expect(canonical('')).toBe('');
+    expect(canonical('123')).toBe('');
+  });
+
   it.each([
     ['DC','DELTA CUISINE'],
     ['DCD','DELTA CUISINE DISTRIBUTION'],

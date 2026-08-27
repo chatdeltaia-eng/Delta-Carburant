@@ -159,6 +159,56 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
     imported_rows AS "importedRows",duplicate_rows AS "duplicateRows",review_rows AS "reviewRows",error_message AS "errorMessage",metadata
     FROM total_mobility_sync_run ORDER BY started_at DESC LIMIT 50`);
   }
+  async verification() {
+    const companies=await this.db.query(`WITH card_stats AS (
+      SELECT fc.company_id,count(*)::int AS cards,
+        count(*) FILTER(WHERE fc.total_mobility_checked_at>=now()-interval '24 hours')::int AS "freshCards",
+        max(fc.total_mobility_checked_at) AS "lastCardSync"
+      FROM fuel_card fc WHERE fc.deleted_at IS NULL GROUP BY fc.company_id
+    ), driver_stats AS (
+      SELECT d.company_id,count(*)::int AS drivers,
+        count(*) FILTER(WHERE d.total_mobility_checked_at>=now()-interval '24 hours')::int AS "freshDrivers",
+        max(d.total_mobility_checked_at) AS "lastDriverSync"
+      FROM driver d WHERE d.deleted_at IS NULL GROUP BY d.company_id
+    ), vehicle_stats AS (
+      SELECT v.company_id,count(*)::int AS vehicles,
+        count(*) FILTER(WHERE v.total_mobility_checked_at>=now()-interval '24 hours')::int AS "freshVehicles",
+        count(*) FILTER(WHERE v.total_mobility_mileage IS NOT NULL)::int AS "vehiclesWithMileage",
+        max(v.total_mobility_checked_at) AS "lastVehicleSync"
+      FROM vehicle v WHERE v.deleted_at IS NULL GROUP BY v.company_id
+    ), transaction_stats AS (
+      SELECT fc.company_id,count(*)::int AS transactions,
+        count(*) FILTER(WHERE ft.vehicle_id IS NOT NULL)::int AS "transactionsWithVehicle",
+        count(*) FILTER(WHERE ft.reported_mileage IS NOT NULL)::int AS "transactionsWithMileage",
+        max(ft.transaction_date) AS "lastTransaction"
+      FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
+      WHERE ft.deleted_at IS NULL GROUP BY fc.company_id
+    ), review_stats AS (
+      SELECT tr.company_id,count(*) FILTER(WHERE tr.status='PENDING')::int AS "pendingReviews",
+        count(*) FILTER(WHERE tr.status='PENDING' AND tr.issue_type='UNKNOWN_CARD')::int AS "unknownCards"
+      FROM transaction_review tr GROUP BY tr.company_id
+    ), ambiguous AS (
+      SELECT duplicates.company_id,count(*)::int AS "ambiguousCardSuffixes" FROM (
+        SELECT fc.company_id,right(regexp_replace(coalesce(fc.total_payment_number,fc.official_card_number,fc.masked_card_number),'[^0-9]','','g'),4)
+        FROM fuel_card fc WHERE fc.deleted_at IS NULL GROUP BY fc.company_id,2 HAVING count(*)>1
+      ) duplicates GROUP BY duplicates.company_id
+    ) SELECT c.id AS "companyId",c.code,c.name,
+      coalesce(cs.cards,0) AS cards,coalesce(cs."freshCards",0) AS "freshCards",cs."lastCardSync",
+      coalesce(ds.drivers,0) AS drivers,coalesce(ds."freshDrivers",0) AS "freshDrivers",ds."lastDriverSync",
+      coalesce(vs.vehicles,0) AS vehicles,coalesce(vs."freshVehicles",0) AS "freshVehicles",
+      coalesce(vs."vehiclesWithMileage",0) AS "vehiclesWithMileage",vs."lastVehicleSync",
+      coalesce(ts.transactions,0) AS transactions,coalesce(ts."transactionsWithVehicle",0) AS "transactionsWithVehicle",
+      coalesce(ts."transactionsWithMileage",0) AS "transactionsWithMileage",ts."lastTransaction",
+      coalesce(rs."pendingReviews",0) AS "pendingReviews",coalesce(rs."unknownCards",0) AS "unknownCards",
+      coalesce(a."ambiguousCardSuffixes",0) AS "ambiguousCardSuffixes"
+    FROM company c LEFT JOIN card_stats cs ON cs.company_id=c.id
+    LEFT JOIN driver_stats ds ON ds.company_id=c.id LEFT JOIN vehicle_stats vs ON vs.company_id=c.id
+    LEFT JOIN transaction_stats ts ON ts.company_id=c.id LEFT JOIN review_stats rs ON rs.company_id=c.id
+    LEFT JOIN ambiguous a ON a.company_id=c.id WHERE c.active ORDER BY c.code`);
+    const [connection]=await this.db.query(`SELECT enabled,last_sync_at AS "lastSyncAt",last_success_at AS "lastSuccessAt",
+      last_error AS "lastError",sync_interval_minutes AS "syncIntervalMinutes" FROM total_mobility_connection LIMIT 1`);
+    return {checkedAt:new Date(),connection:connection??{enabled:false},companies};
+  }
   async cardReconciliation() {
     return this.db.query(`SELECT fc.id,fc.masked_card_number AS "cardNumber",fc.status AS "applicationStatus",
       fc.total_mobility_status AS "totalStatus",fc.total_mobility_checked_at AS "checkedAt",
@@ -207,12 +257,29 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       for (const card of cards) {
         const paymentNumber=this.normalizeCardNumber(card.paymentMethodNumber??'');
         const sourceNumber=paymentNumber||this.normalizeCardNumber(card.cardNumber);
-        const number=sourceNumber.slice(-4).padStart(4,'0');
+        const number=this.canonicalTotalCardNumber(sourceNumber);
         const remoteStatus=card.status.trim().toUpperCase();
         if(!number||!remoteStatus)continue;
         importedNumbers.push(number);
         await client.query(`INSERT INTO total_mobility_card_snapshot(card_number,remote_status,holder_name,registration,raw_data)
           VALUES($1,$2,$3,$4,$5)`,[number,remoteStatus,card.holderName??null,card.registration??null,card.raw??{}]);
+        const candidates=await client.query<{id:string}>(`SELECT fc.id FROM fuel_card fc
+          WHERE fc.company_id=$1 AND fc.deleted_at IS NULL AND (
+            right(regexp_replace(fc.masked_card_number,'[^0-9]','','g'),4)=$2
+            OR right(regexp_replace(coalesce(fc.official_card_number,''),'[^0-9]','','g'),4)=$2
+            OR right(regexp_replace(coalesce(fc.total_payment_number,''),'[^0-9]','','g'),4)=$2)
+          ORDER BY EXISTS(SELECT 1 FROM card_assignment ca WHERE ca.fuel_card_id=fc.id AND ca.ends_at IS NULL) DESC,
+            (SELECT count(*) FROM fuel_transaction ft WHERE ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL) DESC,
+            (fc.responsible_user_id IS NOT NULL) DESC,fc.created_at LIMIT 20 FOR UPDATE`,[company.id,number]);
+        const canonicalId=candidates.rows[0]?.id;
+        if(canonicalId&&candidates.rows.length>1){
+          const duplicateIds=candidates.rows.slice(1).map(row=>row.id);
+          await client.query(`UPDATE fuel_transaction SET fuel_card_id=$1 WHERE fuel_card_id=ANY($2::uuid[])`,[canonicalId,duplicateIds]);
+          await client.query(`UPDATE transaction_review SET fuel_card_id=$1 WHERE fuel_card_id=ANY($2::uuid[])`,[canonicalId,duplicateIds]);
+          await client.query(`UPDATE card_assignment SET ends_at=coalesce(ends_at,now()),is_primary=false
+            WHERE fuel_card_id=ANY($1::uuid[]) AND ends_at IS NULL`,[duplicateIds]);
+          await client.query(`UPDATE fuel_card SET deleted_at=now(),updated_at=now() WHERE id=ANY($1::uuid[])`,[duplicateIds]);
+        }
         let updated=await client.query(`UPDATE fuel_card SET total_mobility_status=$3,total_mobility_checked_at=now(),
           card_number_ciphertext=pgp_sym_encrypt($2,$10,'cipher-algo=aes256'),
           card_number_hmac=hmac($2,$11,'sha256'),masked_card_number=$2,
@@ -222,14 +289,10 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           official_registration=coalesce(nullif($7,''),official_registration),
           expires_on=coalesce($8::date,expires_on),
           monthly_limit=CASE WHEN $9::numeric>0 THEN $9 ELSE monthly_limit END,updated_at=now()
-          WHERE company_id=$1 AND deleted_at IS NULL AND (
-            right(regexp_replace(masked_card_number,'[^0-9]','','g'),4)=$2
-            OR right(regexp_replace(coalesce(official_card_number,''),'[^0-9]','','g'),4)=$2
-            OR right(regexp_replace(coalesce(total_payment_number,''),'[^0-9]','','g'),4)=$2
-          )
+          WHERE id=$12 AND company_id=$1 AND deleted_at IS NULL
           RETURNING id,status`,[company.id,number,remoteStatus,number,paymentNumber,
             card.holderName?.trim()??'',card.registration?.trim()??'',card.expiresOn??null,card.monthlyLimit??0,
-            process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key']);
+            process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key',canonicalId??null]);
         if(!updated.rows[0]){
           const applicationStatus=/OPPOS|LOST|STOLEN|PERD|VOLE/.test(remoteStatus)?'OPPOSED'
             :/SUSPEND|BLOCK|BLOQU|TEMPORAIR/.test(remoteStatus)?'SUSPENDED'
@@ -365,7 +428,8 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         const normalized=registration.replace(/[^A-Z0-9]/g,'');
         if(!normalized)continue;
         const active=!/oppos|bloqu|inactif|inactive|suspend|sorti/i.test(String(remote.status??''));
-        const driverNumber=String(remote.driverNumber??'').replace(/\D/g,'').padStart(4,'0');
+        const rawDriverNumber=String(remote.driverNumber??'').replace(/\D/g,'');
+        const driverNumber=rawDriverNumber?rawDriverNumber.padStart(4,'0'):'';
         const driver=driverNumber?await client.query(`SELECT id,full_name FROM driver WHERE company_id=$1 AND driver_number=$2 AND deleted_at IS NULL LIMIT 1`,[company.id,driverNumber]):{rows:[]};
         const existing=await client.query(`SELECT id,total_mobility_mileage FROM vehicle WHERE company_id=$1 AND registration_normalized=$2 AND deleted_at IS NULL LIMIT 1`,[company.id,normalized]);
         let vehicleId:string;
@@ -398,6 +462,10 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
     });
   }
   private normalizeCardNumber(value:string){return value.replace(/[^0-9]/g,'');}
+  private canonicalTotalCardNumber(value:string){
+    const digits=this.normalizeCardNumber(value);
+    return digits.length>=4?digits.slice(-4):'';
+  }
   async connect(dto: ConfigDto, actor: Actor) {
     const refreshToken = this.normalizeRefreshToken(dto.refreshToken);
     try {

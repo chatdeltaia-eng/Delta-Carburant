@@ -79,6 +79,9 @@ export class TotalMobilityController {
   @Get('runs') runs() {
     return this.total.runs();
   }
+  @Get('verification') verification() {
+    return this.total.verification();
+  }
   @Get('cards/reconciliation') cardReconciliation() {
     return this.total.cardReconciliation();
   }

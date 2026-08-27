@@ -47,11 +47,10 @@ export class VehiclesService {
   private reconcileTotalCards(vehicleId:string,companyId:string,registration:string,actorId:string){return this.db.transaction(async client=>{
     const keys=this.registrationKeys(registration);
     const cards=await client.query(`SELECT id,masked_card_number,holder_name FROM fuel_card
-      WHERE deleted_at IS NULL AND official_registration IS NOT NULL
-      AND regexp_replace(upper(official_registration),'[^A-Z0-9]','','g')=ANY($1::text[]) FOR UPDATE`,[keys]);
+      WHERE company_id=$2 AND deleted_at IS NULL AND official_registration IS NOT NULL
+      AND regexp_replace(upper(official_registration),'[^A-Z0-9]','','g')=ANY($1::text[]) FOR UPDATE`,[keys,companyId]);
     let transactionCount=0;
     for(const card of cards.rows){
-      await client.query('UPDATE fuel_card SET company_id=$2,updated_at=now() WHERE id=$1',[card.id,companyId]);
       const holder=String(card.holder_name??'').trim()||`Titulaire ${registration.trim().toUpperCase()}`;
       const department=await client.query(`INSERT INTO department(company_id,name) VALUES($1,'Cartes Total') ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id`,[companyId]);
       const beneficiary=await client.query(`INSERT INTO beneficiary(company_id,department_id,display_name) VALUES($1,$2,$3) ON CONFLICT(company_id,display_name) DO UPDATE SET active=true RETURNING id`,[companyId,department.rows[0].id,holder]);

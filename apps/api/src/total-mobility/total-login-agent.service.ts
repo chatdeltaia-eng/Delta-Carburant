@@ -982,10 +982,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private async extractCurrentClientData(clientName:string){
     if(!this.actor)throw new Error('Utilisateur de synchronisation Total absent');
-    // Le cycle temps réel est volontairement limité aux transactions du client
-    // sélectionné dans Delta. Ne pas poursuivre vers Cartes, Chauffeurs ou
-    // Véhicules : ces modules changent de route et peuvent perdre le contexte
-    // client alors que la jauge dépend uniquement du rapport des transactions.
+    // Importer d'abord les transactions pendant que le contexte client vient
+    // d'être confirmé. Les référentiels sont ensuite rafraîchis dans le même
+    // périmètre de société ; leur échec ne supprime jamais les transactions.
     const companyCodes:Record<string,string>={
       'DELTA CUISINE':'DC','IKIT TN':'IKIT','DELTA CUISINE DISTRIBUTION':'DCD','STE LES TECHNIQUES DE MARBRE':'TCM',
     };
@@ -993,7 +992,21 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     const [company]=await this.db.query<{id:string}>(`SELECT id FROM company WHERE active AND upper(code)=$1 LIMIT 1`,[code]);
     if(!company)throw new Error(`Société Delta ${code??clientName} introuvable`);
     const transactions=await this.extractCurrentClientTransactions(clientName,company.id);
-    return {client:clientName,transactions};
+    const cardRows=await this.extractCardStatuses().catch(error=>{
+      this.logger.warn(`Cartes Total ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
+    });
+    const cards=cardRows.length
+      ?await this.total.importCardStatuses(cardRows,this.actor,clientName)
+      :{extracted:0,error:`Aucune carte visible (${this.lastCardDiagnostic})`};
+    const driverRows=await this.extractDrivers().catch(error=>{
+      this.logger.warn(`Chauffeurs Total ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
+    });
+    const drivers=driverRows.length?await this.total.importDrivers(driverRows,this.actor,clientName):{received:0};
+    const vehicleRows=await this.extractVehicles().catch(error=>{
+      this.logger.warn(`Véhicules Total ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
+    });
+    const vehicles=vehicleRows.length?await this.total.importVehicles(vehicleRows,this.actor,clientName):{received:0};
+    return {client:clientName,transactions,cards,drivers,vehicles};
   }
 
   private async setTotalDateInput(input:Locator,value:string){

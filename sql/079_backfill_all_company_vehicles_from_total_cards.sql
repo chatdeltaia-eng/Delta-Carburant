@@ -5,14 +5,25 @@ BEGIN;
 -- jamais transformés en faux véhicules.
 INSERT INTO vehicle(company_id,registration_normalized,registration_display,active,driver_name,
   total_mobility_status,total_mobility_checked_at,total_mobility_raw)
-SELECT fc.company_id,
-  regexp_replace(upper(fc.official_registration),'[^A-Z0-9]','','g'),
-  upper(btrim(fc.official_registration)),true,nullif(btrim(fc.holder_name),''),
-  'DETECTED_FROM_TOTAL_CARD',now(),jsonb_build_object('source','TOTAL_CARD_BACKFILL','card',fc.masked_card_number)
-FROM fuel_card fc
-WHERE fc.deleted_at IS NULL AND nullif(btrim(fc.official_registration),'') IS NOT NULL
-  AND upper(regexp_replace(fc.official_registration,'[^A-Z]','','g')) NOT IN ('HORSPARC','HP')
-  AND regexp_replace(upper(fc.official_registration),'[^A-Z0-9]','','g') ~ '[0-9]'
+SELECT candidate.company_id,candidate.registration_normalized,candidate.registration_display,true,candidate.driver_name,
+  'DETECTED_FROM_TOTAL_CARD',now(),jsonb_build_object('source','TOTAL_CARD_BACKFILL','card',candidate.masked_card_number)
+FROM (
+  -- Une société peut avoir plusieurs cartes pour la même immatriculation. Un
+  -- seul candidat par clé unique est nécessaire afin que ON CONFLICT ne tente
+  -- pas de mettre à jour deux fois le même véhicule dans cette commande.
+  SELECT DISTINCT ON (fc.company_id,regexp_replace(upper(fc.official_registration),'[^A-Z0-9]','','g'))
+    fc.company_id,
+    regexp_replace(upper(fc.official_registration),'[^A-Z0-9]','','g') AS registration_normalized,
+    upper(btrim(fc.official_registration)) AS registration_display,
+    nullif(btrim(fc.holder_name),'') AS driver_name,
+    fc.masked_card_number
+  FROM fuel_card fc
+  WHERE fc.deleted_at IS NULL AND nullif(btrim(fc.official_registration),'') IS NOT NULL
+    AND upper(regexp_replace(fc.official_registration,'[^A-Z]','','g')) NOT IN ('HORSPARC','HP')
+    AND regexp_replace(upper(fc.official_registration),'[^A-Z0-9]','','g') ~ '[0-9]'
+  ORDER BY fc.company_id,regexp_replace(upper(fc.official_registration),'[^A-Z0-9]','','g'),
+    (nullif(btrim(fc.holder_name),'') IS NOT NULL) DESC,fc.updated_at DESC NULLS LAST,fc.id
+) candidate
 ON CONFLICT(company_id,registration_normalized) DO UPDATE SET
   active=true,deleted_at=NULL,deleted_by=NULL,
   driver_name=coalesce(nullif(excluded.driver_name,''),vehicle.driver_name),

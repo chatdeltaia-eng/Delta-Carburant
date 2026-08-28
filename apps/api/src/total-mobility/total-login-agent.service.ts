@@ -1000,22 +1000,22 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private async extractCurrentClientData(clientName:string){
     if(!this.actor)throw new Error('Utilisateur de synchronisation Total absent');
-    // Importer d'abord les transactions pendant que le contexte client vient
-    // d'être confirmé. Les référentiels sont ensuite rafraîchis dans le même
-    // périmètre de société ; leur échec ne supprime jamais les transactions.
+    // Rafraîchir d'abord les cartes : leur immatriculation officielle permet
+    // de rattacher immédiatement les transactions dont la colonne véhicule
+    // est vide (cas fréquent de DCD).
     const companyCodes:Record<string,string>={
       'DELTA CUISINE':'DC','IKIT TN':'IKIT','DELTA CUISINE DISTRIBUTION':'DCD','STE LES TECHNIQUES DE MARBRE':'TCM',
     };
     const code=companyCodes[clientName.trim().toUpperCase()];
     const [company]=await this.db.query<{id:string}>(`SELECT id FROM company WHERE active AND upper(code)=$1 LIMIT 1`,[code]);
     if(!company)throw new Error(`Société Delta ${code??clientName} introuvable`);
-    const transactions=await this.extractCurrentClientTransactions(clientName,company.id);
     const cardRows=await this.extractCardStatuses().catch(error=>{
       this.logger.warn(`Cartes Total ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
     });
     const cards=cardRows.length
       ?await this.total.importCardStatuses(cardRows,this.actor,clientName)
       :{extracted:0,error:`Aucune carte visible (${this.lastCardDiagnostic})`};
+    const transactions=await this.extractCurrentClientTransactions(clientName,company.id);
     const driverRows=await this.extractDrivers().catch(error=>{
       this.logger.warn(`Chauffeurs Total ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
     });
@@ -1097,9 +1097,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(authorization)reportAccessToken=authorization;
       try{
         const payload=response.request().postDataJSON() as Record<string,unknown>;
+        const read=(name:string)=>Object.entries(payload).find(([key])=>key.toLowerCase()===name.toLowerCase())?.[1];
         const next={
-          customerId:String(payload.CustomerId??''),customerNumber:String(payload.CustomerNumber??''),
-          siteNumber:String(payload.SiteNumber??''),userId:String(payload.UserId??''),username:String(payload.usersname??''),
+          customerId:String(read('CustomerId')??''),customerNumber:String(read('CustomerNumber')??''),
+          siteNumber:String(read('SiteNumber')??''),userId:String(read('UserId')??''),
+          username:String(read('usersname')??read('UserName')??''),
         };
         if(next.customerId&&next.customerNumber&&next.siteNumber)reportContext=next;
       }catch{/* La requête observée n'expose pas de corps JSON. */}

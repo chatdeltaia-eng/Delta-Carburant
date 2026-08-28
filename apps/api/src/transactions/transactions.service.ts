@@ -204,7 +204,14 @@ export class TransactionsService {
       // l'identité d'une carte. Dès que le suffixe est unique dans la société,
       // sa consommation Total doit être rattachée à cette carte. Les contrôles
       // de statut restent un workflow de gestion de carte séparé.
-      const vehicleKey=(row.vehicle??'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+      // Certaines sociétés Total (notamment DCD) laissent la plaque vide dans
+      // le rapport des transactions alors qu'elle existe dans le référentiel
+      // de la carte. Cette valeur officielle est la source de repli fiable.
+      const transactionVehicle=String(row.vehicle??'').trim();
+      const officialVehicle=String(card.rows[0]?.official_registration??'').trim();
+      const resolvedVehicle=/^(?:HORS\s*PARC|)$/i.test(transactionVehicle)
+        ? officialVehicle : transactionVehicle;
+      const vehicleKey=resolvedVehicle.toUpperCase().replace(/[^A-Z0-9]/g,'');
       const vehicleKeys=this.registrationKeys(vehicleKey);
       const unavailableVehicle=vehicleKey ? await client.query(`SELECT id FROM vehicle
         WHERE regexp_replace(upper(coalesce(registration_normalized::text,registration_display)),'[^A-Z0-9]','','g')=ANY($1::text[])
@@ -244,7 +251,7 @@ export class TransactionsService {
             total_mobility_status='DETECTED_FROM_TRANSACTION',total_mobility_checked_at=now(),
             total_mobility_raw=excluded.total_mobility_raw,updated_at=now()
           RETURNING id,company_id,driver_name,null::text AS driver_full_name,registration_display`,
-          [card.rows[0].company_id,vehicleKey,String(row.vehicle??'').trim().toUpperCase(),String(row.beneficiary??'').trim(),
+          [card.rows[0].company_id,vehicleKey,resolvedVehicle.toUpperCase(),String(row.beneficiary??'').trim(),
             {source:'TOTAL_TRANSACTION',cardNumber:cardKey,transactionDate:row.date}]);
       }
       const isOffPark=card.rows[0]?.card_category==='OFF_PARK' ||

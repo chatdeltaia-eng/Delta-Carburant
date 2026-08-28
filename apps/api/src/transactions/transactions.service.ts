@@ -211,8 +211,8 @@ export class TransactionsService {
       const fingerprint=this.transactionFingerprint(row,cardKey);
       if(!card.rows[0]) {
         const existingReview=await client.query(`SELECT id FROM transaction_review
-          WHERE status='PENDING' AND company_id IS NOT DISTINCT FROM $7::uuid AND regexp_replace(card_number,'[^0-9]','','g')=$1 AND transaction_date=$2 AND upper(coalesce(station,''))=upper($3)
-          AND upper(coalesce(product,''))=upper($4) AND quantity_liters=$5 AND amount_incl_tax=$6 LIMIT 1`,
+          WHERE status='PENDING' AND company_id IS NOT DISTINCT FROM $7::uuid AND regexp_replace(card_number,'[^0-9]','','g')=$1::text AND transaction_date=$2::timestamptz AND upper(coalesce(station,''))=upper($3::text)
+          AND upper(coalesce(product,''))=upper($4::text) AND quantity_liters=$5::numeric AND amount_incl_tax=$6::numeric LIMIT 1`,
         [cardKey,row.date,row.station,row.product,row.liters,row.amount,dto.companyId??null]);
         if(existingReview.rows[0]) { duplicates++; continue; }
         await client.query(`INSERT INTO transaction_review(import_batch_id,source_row_number,issue_type,card_number,vehicle_registration,
@@ -318,8 +318,8 @@ export class TransactionsService {
           VALUES($1,$2,$3,'APPROVED_ZIN',$4,$4,now())`,[card.rows[0].id,beneficiary.rows[0].id,vehicle.rows[0]?.id??null,actor.sub]);
       }
       const semanticDuplicate=await client.query(`SELECT id FROM fuel_transaction
-        WHERE fuel_card_id=$1 AND transaction_date=$2 AND upper(coalesce(station,''))=upper($3)
-          AND upper(coalesce(product,''))=upper($4) AND quantity_liters=$5 AND amount_incl_tax=$6
+        WHERE fuel_card_id=$1::uuid AND transaction_date=$2::timestamptz AND upper(coalesce(station,''))=upper($3::text)
+          AND upper(coalesce(product,''))=upper($4::text) AND quantity_liters=$5::numeric AND amount_incl_tax=$6::numeric
           AND vehicle_id IS NOT DISTINCT FROM $7::uuid AND deleted_at IS NULL
           AND ($8::text IS NULL OR authorization_code=$8) LIMIT 1`,
       [card.rows[0].id,row.date,row.station,row.product,row.liters,row.amount,vehicle.rows[0]?.id??null,row.authorizationCode?.trim()||null]);

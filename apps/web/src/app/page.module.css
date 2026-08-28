@@ -2209,3 +2209,51 @@
   .sidebar nav button{font-size:11.5px!important}
   .tableWrap th{font-size:10.5px!important}.tableWrap td,.tableWrap td b{font-size:11.5px!important}
 }
+
+/* Tableau de bord clair : aucune couleur de l'ancien theme sombre ne doit subsister. */
+.referenceConsumption{border-color:#d5e1ec!important;background:linear-gradient(145deg,#fff,#f8fbfe)!important}
+.referenceChart{border-color:#dbe5ee!important}
+.referenceChart>small{color:#49627c!important;font-size:10px!important}
+.referenceChart>strong{color:#14243a!important;text-shadow:none!important}
+.referenceChart>p{color:#5a6d82!important}.referenceChart>p b{color:#0969c3!important}
+.referenceChart>div{color:#52677d!important;font-size:9px!important}
+
+.referenceDonut>div{
+  background:radial-gradient(circle,#fff 0 55%,transparent 56%),conic-gradient(#2693e6 var(--rate),#d9e7f3 0)!important;
+  box-shadow:inset 0 0 0 1px #c8d9e7,0 12px 28px rgba(26,77,122,.14)!important
+}
+.referenceDonut strong{color:#16324d!important}.referenceDonut span{color:#4f667d!important;font-size:9px!important;font-weight:750!important}
+.referenceDonut dt{color:#52677d!important;font-size:9px!important}
+.referenceDonut dd{color:#193149!important;font-size:16px!important}.referenceDonut dd:last-child{color:#0969c3!important}
+
+.referenceActivity>header b{color:#075fae!important;font-size:10px!important}.referenceActivity>header button{color:#075fae!important;font-weight:800!important}
+.referenceActivity>div{border-color:#d7e2ec!important;background:#f7fafc!important}
+.referenceActivity span b{color:#182a40!important;font-size:10px!important}
+.referenceActivity span small{color:#536980!important;font-size:9px!important}.referenceActivity time{color:#536980!important;font-size:9px!important}
+.referenceActivity>div:hover{border-color:#9fc4e5!important;background:#edf6fd!important}
+.activityGood{border-left:4px solid #15803d!important}.activityGood i{background:#dcfce7!important;color:#166534!important}
+.activityWarning{border-left:4px solid #d97706!important}.activityWarning i{background:#ffedd5!important;color:#9a4d05!important}
+.activityDanger{border-left:4px solid #dc2626!important;background:#fff7f7!important}.activityDanger i{background:#fee2e2!important;color:#b91c1c!important}
+.activityInfo{border-left:4px solid #1976d2!important}.activityInfo i{background:#dbeafe!important;color:#155eaa!important}
+.activityDanger span b{color:#8e1820!important}.activityWarning span b{color:#794408!important}
+
+.referenceKpis article{border-color:#d7e2ec!important;background:#fff!important}
+.referenceKpis article>span{border-color:#b9d8ef!important;background:#e5f3ff!important;color:#075fae!important}
+.referenceKpis small{color:#4b6178!important;font-size:9px!important}.referenceKpis strong{color:#16273c!important}.referenceKpis p{color:#5b6e83!important;font-size:9px!important}
+.reference_warning{border-color:#edc36b!important;background:#fffaf0!important}.reference_warning>span{border-color:#edc36b!important;background:#fff0c7!important;color:#9a5706!important}.reference_warning strong{color:#704006!important}
+.reference_danger{border-color:#efaaaa!important;background:#fff7f7!important}.reference_danger>span{border-color:#efaaaa!important;background:#fee2e2!important;color:#b91c1c!important}.reference_danger strong{color:#991b1b!important}
+
+.referenceBars>header,.referenceVehicles>header{color:#24384e!important;background:transparent!important}
+.referenceBars header b,.referenceVehicles>header{color:#24384e!important;font-size:10px!important}.referenceBars header small{color:#5b7086!important;font-size:9px!important}
+.referenceBars header>span{color:#4f657b!important;border-color:#ccd9e5!important;background:#f5f8fb!important;font-size:9px!important}
+.referenceBars>div{border-color:#dce5ed!important;background:repeating-linear-gradient(to bottom,#fff 0,#fff 52px,#e6edf3 53px)!important}
+.referenceBars>div i{background:linear-gradient(#58b8ff,#1976d2)!important;box-shadow:0 0 12px rgba(25,118,210,.16)!important}
+.referenceBars footer{border-color:#cbd9e5!important;background:#eaf3fb!important}
+.referenceBars footer span+span{border-color:#c3d4e3!important}.referenceBars footer small{color:#42627f!important;font-size:8.5px!important}.referenceBars footer b{color:#183149!important}
+
+.vehicleHead{color:#496177!important;border-color:#d5e1eb!important;background:#f4f8fb!important;font-size:9px!important;font-weight:800!important}
+.referenceVehicles>div:not(.vehicleHead){border-color:#e0e8ef!important}
+.referenceVehicles>div>span i{background:#dceeff!important;color:#075fae!important;font-size:9px!important}
+.referenceVehicles>div>span b,.referenceVehicles>div>strong{color:#21364c!important;font-size:10px!important}
+.referenceVehicles>div>em{font-size:9px!important}.trendUp{color:#c62828!important}.trendDown{color:#0969c3!important}
+.referenceVehicles>button{border-color:#9fc9e9!important;background:#075fae!important;color:#fff!important;font-size:9px!important;font-weight:800!important}

@@ -2168,3 +2168,44 @@
 .modal,.notificationMenu{color:#17243a!important;border-color:#d7e1eb!important;background:#fff!important}.modalHead,.modalActions{border-color:#dce4ed!important;background:#fff!important}.modalActions{background:#f6f8fb!important}
 .notificationMenu h3,.notificationMenu>button b{color:#17243a!important}.notificationMenu>button{border-color:#e7edf3!important;background:#fff!important}.notificationMenu>button:hover,.notificationMenu>button.unread{background:#edf8f6!important}.notificationMenu>button span{color:#64758a!important}
 .referenceIntro h2,.referenceKpis strong,.referenceActivity b,.referenceVehicles strong{color:#17243a!important;text-shadow:none!important}.referenceIntro small,.referenceIntro p{color:#66758a!important}
+
+/* Lisibilite finale : tailles minimales et contrastes verifies sur les ecrans metier. */
+.sidebar nav button{font-size:11px!important;font-weight:700!important}
+.topbarIdentity b{font-size:10px!important}.topbarIdentity small{color:#b8cde0!important;font-size:8px!important}
+.content p,.content small,.panelHead p,.overviewToolbar p,.settings p{color:#56677d!important}
+.workflowGuide small,.workflowGuide p,.moduleFilters small,.toolbar small{color:#5f7187!important}
+.moduleFilters label{color:#40536a!important;font-size:9.5px!important}
+.moduleFilters>div b{color:#17243a!important;font-size:11px!important}
+.moduleFilters>div small{color:#65768a!important;font-size:9px!important}
+.moduleFilters input,.moduleFilters select,.toolbar input,.overviewToolbar input{font-size:11px!important}
+.tableWrap th{color:#34465d!important;font-size:10px!important;font-weight:850!important;letter-spacing:.45px!important}
+.tableWrap td{color:#34465b!important;font-size:11px!important;line-height:1.55!important}
+.tableWrap td b{color:#142238!important;font-size:11px!important}
+.tableWrap td small{color:#5f7186!important;font-size:9px!important;line-height:1.5!important}
+
+/* Une alerte de plafond doit attirer l'oeil sans masquer les donnees. */
+.tableWrap tbody>tr.limitWarningRow>td{
+  color:#3b2a12!important;border-block-color:#f1c15c!important;
+  background:linear-gradient(90deg,#fff8e7,#fffdf7)!important
+}
+.tableWrap tbody>tr.limitWarningRow:nth-child(even)>td{background:linear-gradient(90deg,#fff5d9,#fffaf0)!important}
+.tableWrap tbody>tr.limitWarningRow:hover>td{background:#ffefc4!important}
+.limitWarningRow td b{color:#2e2415!important}.limitWarningRow td small{color:#725626!important}
+.tableWrap tbody>tr.limitReachedRow>td{
+  color:#4b1620!important;border-block-color:#f29a9a!important;
+  background:linear-gradient(90deg,#fff0f1,#fff8f8)!important
+}
+.tableWrap tbody>tr.limitReachedRow:hover>td{background:#ffe1e3!important}
+.limitReachedRow td b{color:#6f1621!important}.limitReachedRow td small{color:#8b3b43!important}
+.consumptionBox{color:#17243a!important}.consumptionBox small{color:#56677d!important}
+
+.referenceKpis small,.referenceKpis p,.referenceActivity span small,.referenceActivity time,
+.referenceChart>small,.referenceChart>p,.referenceDonut dt,.referenceVehicles>div>span b,
+.referenceVehicles>div>strong,.referenceVehicles>div>em{font-size:max(9px,.62rem)!important}
+.referenceKpis small,.referenceKpis p,.referenceActivity span small,.referenceActivity time,
+.referenceChart>small,.referenceChart>p,.referenceDonut dt{color:#5d7085!important}
+
+@media(min-width:1400px){
+  .sidebar nav button{font-size:11.5px!important}
+  .tableWrap th{font-size:10.5px!important}.tableWrap td,.tableWrap td b{font-size:11.5px!important}
+}

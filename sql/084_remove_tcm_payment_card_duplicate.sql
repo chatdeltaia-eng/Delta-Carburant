@@ -3,8 +3,8 @@ BEGIN;
 -- 0501 est le suffixe transactionnel du mode de paiement 0005 0 1, pas une
 -- carte distincte. La carte officielle visible dans Total est 0005.
 WITH tcm AS (SELECT id FROM company WHERE code='TCM' LIMIT 1), canonical AS (
-  SELECT id FROM fuel_card,tcm WHERE company_id=tcm.id AND masked_card_number='0005'
-  ORDER BY (deleted_at IS NULL) DESC,created_at LIMIT 1
+  SELECT fc.id FROM fuel_card fc CROSS JOIN tcm WHERE fc.company_id=tcm.id AND fc.masked_card_number='0005'
+  ORDER BY (fc.deleted_at IS NULL) DESC,fc.created_at LIMIT 1
 ), duplicates AS (
   SELECT fc.id FROM fuel_card fc,tcm,canonical
   WHERE fc.company_id=tcm.id AND fc.id<>canonical.id
@@ -14,8 +14,8 @@ UPDATE fuel_transaction ft SET fuel_card_id=canonical.id
 FROM canonical WHERE ft.fuel_card_id IN (SELECT id FROM duplicates);
 
 WITH tcm AS (SELECT id FROM company WHERE code='TCM' LIMIT 1), canonical AS (
-  SELECT id FROM fuel_card,tcm WHERE company_id=tcm.id AND masked_card_number='0005'
-  ORDER BY (deleted_at IS NULL) DESC,created_at LIMIT 1
+  SELECT fc.id FROM fuel_card fc CROSS JOIN tcm WHERE fc.company_id=tcm.id AND fc.masked_card_number='0005'
+  ORDER BY (fc.deleted_at IS NULL) DESC,fc.created_at LIMIT 1
 ), duplicates AS (
   SELECT fc.id FROM fuel_card fc,tcm,canonical
   WHERE fc.company_id=tcm.id AND fc.id<>canonical.id
@@ -26,8 +26,8 @@ FROM canonical WHERE tr.fuel_card_id IN (SELECT id FROM duplicates)
   OR (tr.company_id=(SELECT id FROM tcm) AND right(regexp_replace(tr.card_number,'[^0-9]','','g'),4)='0501');
 
 WITH tcm AS (SELECT id FROM company WHERE code='TCM' LIMIT 1), canonical AS (
-  SELECT id FROM fuel_card,tcm WHERE company_id=tcm.id AND masked_card_number='0005'
-  ORDER BY (deleted_at IS NULL) DESC,created_at LIMIT 1
+  SELECT fc.id FROM fuel_card fc CROSS JOIN tcm WHERE fc.company_id=tcm.id AND fc.masked_card_number='0005'
+  ORDER BY (fc.deleted_at IS NULL) DESC,fc.created_at LIMIT 1
 )
 UPDATE card_assignment ca SET ends_at=coalesce(ends_at,now()),is_primary=false
 WHERE ca.fuel_card_id IN (SELECT fc.id FROM fuel_card fc,tcm,canonical

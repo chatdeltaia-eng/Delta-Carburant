@@ -32,7 +32,8 @@ UPDATE fuel_transaction ft SET fuel_card_id=canonical.id
 FROM canonical,duplicate WHERE ft.fuel_card_id=duplicate.id;
 
 WITH tcm AS (SELECT id FROM company WHERE code='TCM' LIMIT 1), canonical AS (
-  SELECT id FROM fuel_card,tcm WHERE company_id=tcm.id AND masked_card_number='0005' AND deleted_at IS NULL LIMIT 1
+  SELECT fc.id FROM fuel_card fc CROSS JOIN tcm
+  WHERE fc.company_id=tcm.id AND fc.masked_card_number='0005' AND fc.deleted_at IS NULL LIMIT 1
 )
 UPDATE transaction_review tr SET fuel_card_id=canonical.id
 FROM canonical WHERE tr.company_id=(SELECT id FROM tcm)

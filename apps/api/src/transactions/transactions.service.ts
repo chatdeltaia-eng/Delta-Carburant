@@ -267,7 +267,7 @@ export class TransactionsService {
       if(!vehicle.rows[0]&&this.isVehicleRegistration(vehicleKey)){
         vehicle=await client.query(`INSERT INTO vehicle(company_id,registration_normalized,registration_display,
           active,driver_name,total_mobility_status,total_mobility_checked_at,total_mobility_raw)
-          VALUES($1,$2,$3,true,nullif($4,''),'DETECTED_FROM_TRANSACTION',now(),$5)
+          VALUES($1::uuid,$2::text,$3::text,true,nullif($4::text,''),'DETECTED_FROM_TRANSACTION',now(),$5::jsonb)
           ON CONFLICT(company_id,registration_normalized) DO UPDATE SET
             registration_display=excluded.registration_display,active=true,deleted_at=NULL,deleted_by=NULL,
             driver_name=coalesce(nullif(excluded.driver_name,''),vehicle.driver_name),

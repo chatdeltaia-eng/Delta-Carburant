@@ -45,12 +45,13 @@ WHERE ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL AND ft.vehicle_id IS NULL
 -- Reconstituer les relevés KM historiques présents dans les transactions.
 INSERT INTO mileage_reading(vehicle_id,reading_date,mileage,status,source,created_by,validated_by,validated_at,
   previous_mileage,expected_mileage,detected_distance,anomaly,reconciliation_message)
-SELECT ft.vehicle_id,ft.transaction_date,ft.reported_mileage,'VALIDATED','TOTAL_MOBILITY',t.connected_by,t.connected_by,now(),
+SELECT DISTINCT ON (ft.vehicle_id,ft.reported_mileage)
+  ft.vehicle_id,ft.transaction_date,ft.reported_mileage,'VALIDATED','TOTAL_MOBILITY',t.connected_by,t.connected_by,now(),
   coalesce(ft.previous_mileage,0),ft.reported_mileage,greatest(0,ft.reported_mileage-coalesce(ft.previous_mileage,0)),false,
   'Kilométrage repris automatiquement depuis une transaction Total.'
 FROM fuel_transaction ft CROSS JOIN LATERAL (SELECT connected_by FROM total_mobility_connection LIMIT 1) t
 WHERE ft.deleted_at IS NULL AND ft.vehicle_id IS NOT NULL AND ft.reported_mileage IS NOT NULL AND ft.reported_mileage>0
-  AND NOT EXISTS(SELECT 1 FROM mileage_reading mr WHERE mr.vehicle_id=ft.vehicle_id
-    AND mr.reading_date=ft.transaction_date AND mr.mileage=ft.reported_mileage);
+ORDER BY ft.vehicle_id,ft.reported_mileage,ft.transaction_date DESC,ft.created_at DESC,ft.id
+ON CONFLICT(vehicle_id,mileage) WHERE source='TOTAL_MOBILITY' DO NOTHING;
 
 COMMIT;

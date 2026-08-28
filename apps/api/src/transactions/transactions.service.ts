@@ -382,8 +382,9 @@ export class TransactionsService {
             await client.query(`INSERT INTO mileage_reading(vehicle_id,beneficiary_id,reading_date,mileage,status,source,
               created_by,validated_by,validated_at,previous_mileage,expected_mileage,detected_distance,anomaly,
               period_liters,reference_liters_per_100km,estimated_distance,estimated_mileage,reconciliation_message)
-              VALUES($1,$2,$3,$4,'VALIDATED','TOTAL_MOBILITY',$5,$5,now(),$6,$4,greatest(0,$4-$6),false,
-                $7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`,
+              VALUES($1::uuid,$2::uuid,$3::timestamptz,$4::numeric,'VALIDATED','TOTAL_MOBILITY',$5::uuid,$5::uuid,now(),
+                $6::numeric,$4::numeric,greatest(0::numeric,$4::numeric-$6::numeric),false,
+                $7::numeric,$8::numeric,$9::numeric,$10::numeric,$11::text) ON CONFLICT DO NOTHING`,
               [vehicle.rows[0].id,beneficiary.rows[0].id,row.date,reported,actor.sub,previous,liters,reference,
                 100*liters/reference,estimated,`Kilométrage ${reported} km validé depuis la transaction Total.`]);
             await client.query(`UPDATE anomaly SET status='RESOLVED',resolved_at=now(),resolution='Kilométrage Total cohérent validé'

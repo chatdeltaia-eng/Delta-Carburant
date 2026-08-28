@@ -694,7 +694,15 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         .filter(row=>row.cardNumber&&row.status);
       const visibleTexts=await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>'')));
       const fromVisible=visibleTexts.flatMap(text=>this.cardsFromVisibleText(text));
-      const result=this.uniqueCards([...fromJson,...fromTable,...fromVisible]);
+      let result=this.uniqueCards([...fromJson,...fromTable,...fromVisible]);
+      // Le tableau « Gérer » n'expose pas le plafond mensuel. Total le place
+      // uniquement dans Modifier > Produit de la carte > Limite. Lire ce
+      // détail sans enregistrer la fiche, puis le rattacher au numéro de carte.
+      const detailedLimits=await this.extractCardProductLimits(result).catch(error=>{
+        this.logger.warn(`Plafonds Total : ${error instanceof Error?error.message:String(error)}`);
+        return new Map<string,number>();
+      });
+      result=result.map(card=>({...card,monthlyLimit:detailedLimits.get(card.cardNumber)??card.monthlyLimit}));
       this.lastCardDiagnostic=`JSON=${captured.length}, lignes=${rows.length}, JSON-cartes=${fromJson.length}, tableau=${fromTable.length}, texte=${fromVisible.length}, url=${page.url()}`;
       if(!result.length){
         const visible=(await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>''))))
@@ -703,6 +711,86 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
       return result;
     }finally{page.off('response',listener);}
+  }
+
+  private async extractCardProductLimits(cards:RemoteCardStatus[]){
+    const page=this.page;if(!page)throw new Error('Le navigateur Total a été fermé pendant les plafonds');
+    const limits=new Map<string,number>();
+    for(const card of cards){
+      await this.openManageCardsFromMenu();
+      await page.waitForTimeout(600);
+      let row:Locator|undefined;
+      for(const frame of page.frames()){
+        // Rechercher la carte afin de ne pas dépendre de la pagination du
+        // tableau. Le portail possède plusieurs filtres : ne remplir que le
+        // champ explicitement associé au numéro de carte/mode de paiement.
+        const inputs=frame.locator('input:visible');
+        for(let index=0;index<await inputs.count();index++){
+          const input=inputs.nth(index);
+          const token=await input.evaluate(element=>[
+            element.getAttribute('placeholder'),element.getAttribute('name'),element.getAttribute('aria-label'),
+            element.closest('label,mat-form-field,.q-field')?.textContent,
+          ].filter(Boolean).join(' ')).catch(()=>'');
+          if(!/num[ée]ro.*(?:carte|mode de paiement)|(?:carte|mode de paiement).*num[ée]ro/i.test(token))continue;
+          await input.fill(card.cardNumber);break;
+        }
+        const search=frame.getByRole('button',{name:/^\s*recherche\s*$/i}).first();
+        if(await search.isVisible({timeout:300}).catch(()=>false)){
+          await search.click({force:true}).catch(()=>undefined);await page.waitForTimeout(600);
+        }
+        const candidate=frame.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row')
+          .filter({hasText:new RegExp(`(?:^|\\D)${card.cardNumber}(?:\\D|$)`) }).first();
+        if(await candidate.isVisible({timeout:700}).catch(()=>false)){row=candidate;break;}
+      }
+      if(!row){this.logger.warn(`Plafond Total ${card.cardNumber} : ligne introuvable`);continue;}
+      const radio=row.locator('input[type="radio"], [role="radio"], mat-radio-button').first();
+      if(await radio.isVisible({timeout:300}).catch(()=>false))await radio.click({force:true});
+      const editCandidates=[
+        row.locator('button[aria-label*="modifier" i], button[title*="modifier" i], button:has-text("edit"), .q-icon:has-text("edit")').first(),
+        row.locator('button, [role="button"]').filter({hasText:/modifier|edit/i}).first(),
+      ];
+      let opened=false;
+      for(const edit of editCandidates){
+        if(!await edit.isVisible({timeout:300}).catch(()=>false))continue;
+        opened=await edit.click({force:true,timeout:3_000}).then(()=>true).catch(()=>false);if(opened)break;
+      }
+      if(!opened){this.logger.warn(`Plafond Total ${card.cardNumber} : bouton Modifier introuvable`);continue;}
+      await page.waitForURL(/\/cards\/edit-card/i,{timeout:10_000}).catch(()=>undefined);
+      for(const frame of page.frames()){
+        const product=frame.getByText(/^\s*Produit de la carte\s*$/i).first();
+        if(await product.isVisible({timeout:500}).catch(()=>false)){await product.click({force:true});break;}
+        const next=frame.getByRole('button',{name:/^\s*continuer\s*$/i}).first();
+        if(await next.isVisible({timeout:300}).catch(()=>false)){await next.click({force:true});break;}
+      }
+      await page.waitForTimeout(500);
+      let amount:number|undefined;
+      for(const frame of page.frames()){
+        const values=await frame.locator('body').evaluate(()=>{
+          const normalize=(value:string)=>value.replace(/\s+/g,' ').trim();
+          const result:string[]=[];
+          for(const node of Array.from(document.querySelectorAll<HTMLElement>('input, [contenteditable="true"], mat-form-field, .q-field, label, div'))){
+            const text=normalize(node.textContent??'');
+            const context=normalize(node.closest('section,form,fieldset,.card,.row')?.textContent??text);
+            if(!/(?:Limite de|Limit of)/i.test(text+' '+context))continue;
+            if(node instanceof HTMLInputElement&&node.value)result.push(node.value);
+            const match=(text+' '+context).match(/(?:Limite de|Limit of)\s*([\d\s.,]+)/i);
+            if(match)result.push(match[1]);
+          }
+          return result;
+        }).catch(()=>[]);
+        amount=values.map(value=>this.parseAmount(value)).find(value=>value!==undefined&&value>=0);
+        if(amount!==undefined)break;
+      }
+      if(amount!==undefined){limits.set(card.cardNumber,amount);this.logger.log(`Plafond Total ${card.cardNumber} : ${amount} TND`);}
+      else this.logger.warn(`Plafond Total ${card.cardNumber} : valeur introuvable dans Produit de la carte`);
+      // Revenir sans sauvegarder : l'agent est strictement en lecture seule.
+      for(const frame of page.frames()){
+        const cancel=frame.getByRole('button',{name:/^\s*annuler\s*$/i}).first();
+        if(await cancel.isVisible({timeout:300}).catch(()=>false)){await cancel.click({force:true}).catch(()=>undefined);break;}
+      }
+      await page.waitForTimeout(350);
+    }
+    return limits;
   }
 
   private async openManageCardsFromMenu(){

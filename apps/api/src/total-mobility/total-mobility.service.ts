@@ -372,8 +372,9 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,[`total-drivers:${company.id}`]);
       let created=0,updated=0,keyConflicts=0;
       for(const remote of drivers){
-        const number=String(remote.driverNumber).trim().padStart(4,'0');
-        if(!number)continue;
+        const rawNumber=String(remote.driverNumber??'').replace(/\D/g,'');
+        if(!rawNumber)continue;
+        const number=rawNumber.padStart(4,'0');
         const rawCode=String(remote.driverCode??'').trim();
         // The extractor returns an empty string when Total does not expose a
         // driver code. Never turn every missing code into the shared "0000".
@@ -410,8 +411,20 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           }
         }
       }
+      // Le portail véhicule ne renvoie pas toujours driverNumber. Dans ce cas,
+      // rattacher par le nom Total normalisé, sans jamais traverser la société.
+      // Le sous-select n'agit que lorsqu'un seul chauffeur correspond au nom.
+      const linked=await client.query(`WITH matches AS (
+          SELECT v.id AS vehicle_id,min(d.id::text)::uuid AS driver_id,min(d.full_name) AS full_name
+          FROM vehicle v JOIN driver d ON d.company_id=v.company_id AND d.deleted_at IS NULL AND d.active
+            AND regexp_replace(upper(d.full_name),'[^A-Z0-9]','','g')=
+                regexp_replace(upper(coalesce(v.driver_name,'')),'[^A-Z0-9]','','g')
+          WHERE v.company_id=$1 AND v.deleted_at IS NULL AND nullif(v.driver_name,'') IS NOT NULL
+          GROUP BY v.id HAVING count(*)=1
+        ) UPDATE vehicle v SET driver_id=m.driver_id,driver_name=m.full_name,updated_at=now()
+        FROM matches m WHERE v.id=m.vehicle_id AND v.driver_id IS DISTINCT FROM m.driver_id RETURNING v.id`,[company.id]);
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values) VALUES($1,'SYNC_TOTAL_DRIVERS','integration','TOTAL_MOBILITY_DRIVERS',$2)`,[actor.email,{company:company.code,received:drivers.length,created,updated,keyConflicts}]);
-      return {received:drivers.length,created,updated,keyConflicts,company:company.code};
+      return {received:drivers.length,created,updated,keyConflicts,linkedVehicles:linked.rowCount??0,company:company.code};
     });
   }
   async importVehicles(vehicles: RemoteVehicle[], actor: Actor, clientName?: string) {
@@ -430,7 +443,12 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         const active=!/oppos|bloqu|inactif|inactive|suspend|sorti/i.test(String(remote.status??''));
         const rawDriverNumber=String(remote.driverNumber??'').replace(/\D/g,'');
         const driverNumber=rawDriverNumber?rawDriverNumber.padStart(4,'0'):'';
-        const driver=driverNumber?await client.query(`SELECT id,full_name FROM driver WHERE company_id=$1 AND driver_number=$2 AND deleted_at IS NULL LIMIT 1`,[company.id,driverNumber]):{rows:[]};
+        const normalizedDriverName=String(remote.driverName??'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+        const driver=(driverNumber||normalizedDriverName)?await client.query(`SELECT id,full_name FROM driver
+          WHERE company_id=$1 AND deleted_at IS NULL AND active AND
+            (($2<>'' AND driver_number=$2) OR ($3<>'' AND regexp_replace(upper(full_name),'[^A-Z0-9]','','g')=$3))
+          ORDER BY CASE WHEN $2<>'' AND driver_number=$2 THEN 0 ELSE 1 END,updated_at DESC LIMIT 1`,
+          [company.id,driverNumber,normalizedDriverName]):{rows:[]};
         const existing=await client.query(`SELECT id,total_mobility_mileage FROM vehicle WHERE company_id=$1 AND registration_normalized=$2 AND deleted_at IS NULL LIMIT 1`,[company.id,normalized]);
         let vehicleId:string;
         if(existing.rows[0]){

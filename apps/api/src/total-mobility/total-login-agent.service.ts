@@ -390,23 +390,39 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     try{
       await this.openDriversFromTotalMenu();
       await page.waitForTimeout(4_000);
-      const jsonDrivers=this.driversFromUnknown(captured);
-      // Force le rendu des dernières lignes, y compris lorsque Total charge le
-      // module dans une iframe.
-      for(const frame of page.frames())await frame.evaluate(async()=>{
-        const candidates=[document.scrollingElement,...Array.from(document.querySelectorAll<HTMLElement>('[role="grid"], [role="table"], .table-container, .mat-table, main'))].filter(Boolean) as HTMLElement[];
-        for(const element of candidates){element.scrollTop=element.scrollHeight;}
-        await new Promise(resolve=>setTimeout(resolve,700));
-      }).catch(()=>undefined);
-      // Le portail Total utilise selon sa version un tableau HTML, Angular
-      // Material ou une grille ARIA. Il ne faut donc pas dépendre uniquement
-      // de `table tbody tr`.
       const rowTexts:string[]=[];const bodyTexts:string[]=[];
-      for(const frame of page.frames()){
-        rowTexts.push(...await frame.locator('table tr, mat-row, [role="row"], .mat-mdc-row, .mat-row, [class*="row" i]')
-          .evaluateAll(elements=>elements.map(row=>(row.textContent??'').replace(/\s+/g,' ').trim()).filter(Boolean)).catch(()=>[]));
-        const text=await frame.locator('body').innerText().catch(()=>'');if(text)bodyTexts.push(text);
+      // Lire toutes les pages. Total limite habituellement la grille à 10
+      // lignes ; l'ancienne extraction ne conservait donc que la première.
+      for(let pageIndex=0;pageIndex<100;pageIndex++){
+        for(const frame of page.frames()){
+          await frame.evaluate(()=>{
+            const candidates=[document.scrollingElement,...Array.from(document.querySelectorAll<HTMLElement>('[role="grid"], [role="table"], .table-container, .mat-table, main'))].filter(Boolean) as HTMLElement[];
+            for(const element of candidates)element.scrollTop=element.scrollHeight;
+          }).catch(()=>undefined);
+          rowTexts.push(...await frame.locator('table tr, mat-row, [role="row"], .mat-mdc-row, .mat-row')
+            .evaluateAll(elements=>elements.map(row=>(row.textContent??'').replace(/\s+/g,' ').trim()).filter(Boolean)).catch(()=>[]));
+          const text=await frame.locator('body').innerText().catch(()=>'');if(text)bodyTexts.push(text);
+        }
+        let advanced=false;
+        for(const frame of page.frames()){
+          const buttons=frame.locator('button');
+          const nextIndex=await buttons.evaluateAll(elements=>elements.findIndex(element=>{
+            const button=element as HTMLButtonElement;
+            const token=[button.textContent,button.getAttribute('aria-label'),button.getAttribute('title')].filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();
+            const visible=Boolean(button.offsetWidth||button.offsetHeight||button.getClientRects().length);
+            return visible&&!button.disabled&&button.getAttribute('aria-disabled')!=='true'&&
+              (/^(chevron_right|navigate_next|keyboard_arrow_right)$/.test((button.textContent??'').trim())||/next page|page suivante|suivant/.test(token))&&
+              !/last|derni[eè]re/.test(token);
+          })).catch(()=>-1);
+          if(nextIndex<0)continue;
+          const before=await frame.locator('table tr, mat-row, [role="row"], .mat-mdc-row, .mat-row').allTextContents().catch(()=>[]);
+          await buttons.nth(nextIndex).click({force:true});await page.waitForTimeout(900);
+          const after=await frame.locator('table tr, mat-row, [role="row"], .mat-mdc-row, .mat-row').allTextContents().catch(()=>[]);
+          advanced=after.join('|')!==before.join('|');if(advanced)break;
+        }
+        if(!advanced)break;
       }
+      const jsonDrivers=this.driversFromUnknown(captured);
       const fromRows=this.driversFromVisibleRows(rowTexts);
       // Dernier recours robuste pour la grille virtuelle actuelle de Mobility
       // Business : lecture du texte visible (0001, prénom, nom, etc.).

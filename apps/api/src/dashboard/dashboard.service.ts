@@ -57,7 +57,7 @@ export class DashboardService {
       FROM fuel_card fc LEFT JOIN fuel_transaction ft ON ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL
         AND ft.transaction_date>=date_trunc('month',$1::date) AND ft.transaction_date<date_trunc('month',$1::date)+interval '1 month'
       WHERE fc.deleted_at IS NULL AND ($2::boolean=false OR fc.responsible_user_id=$3)
-        AND ($4='' OR fc.company_id=$4::uuid)
+        AND ($4::text='' OR fc.company_id=$4::uuid)
       GROUP BY fc.id ORDER BY consumed DESC`,[selected,own,actor.sub,companyId]);
     const [official]=await this.db.query(`SELECT coalesce(sum(source.amount),0)::float AS amount,
       coalesce(sum(source.liters),0)::float AS liters,count(*)::int AS transactions FROM (
@@ -65,13 +65,13 @@ export class DashboardService {
         FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id
         WHERE ft.deleted_at IS NULL AND ft.transaction_date>=date_trunc('month',$1::date)
           AND ft.transaction_date<date_trunc('month',$1::date)+interval '1 month'
-          AND ($2::boolean=false OR fc.responsible_user_id=$3) AND ($4='' OR fc.company_id=$4::uuid)
+          AND ($2::boolean=false OR fc.responsible_user_id=$3) AND ($4::text='' OR fc.company_id=$4::uuid)
         UNION ALL
         SELECT tr.amount_incl_tax,tr.quantity_liters
         FROM transaction_review tr LEFT JOIN fuel_card fc ON fc.id=tr.fuel_card_id
         WHERE tr.status='PENDING' AND tr.transaction_date>=date_trunc('month',$1::date)
           AND tr.transaction_date<date_trunc('month',$1::date)+interval '1 month'
-          AND ($2::boolean=false OR fc.responsible_user_id=$3) AND ($4='' OR coalesce(tr.company_id,fc.company_id)=$4::uuid)
+          AND ($2::boolean=false OR fc.responsible_user_id=$3) AND ($4::text='' OR coalesce(tr.company_id,fc.company_id)=$4::uuid)
       ) source`,[selected,own,actor.sub,companyId]);
     return {month:selected.slice(0,7),amount:Number(official.amount),liters:Number(official.liters),transactions:Number(official.transactions),cards};
   }

@@ -343,7 +343,7 @@ export class TransactionsService {
         if(!vehicle.rows[0]&&!isOffPark){
           const anomalyType=unavailableVehicle.rows[0]?'UNAVAILABLE_VEHICLE':'UNKNOWN_VEHICLE';
           await client.query(`INSERT INTO anomaly(fuel_transaction_id,fuel_card_id,anomaly_type,severity,status,description,assigned_to,metadata)
-            SELECT $1,$2,$3,'HIGH','OPEN',$4,$5,$6
+            SELECT $1::uuid,$2::uuid,$3::text,'HIGH','OPEN',$4::text,$5::uuid,$6::jsonb
             WHERE NOT EXISTS(SELECT 1 FROM anomaly WHERE fuel_transaction_id=$1 AND anomaly_type=$3 AND status IN('OPEN','IN_REVIEW'))`,
             [inserted.rows[0].id,card.rows[0].id,anomalyType,
               `La consommation est affectée à la carte ${card.rows[0].masked_card_number}, mais le véhicule ${row.vehicle??'non renseigné'} doit être vérifié.`,
@@ -369,7 +369,7 @@ export class TransactionsService {
           const implausible=previous>0&&liters>0&&(reported<minimum||reported>maximum);
           if(regressed||implausible){
             await client.query(`INSERT INTO anomaly(fuel_transaction_id,fuel_card_id,vehicle_id,anomaly_type,severity,status,description,assigned_to,metadata)
-              SELECT $1,$2,$3,'MILEAGE_MISMATCH','HIGH','OPEN',$4,$5,$6
+              SELECT $1::uuid,$2::uuid,$3::uuid,'MILEAGE_MISMATCH','HIGH','OPEN',$4::text,$5::uuid,$6::jsonb
               WHERE NOT EXISTS(SELECT 1 FROM anomaly WHERE fuel_transaction_id=$1 AND anomaly_type='MILEAGE_MISMATCH' AND status IN('OPEN','IN_REVIEW'))`,
               [inserted.rows[0].id,card.rows[0].id,vehicle.rows[0].id,
                 regressed

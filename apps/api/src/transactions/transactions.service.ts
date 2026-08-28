@@ -216,8 +216,8 @@ export class TransactionsService {
         AND ($5::uuid IS NULL OR v.company_id=$5::uuid)
         AND v.active AND v.deleted_at IS NULL
         ORDER BY CASE WHEN v.company_id=$3::uuid THEN 0 ELSE 1 END,
-          CASE WHEN regexp_replace(upper(coalesce(d.full_name,v.driver_name,'')),'[^A-Z0-9]','','g')=$4 THEN 0 ELSE 1 END,
-          CASE WHEN regexp_replace(upper(v.registration_display),'[^A-Z0-9]','','g')=$2 THEN 0 ELSE 1 END LIMIT 1`,
+          CASE WHEN regexp_replace(upper(coalesce(d.full_name,v.driver_name,'')),'[^A-Z0-9]','','g')=$4::text THEN 0 ELSE 1 END,
+          CASE WHEN regexp_replace(upper(v.registration_display),'[^A-Z0-9]','','g')=$2::text THEN 0 ELSE 1 END LIMIT 1`,
         [vehicleKeys,vehicleKey,card.rows[0]?.company_id??null,String(row.beneficiary??card.rows[0]?.holder_name??'').toUpperCase().replace(/[^A-Z0-9]/g,''),dto.companyId??null]) : {rows:[]};
       const currentAssignment=card.rows[0]?await client.query(`SELECT v.id,v.company_id,v.driver_name,d.full_name AS driver_full_name,
         ca.beneficiary_id,coalesce(b.display_name,fc.holder_name) AS beneficiary_name

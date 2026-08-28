@@ -79,10 +79,10 @@ export class MileageService {
    ORDER BY week DESC,"createdAt" DESC`,[own,actor.sub,companyId]);}
  async create(dto:{vehicleId:string;mileage:number;note?:string},actor:Actor){return this.db.transaction(async client=>{
    const zin=actor.role==='ZIN_FINANCE';
-   const allowed=await client.query(`SELECT v.id,v.registration_display FROM vehicle v JOIN company c ON c.id=v.company_id
-     WHERE v.id=$1 AND v.deleted_at IS NULL AND v.active AND c.code='DC'
+   const allowed=await client.query(`SELECT v.id,v.registration_display,c.code AS company FROM vehicle v JOIN company c ON c.id=v.company_id
+     WHERE v.id=$1 AND v.deleted_at IS NULL AND v.active AND c.active
      AND ($3::boolean OR v.managed_by=$2 OR EXISTS(SELECT 1 FROM transaction_allocation ta WHERE ta.vehicle_id=v.id AND ta.allocated_by=$2))`,[dto.vehicleId,actor.sub,zin]);
-   if(!allowed.rows[0]) throw new NotFoundException(zin?'Véhicule actif introuvable dans le parc DC':'Ce véhicule ne fait pas partie de votre périmètre hors parc');
+   if(!allowed.rows[0]) throw new NotFoundException(zin?'Véhicule actif introuvable dans la société sélectionnée':'Ce véhicule ne fait pas partie de votre périmètre société');
    const last=await client.query(`SELECT mileage,reading_date FROM mileage_reading WHERE vehicle_id=$1 AND status='VALIDATED' ORDER BY reading_date DESC LIMIT 1`,[dto.vehicleId]);
    const previous=Number(last.rows[0]?.mileage??0),since=last.rows[0]?.reading_date??'1970-01-01';
    const fuel=await client.query(`SELECT coalesce(sum(ft.quantity_liters),0)::float AS liters FROM fuel_transaction ft

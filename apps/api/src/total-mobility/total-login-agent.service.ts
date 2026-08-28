@@ -69,6 +69,15 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async autoStart() {
+    // Un processus Render peut perdre Chromium sans recevoir une erreur du
+    // portail. Ne jamais laisser un ancien état SUCCESS empêcher la reprise
+    // autonome de la synchronisation.
+    if (
+      this.statusValue.state === 'SUCCESS' &&
+      (!this.browser || !this.page || this.page.isClosed())
+    ) {
+      this.setStatus('FAILED', 'Session Total interrompue, reconnexion automatique…');
+    }
     if (!['IDLE', 'FAILED'].includes(this.statusValue.state)) return;
     if (!process.env.TOTAL_USERNAME?.trim() || !process.env.TOTAL_PASSWORD) return;
     const [connection] = await this.db.query<{ enabled: boolean }>(
@@ -317,8 +326,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     this.setStatus('EXTRACTING', this.requestedCompanyId
       ? 'Extraction des transactions du client sélectionné…'
       : 'Extraction complète des transactions de tous les clients…');
-    const clients=this.requestedCompanyId
-      ? [await this.extractSelectedCompany(this.requestedCompanyId)]
+    const selectedCompanyId=this.requestedCompanyId;
+    const clients=selectedCompanyId
+      ? [await this.extractSelectedCompany(selectedCompanyId)]
       : await this.extractAllClientCards();
     const summary=this.summarizeClientResults(clients);
     if(summary.fetched<1)
@@ -327,6 +337,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       ...this.status('SUCCESS', `${summary.visible} transaction(s) Total actualisée(s)`),
       result: { clients, ...summary },
     };
+    // Une demande humaine ciblée ne doit limiter que l'extraction demandée.
+    // Les cycles suivants redeviennent globaux afin d'actualiser les quatre
+    // clients Total sans intervention de l'utilisateur.
+    this.requestedCompanyId=undefined;
     this.scheduleLiveRefresh();
   }
 
@@ -336,7 +350,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     this.liveTimer=setInterval(()=>void this.liveRefresh(),minutes*60_000);this.liveTimer.unref();
   }
   private async liveRefresh(){
-    if(!this.actor||!this.page||['STARTING','SIGNING_IN','CODE_REQUIRED','EXTRACTING'].includes(this.statusValue.state))return;
+    if(!this.actor||['STARTING','SIGNING_IN','CODE_REQUIRED','EXTRACTING'].includes(this.statusValue.state))return;
+    if(!this.browser||!this.page||this.page.isClosed()){
+      this.fail(new Error('Session Total interrompue; l’agent va se reconnecter automatiquement'));
+      return;
+    }
     try{
       this.setStatus('EXTRACTING','Actualisation des transactions Total…');
       // La passe précédente se termine sur le dernier client. Revenir au

@@ -6,6 +6,7 @@ import { setDefaultResultOrder } from 'node:dns';
 export class MailingService {
   private readonly logger = new Logger(MailingService.name);
   private readonly transporter: Transporter | null;
+  private readonly from: string | undefined;
 
   constructor() {
     // Render ne fournit pas toujours de route IPv6 sortante alors que Gmail
@@ -15,6 +16,7 @@ export class MailingService {
     const host = process.env.SMTP_HOST?.trim();
     const user = process.env.SMTP_USER?.trim();
     const pass = process.env.SMTP_PASSWORD?.trim();
+    this.from = process.env.MAIL_FROM?.trim() || user;
     this.transporter = host && user && pass ? nodemailer.createTransport({
       host,
       port: Number(process.env.SMTP_PORT || 587),
@@ -26,14 +28,14 @@ export class MailingService {
     }) : null;
   }
 
-  configured() { return Boolean(this.transporter && process.env.MAIL_FROM); }
+  configured() { return Boolean(this.transporter && this.from); }
 
   async send(to: string[], subject: string, html: string) {
-    if (!this.transporter || !process.env.MAIL_FROM) {
+    if (!this.transporter || !this.from) {
       this.logger.warn(`E-mail non envoyé (${subject}) : configuration SMTP absente`);
       return { sent: false, reason: 'SMTP_NOT_CONFIGURED' };
     }
-    const info = await this.transporter.sendMail({ from: process.env.MAIL_FROM, to, subject, html });
+    const info = await this.transporter.sendMail({ from: this.from, to, subject, html });
     return { sent: true, messageId: info.messageId };
   }
 

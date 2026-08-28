@@ -1126,6 +1126,199 @@
   .workflowSteps button{flex:0 0 min(84vw,360px);scroll-snap-align:start}
 }
 
+/* ===========================================================================
+   DELTA UI 2026 — système visuel unifié, lisible et orienté contrôle
+   ========================================================================== */
+.app{
+  --ui-navy:#0b1f3a;
+  --ui-navy-2:#102c50;
+  --ui-primary:#0f766e;
+  --ui-primary-strong:#0b5f59;
+  --ui-primary-soft:#e7f7f4;
+  --ui-blue:#2563eb;
+  --ui-amber:#d97706;
+  --ui-red:#dc2626;
+  --ui-green:#15803d;
+  --ui-ink:#17243a;
+  --ui-muted:#66758a;
+  --ui-line:#dce4ed;
+  --ui-surface:#ffffff;
+  --ui-subtle:#f6f8fb;
+  min-height:100vh!important;
+  color:var(--ui-ink)!important;
+  background:
+    radial-gradient(circle at 88% 3%,rgba(15,118,110,.09),transparent 25rem),
+    linear-gradient(180deg,#f5f8fb 0,#eef3f8 100%)!important;
+}
+.app:after{display:none!important}
+
+/* Navigation : repère sombre constant, sans éblouissement. */
+.sidebar{
+  border-bottom:1px solid rgba(255,255,255,.1)!important;
+  background:linear-gradient(100deg,#081a31,#0d2948 55%,#0a2039)!important;
+  box-shadow:0 12px 36px rgba(11,31,58,.22)!important;
+}
+.brand:after{background:linear-gradient(transparent,rgba(94,234,212,.45),transparent)!important}
+.sidebar nav button,.sideBottom button{
+  color:#b9c8da!important;border-color:transparent!important;
+  font-weight:680!important;
+}
+.sidebar nav button svg,.sideBottom button svg{color:#8fa9c5!important}
+.sidebar nav button:hover,.sideBottom button:hover{
+  color:#fff!important;background:rgba(255,255,255,.075)!important;
+  border-color:rgba(255,255,255,.08)!important;transform:translateY(-1px)!important;
+}
+.sidebar .active{
+  color:#fff!important;border-color:rgba(94,234,212,.28)!important;
+  background:linear-gradient(135deg,#0f766e,#126a74)!important;
+  box-shadow:0 8px 22px rgba(7,74,72,.32),inset 0 1px rgba(255,255,255,.16)!important;
+}
+.sidebar .active svg{color:#d7fff8!important}.sidebar .active:after{display:none!important}
+.topbarTools{border-left-color:rgba(255,255,255,.12)!important}
+.topbarTools>button{color:#c6d5e5!important}.topbarTools>button:hover{background:rgba(255,255,255,.09)!important}
+.topbarIdentity small,.topbarIdentity>i{color:#9eb2c8!important}
+.topbarIdentity>span{background:linear-gradient(145deg,#14b8a6,#0f766e)!important;box-shadow:0 7px 18px rgba(6,95,89,.3)!important}
+
+/* Structure et en-têtes. */
+.content{color:var(--ui-ink)!important}
+.content header{
+  border:1px solid rgba(255,255,255,.85)!important;
+  background:linear-gradient(118deg,#fff,#f7fbfc)!important;
+  box-shadow:0 12px 32px rgba(31,52,73,.09)!important;
+}
+.content header:before{background:radial-gradient(circle,rgba(20,184,166,.11),transparent 68%)!important}
+.content header:after{background:linear-gradient(90deg,#0f766e,#38bdf8,transparent)!important}
+.content h1,.content h2,.content h3,.panelHead h2,.toolbar b,.portfolioHead h3,
+.overviewToolbar h2,.settings h2{color:var(--ui-ink)!important}
+.content p,.content small,.panelHead p,.overviewToolbar p,.portfolioHead p,
+.settings p{color:var(--ui-muted)!important}
+.eyebrow{color:var(--ui-primary)!important}
+
+/* Surfaces : claires, aérées, avec une seule profondeur. */
+.workflowGuide,.metric,.panel,.overviewPanel,.fullPanel,.settings article,.monthlyGauge,
+.portfolioCard,.referenceConsumption,.referenceActivity,.referenceKpis article,
+.referenceBars,.referenceVehicles{
+  color:var(--ui-ink)!important;
+  border:1px solid var(--ui-line)!important;
+  background:rgba(255,255,255,.96)!important;
+  box-shadow:0 10px 28px rgba(31,52,73,.075)!important;
+}
+.panel:before,.overviewPanel:before,.portfolioCard:before,
+.referenceConsumption:before,.referenceActivity:before,.referenceBars:before,.referenceVehicles:before{
+  background:linear-gradient(90deg,transparent,rgba(15,118,110,.35),transparent)!important;
+}
+.fullPanel:before{height:3px!important;background:linear-gradient(90deg,#0f766e,#2dd4bf 48%,#38bdf8)!important}
+.fullPanel>.panelHead,.panel>.panelHead,.overviewToolbar{
+  border-bottom:1px solid var(--ui-line)!important;
+  background:linear-gradient(100deg,#fff,#f5fafb)!important;
+}
+.fullPanel>.panelHead:before,.panel>.panelHead:before,.overviewToolbar:before{
+  background:var(--ui-primary)!important;box-shadow:none!important;
+}
+
+/* KPI : chiffres immédiatement lisibles et codage sémantique sobre. */
+.metric{transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease!important}
+.metric:hover{transform:translateY(-3px);border-color:#b9d7d4!important;box-shadow:0 16px 34px rgba(31,52,73,.12)!important}
+.metric p{color:var(--ui-muted)!important}.metric strong{color:var(--ui-ink)!important}
+.metricIcon,.green{background:#e7f7ef!important;color:#15803d!important}
+.blue{background:#eaf2ff!important;color:#2563eb!important}
+.orange{background:#fff4df!important;color:#b45309!important}
+.violet,.metric_violet{background:#f2edff!important;color:#6d4ed0!important}
+
+/* Outils, filtres et formulaires. */
+.toolbar,.pagination,.fullPanel>.companyFilter,.fullPanel>.bulkBar{
+  border-color:var(--ui-line)!important;background:#fff!important;
+}
+.searchField,.moduleFilters input,.moduleFilters select,.toolbar input,
+.panelHead input,.overviewToolbar input,.formGrid input,.formGrid select,.formGrid textarea,
+.companyFilter select,.pageSizeControl select{
+  color:var(--ui-ink)!important;color-scheme:light!important;
+  border:1px solid #cdd8e4!important;background:#fff!important;
+  box-shadow:0 1px 2px rgba(31,52,73,.03)!important;
+}
+.toolbar .searchField input{color:var(--ui-ink)!important}.toolbar .searchField input::placeholder{color:#8b99aa!important}
+.searchField:focus-within,.moduleFilters input:focus,.moduleFilters select:focus,
+.formGrid input:focus,.formGrid select:focus,.formGrid textarea:focus{
+  border-color:#14b8a6!important;box-shadow:0 0 0 4px rgba(20,184,166,.13)!important;
+}
+.moduleFilters{border-color:var(--ui-line)!important;background:#f7f9fc!important}
+.moduleFilters>div b,.moduleFilters label{color:#34445a!important}.moduleFilters small{color:#76869a!important}
+.moduleFilters>button{color:#44546a!important;border-color:#cfd9e4!important;background:#fff!important}
+.resultCount{color:#66758a!important;border-color:#d8e1ea!important;background:#f4f7fa!important}
+.resultCount b,.pageSizeControl span b,.pageButtons strong{color:var(--ui-primary)!important}
+.toolbar>button,.settings button,.modalActions button:last-child{
+  color:#fff!important;border-color:var(--ui-primary)!important;
+  background:linear-gradient(135deg,var(--ui-primary),var(--ui-primary-strong))!important;
+  box-shadow:0 7px 16px rgba(15,118,110,.18)!important;
+}
+
+/* Tableaux : lecture rapide, colonnes stables, survol non agressif. */
+.tableWrap{color:var(--ui-ink)!important;background:#fff!important;scrollbar-color:#a9b8c7 #eef2f6!important}
+.tableWrap th{
+  height:48px!important;color:#405168!important;
+  border-color:#d8e2ec!important;border-bottom:2px solid #b9cbc9!important;
+  background:linear-gradient(180deg,#f7fafc,#eef3f7)!important;
+  box-shadow:none!important;
+}
+.tableWrap td{height:58px!important;color:#3f4f63!important;border-color:#e6ecf2!important;background:#fff!important}
+.tableWrap td b{color:#18263a!important}.tableWrap td small{color:#758599!important}
+.tableWrap tbody>tr:nth-child(even):not(.allocationRow)>td{background:#f9fbfd!important}
+.tableWrap tbody>tr:hover:not(.allocationRow)>td{background:#edf8f6!important}
+.tableWrap tbody>tr:hover>td:first-child{border-left-color:#14b8a6!important}
+.pageButtons button{color:#43536a!important;border-color:#d2dce6!important;background:#fff!important}
+.pageButtons button:hover:not(:disabled){color:#fff!important;border-color:var(--ui-primary)!important;background:var(--ui-primary)!important}
+.smallBtn{color:#0f766e!important;border-color:#b9dcd7!important;background:#ecf9f7!important;font-weight:750!important}
+.smallBtn:hover{color:#fff!important;background:#0f766e!important}
+
+/* États métier : couleur + contraste, jamais couleur seule. */
+.badge{border-color:#cad8e5!important;background:#edf3f8!important;color:#3d526b!important}
+.badge.active,.badge.distributed,.badge.assigned,.finance_confirmed,.documentAuthorized{
+  border-color:#9ed5b3!important;background:#eaf8ef!important;color:#166534!important
+}
+.badge.suspended,.badge.opposed,.badge.lost,.badge.stolen,.badge.replaced{
+  border-color:#f3aaaa!important;background:#fff0f0!important;color:#a71924!important
+}
+.badge.to_assign,.finance_pending,.documentPending,.waitingStatus{
+  border-color:#f2cb83!important;background:#fff7e7!important;color:#8a4b06!important
+}
+.tableWrap td.billingOk{color:#166534!important;background:#ebf8ef!important}
+.tableWrap td.billingMismatch{color:#a71924!important;background:#fff0f0!important;animation:none!important}
+.tableWrap td.billingUnpriced{color:#8a4b06!important;background:#fff7e7!important}
+.alert{color:#8f1722!important;border-color:#f4b3b8!important;background:#fff1f2!important;box-shadow:0 9px 24px rgba(190,24,36,.09)!important}
+
+/* Modales et notifications : au-dessus du flux, sans rupture de thème. */
+.overlay{background:rgba(8,26,49,.62)!important;backdrop-filter:blur(8px)!important}
+.modal{color:var(--ui-ink)!important;border:1px solid rgba(255,255,255,.75);background:#fff!important;box-shadow:0 28px 90px rgba(8,26,49,.27)!important}
+.modalHead,.modalActions{border-color:var(--ui-line)!important;background:#fff!important}
+.modalActions{background:#f6f8fb!important}
+.notificationMenu{color:var(--ui-ink)!important;border-color:#d7e1eb!important;background:#fff!important;box-shadow:0 24px 70px rgba(8,26,49,.22)!important}
+.notificationMenu h3,.notificationMenu>button b{color:var(--ui-ink)!important}
+.notificationMenu>button{border-color:#e7edf3!important;background:#fff!important}
+.notificationMenu>button:hover,.notificationMenu>button.unread{background:#edf8f6!important}
+.notificationMenu>button span{color:#64758a!important}
+
+/* Cockpit Direction : rail sombre, zone de travail claire. */
+.dashboardRail{border-color:rgba(255,255,255,.08)!important;background:linear-gradient(180deg,#0a213c,#0c2948 76%,#081d35)!important}
+.railClient>button,.railHelp{border-color:rgba(255,255,255,.1)!important;background:rgba(255,255,255,.055)!important}
+.railClient b,.railLabel,.railHelp b{color:#5eead4!important}.railGroup button{color:#b7c7d9!important}
+.railGroup button:hover{background:rgba(255,255,255,.07)!important}.railGroup .railActive{color:#fff!important;background:#0f766e!important;box-shadow:inset 4px 0 #5eead4!important}
+.referenceIntro h2{color:var(--ui-ink)!important;text-shadow:none!important}.referenceIntro small,.referenceIntro p{color:var(--ui-muted)!important}.referenceIntro p b{color:var(--ui-ink)!important}.referenceIntro p span{color:var(--ui-primary)!important}
+.referenceIntroActions button,.referenceIntroActions label{color:#fff!important;border-color:#0f766e!important;background:linear-gradient(135deg,#0f766e,#0b5f59)!important;box-shadow:0 7px 18px rgba(15,118,110,.16)!important}
+.referenceIntroActions input{color:#fff!important;color-scheme:dark!important}
+.referenceKpis strong,.referenceActivity b,.referenceVehicles strong{color:var(--ui-ink)!important}
+.referenceActivity>div:hover,.referenceVehicles>div:not(.vehicleHead):hover{background:#edf8f6!important;border-color:#bcded9!important}
+
+@media(max-width:900px){
+  .content{padding-inline:16px!important}
+  .content header{border-radius:14px!important}
+  .toolbar{padding-inline:15px!important}
+  .moduleFilters{padding:14px!important}
+}
+
+@media(prefers-reduced-motion:reduce){
+  .metric,.tableWrap tbody>tr{animation:none!important;transition:none!important}
+}
+
 @media(max-width:420px){
   .sidebar nav button span{display:none}
   .sidebar nav button{min-width:44px}
@@ -1948,3 +2141,30 @@
   .totalWorkflowSection,.flowKpiSection,.dgAnalysisSection,.dgCompanySection{padding:15px!important}.dailyConsumptionPanel{padding:0!important}
   .reportKpiCard{padding:17px 14px 15px 58px!important}.actions{grid-template-columns:1fr!important}
 }
+
+/* Delta UI final cascade: keeps operational screens light after legacy themes. */
+.app{color:var(--ui-ink)!important;background:radial-gradient(circle at 88% 3%,rgba(15,118,110,.09),transparent 25rem),linear-gradient(180deg,#f5f8fb,#eef3f8)!important}
+.content header{border-color:#fff!important;background:linear-gradient(118deg,#fff,#f7fbfc)!important;box-shadow:0 12px 32px rgba(31,52,73,.09)!important}
+.content h1,.content h2,.content h3,.panelHead h2,.toolbar b,.overviewToolbar h2,.settings h2{color:#17243a!important}
+.content p,.content small,.panelHead p,.overviewToolbar p,.settings p{color:#66758a!important}.eyebrow{color:#0f766e!important}
+.workflowGuide,.metric,.panel,.overviewPanel,.fullPanel,.settings article,.monthlyGauge,.portfolioCard,
+.referenceConsumption,.referenceActivity,.referenceKpis article,.referenceBars,.referenceVehicles{color:#17243a!important;border-color:#dce4ed!important;background:#fff!important;box-shadow:0 10px 28px rgba(31,52,73,.075)!important}
+.fullPanel>.panelHead,.panel>.panelHead,.overviewToolbar{border-color:#dce4ed!important;background:linear-gradient(100deg,#fff,#f5fafb)!important}
+.toolbar,.pagination,.fullPanel>.companyFilter,.fullPanel>.bulkBar,.moduleFilters{border-color:#dce4ed!important;background:#fff!important}
+.moduleFilters{background:#f7f9fc!important}.searchField,.moduleFilters input,.moduleFilters select,.toolbar input,
+.panelHead input,.overviewToolbar input,.formGrid input,.formGrid select,.formGrid textarea,.companyFilter select,
+.pageSizeControl select{color:#17243a!important;color-scheme:light!important;border-color:#cdd8e4!important;background:#fff!important;box-shadow:0 1px 2px rgba(31,52,73,.03)!important}
+.toolbar .searchField input{color:#17243a!important}.toolbar .searchField input::placeholder{color:#8b99aa!important}
+.resultCount{color:#66758a!important;border-color:#d8e1ea!important;background:#f4f7fa!important}.resultCount b,.pageSizeControl span b,.pageButtons strong{color:#0f766e!important}
+.tableWrap{color:#17243a!important;background:#fff!important;scrollbar-color:#a9b8c7 #eef2f6!important}
+.tableWrap th{color:#405168!important;border-color:#d8e2ec!important;border-bottom:2px solid #b9cbc9!important;background:linear-gradient(180deg,#f7fafc,#eef3f7)!important;box-shadow:none!important}
+.tableWrap td{color:#3f4f63!important;border-color:#e6ecf2!important;background:#fff!important}.tableWrap td b{color:#18263a!important}.tableWrap td small{color:#758599!important}
+.tableWrap tbody>tr:nth-child(even):not(.allocationRow)>td{background:#f9fbfd!important}.tableWrap tbody>tr:hover:not(.allocationRow)>td{background:#edf8f6!important}
+.pageButtons button{color:#43536a!important;border-color:#d2dce6!important;background:#fff!important}.smallBtn{color:#0f766e!important;border-color:#b9dcd7!important;background:#ecf9f7!important}
+.badge{border-color:#cad8e5!important;background:#edf3f8!important;color:#3d526b!important}
+.badge.active,.badge.distributed,.badge.assigned,.finance_confirmed,.documentAuthorized{border-color:#9ed5b3!important;background:#eaf8ef!important;color:#166534!important}
+.badge.suspended,.badge.opposed,.badge.lost,.badge.stolen,.badge.replaced{border-color:#f3aaaa!important;background:#fff0f0!important;color:#a71924!important}
+.badge.to_assign,.finance_pending,.documentPending,.waitingStatus{border-color:#f2cb83!important;background:#fff7e7!important;color:#8a4b06!important}
+.modal,.notificationMenu{color:#17243a!important;border-color:#d7e1eb!important;background:#fff!important}.modalHead,.modalActions{border-color:#dce4ed!important;background:#fff!important}.modalActions{background:#f6f8fb!important}
+.notificationMenu h3,.notificationMenu>button b{color:#17243a!important}.notificationMenu>button{border-color:#e7edf3!important;background:#fff!important}.notificationMenu>button:hover,.notificationMenu>button.unread{background:#edf8f6!important}.notificationMenu>button span{color:#64758a!important}
+.referenceIntro h2,.referenceKpis strong,.referenceActivity b,.referenceVehicles strong{color:#17243a!important;text-shadow:none!important}.referenceIntro small,.referenceIntro p{color:#66758a!important}

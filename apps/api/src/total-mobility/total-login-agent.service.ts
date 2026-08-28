@@ -1152,6 +1152,22 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
             if(!await candidate.isVisible({timeout:700}).catch(()=>false))continue;
             const clicked=await candidate.click({force:true,timeout:4_000}).then(()=>true).catch(()=>false);
             if(!clicked)continue;
+            // « Transactions » est parfois seulement le parent du sous-menu.
+            // Dans ce cas, le premier clic ne change volontairement pas la
+            // route : sélectionner ensuite l'entrée du rapport en ligne.
+            await frame.waitForTimeout(500);
+            if(!/\/tn\/transactions\/online-transactions/i.test(page.url())){
+              const children=[
+                frame.locator('a[href*="/transactions/online-transactions"], [routerlink*="online-transactions" i]').filter({visible:true}).first(),
+                frame.getByText(/^\s*Transactions en ligne\s*$/i).filter({visible:true}).first(),
+                frame.getByText(/^\s*Rapport des transactions\s*$/i).filter({visible:true}).first(),
+                frame.getByText(/^\s*Libre\s*$/i).filter({visible:true}).first(),
+              ];
+              for(const child of children){
+                if(!await child.isVisible({timeout:500}).catch(()=>false))continue;
+                if(await child.click({force:true,timeout:4_000}).then(()=>true).catch(()=>false))break;
+              }
+            }
             opened=await page.waitForURL(/\/tn\/transactions\/online-transactions/i,{timeout:12_000})
               .then(()=>true).catch(()=>false);
             if(opened)break;

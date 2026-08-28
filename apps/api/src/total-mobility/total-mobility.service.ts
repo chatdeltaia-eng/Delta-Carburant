@@ -256,8 +256,8 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       const importedNumbers:string[]=[];
       for (const card of cards) {
         const paymentNumber=this.normalizeCardNumber(card.paymentMethodNumber??'');
-        const sourceNumber=paymentNumber||this.normalizeCardNumber(card.cardNumber);
-        const number=this.canonicalTotalCardNumber(sourceNumber);
+        const number=this.canonicalTotalCardNumber(card.cardNumber)||this.canonicalTotalCardNumber(paymentNumber);
+        const paymentKey=this.canonicalTotalCardNumber(paymentNumber);
         const remoteStatus=card.status.trim().toUpperCase();
         if(!number||!remoteStatus)continue;
         importedNumbers.push(number);
@@ -267,10 +267,10 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           WHERE fc.company_id=$1 AND fc.deleted_at IS NULL AND (
             right(regexp_replace(fc.masked_card_number,'[^0-9]','','g'),4)=$2
             OR right(regexp_replace(coalesce(fc.official_card_number,''),'[^0-9]','','g'),4)=$2
-            OR right(regexp_replace(coalesce(fc.total_payment_number,''),'[^0-9]','','g'),4)=$2)
+            OR right(regexp_replace(coalesce(fc.total_payment_number,''),'[^0-9]','','g'),4)=ANY($3::text[]))
           ORDER BY EXISTS(SELECT 1 FROM card_assignment ca WHERE ca.fuel_card_id=fc.id AND ca.ends_at IS NULL) DESC,
             (SELECT count(*) FROM fuel_transaction ft WHERE ft.fuel_card_id=fc.id AND ft.deleted_at IS NULL) DESC,
-            (fc.responsible_user_id IS NOT NULL) DESC,fc.created_at LIMIT 20 FOR UPDATE`,[company.id,number]);
+            (fc.responsible_user_id IS NOT NULL) DESC,fc.created_at LIMIT 20 FOR UPDATE`,[company.id,number,[number,paymentKey].filter(Boolean)]);
         const canonicalId=candidates.rows[0]?.id;
         if(canonicalId&&candidates.rows.length>1){
           const duplicateIds=candidates.rows.slice(1).map(row=>row.id);

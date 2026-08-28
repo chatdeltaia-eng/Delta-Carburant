@@ -281,16 +281,16 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           await client.query(`UPDATE fuel_card SET deleted_at=now(),updated_at=now() WHERE id=ANY($1::uuid[])`,[duplicateIds]);
         }
         let updated=await client.query(`UPDATE fuel_card SET total_mobility_status=$3,total_mobility_checked_at=now(),
-          card_number_ciphertext=pgp_sym_encrypt($2,$10,'cipher-algo=aes256'),
-          card_number_hmac=hmac($2,$11,'sha256'),masked_card_number=$2,
+          card_number_ciphertext=pgp_sym_encrypt($2,$8,'cipher-algo=aes256'),
+          card_number_hmac=hmac($2,$9,'sha256'),masked_card_number=$2,
           official_card_number=$2,
           total_payment_number=$2,
-          holder_name=coalesce(nullif($6,''),holder_name),
-          official_registration=coalesce(nullif($7,''),official_registration),
-          expires_on=coalesce($8::date,expires_on),
-          monthly_limit=CASE WHEN $9::numeric>0 THEN $9 ELSE monthly_limit END,updated_at=now()
-          WHERE id=$12 AND company_id=$1 AND deleted_at IS NULL
-          RETURNING id,status`,[company.id,number,remoteStatus,number,paymentNumber,
+          holder_name=coalesce(nullif($4::text,''),holder_name),
+          official_registration=coalesce(nullif($5::text,''),official_registration),
+          expires_on=coalesce($6::date,expires_on),
+          monthly_limit=CASE WHEN $7::numeric>0 THEN $7::numeric ELSE monthly_limit END,updated_at=now()
+          WHERE id=$10::uuid AND company_id=$1::uuid AND deleted_at IS NULL
+          RETURNING id,status`,[company.id,number,remoteStatus,
             card.holderName?.trim()??'',card.registration?.trim()??'',card.expiresOn??null,card.monthlyLimit??0,
             process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key',canonicalId??null]);
         if(!updated.rows[0]){
@@ -300,11 +300,11 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           const inserted=await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,masked_card_number,
             monthly_limit,status,card_category,total_mobility_status,total_mobility_checked_at,official_card_number,
             total_payment_number,holder_name,official_registration,expires_on)
-            VALUES($1,pgp_sym_encrypt($2,$3,'cipher-algo=aes256'),hmac($2,$4,'sha256'),$2,$7,$5,'PERSONALIZED',$6,now(),
-              $2,$2,nullif($9,''),nullif($10,''),$11::date)
+            VALUES($1::uuid,pgp_sym_encrypt($2::text,$3::text,'cipher-algo=aes256'),hmac($2::text,$4::text,'sha256'),$2::text,$5::numeric,$6,'PERSONALIZED',$7::text,now(),
+              $2::text,$2::text,nullif($8::text,''),nullif($9::text,''),$10::date)
             ON CONFLICT(company_id,card_number_hmac) DO NOTHING RETURNING id,status`,[company.id,number,
-            process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key',applicationStatus,remoteStatus,
-            card.monthlyLimit??0,paymentNumber,card.holderName?.trim()??'',card.registration?.trim()??'',card.expiresOn??null]);
+            process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key',card.monthlyLimit??0,
+            applicationStatus,remoteStatus,card.holderName?.trim()??'',card.registration?.trim()??'',card.expiresOn??null]);
           updated=inserted;
           if(inserted.rows[0])created++;
         }

@@ -233,7 +233,8 @@ export class TransactionsService {
         JOIN vehicle v ON v.id=coalesce(fc.reference_vehicle_id,ca.vehicle_id)
         LEFT JOIN driver d ON d.id=v.driver_id AND d.active AND d.deleted_at IS NULL
         LEFT JOIN beneficiary b ON b.id=ca.beneficiary_id
-        WHERE fc.id=$1 AND v.active AND v.deleted_at IS NULL LIMIT 1`,[card.rows[0].id]):{rows:[]};
+        WHERE fc.id=$1 AND v.company_id=fc.company_id
+          AND v.active AND v.deleted_at IS NULL LIMIT 1`,[card.rows[0].id]):{rows:[]};
       // Une carte du référentiel possède déjà son affectation officielle. Elle
       // prime sur une plaque absente, mal espacée ou descriptive dans le fichier
       // Total (par exemple "C4").
@@ -260,7 +261,11 @@ export class TransactionsService {
       // Une redistribution (ex. carte Najib D-Max vers Malek Poseur) est créée
       // ensuite dans transaction_allocation et ne modifie jamais la carte.
       const beneficiaryName=(currentAssignment.rows[0]?.beneficiary_name??card.rows[0]?.holder_name??row.beneficiary??vehicle.rows[0]?.driver_full_name??vehicle.rows[0]?.driver_name??`Carte ${card.rows[0].masked_card_number}`).trim();
-      const companyId=dto.companyId??vehicle.rows[0]?.company_id??card.rows[0]?.company_id;
+      // La société de la carte Total est la source d'autorité. Un véhicule
+      // provenant d'une ancienne affectation erronée ne doit jamais déplacer
+      // la transaction (et son kilométrage) vers une autre société.
+      const companyId=dto.companyId??card.rows[0]?.company_id??vehicle.rows[0]?.company_id;
+      if(vehicle.rows[0]&&companyId&&vehicle.rows[0].company_id!==companyId) vehicle={rows:[]} as any;
       // Les imports Total ciblés sont strictement isolés par société. Le
       // déplacement automatique d'une carte entre sociétés est réservé aux
       // imports manuels historiques sans companyId explicite.

@@ -174,7 +174,7 @@ export class TransactionsService {
       row.product=String(row.product??'').trim();
       if(!row.product) throw new BadRequestException(`Nom de produit absent à la ligne ${index+2}. Import annulé.`);
       if(!row.station) throw new BadRequestException(`Nom de la station absent à la ligne ${index+2}. Import annulé.`);
-      const card=await client.query(`SELECT fc.id,fc.company_id,fc.masked_card_number,fc.official_card_number,fc.official_registration,fc.holder_name,fc.card_category,fc.reference_vehicle_id,fc.status,fc.responsible_user_id,
+      let card=await client.query(`SELECT fc.id,fc.company_id,fc.masked_card_number,fc.official_card_number,fc.official_registration,fc.holder_name,fc.card_category,fc.reference_vehicle_id,fc.status,fc.responsible_user_id,
         (SELECT max(rr.returned_at) FROM card_return_receipt rr WHERE rr.fuel_card_id=fc.id) AS last_returned_at
         FROM fuel_card fc WHERE fc.deleted_at IS NULL AND ($2::uuid IS NULL OR fc.company_id=$2::uuid)
           AND (right(regexp_replace(fc.masked_card_number,'[^0-9]','','g'),4)=$1
@@ -186,6 +186,28 @@ export class TransactionsService {
                 OR right(regexp_replace(coalesce(matching_card.total_payment_number,''),'[^0-9]','','g'),4)=$1
                 OR right(regexp_replace(coalesce(matching_card.official_card_number,''),'[^0-9]','','g'),4)=$1))
         LIMIT 1`,[cardKey,dto.companyId??null]);
+      // Le journal de transactions Total est aussi une source officielle. Si
+      // la carte manque du referentiel local mais que sa societe et son
+      // vehicule sont identifies sans ambiguite, la creer immediatement au
+      // lieu de bloquer sa consommation dans les controles manuels.
+      if(!card.rows[0]&&dto.companyId&&String(row.vehicle??'').trim()){
+        const registrationKey=String(row.vehicle).toUpperCase().replace(/[^A-Z0-9]/g,'');
+        const matchingVehicle=await client.query(`SELECT id,registration_display FROM vehicle
+          WHERE company_id=$1::uuid AND active AND deleted_at IS NULL
+            AND regexp_replace(upper(coalesce(registration_normalized::text,registration_display)),'[^A-Z0-9]','','g')=ANY($2::text[])
+          ORDER BY updated_at DESC NULLS LAST,id LIMIT 1`,[dto.companyId,this.registrationKeys(registrationKey)]);
+        if(matchingVehicle.rows[0]){
+          card=await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,masked_card_number,
+              monthly_limit,status,card_category,official_card_number,total_payment_number,official_registration,reference_vehicle_id)
+            VALUES($1,pgp_sym_encrypt($2,$3,'cipher-algo=aes256'),hmac($2,$4,'sha256'),$2,0,'TO_ASSIGN','PERSONALIZED',$2,$2,$5,$6)
+            ON CONFLICT(company_id,card_number_hmac) DO UPDATE SET deleted_at=NULL,official_registration=excluded.official_registration,
+              reference_vehicle_id=excluded.reference_vehicle_id,updated_at=now()
+            RETURNING id,company_id,masked_card_number,official_card_number,official_registration,holder_name,card_category,
+              reference_vehicle_id,status,responsible_user_id`,[dto.companyId,cardKey,
+              process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key',
+              matchingVehicle.rows[0].registration_display,matchingVehicle.rows[0].id]);
+        }
+      }
       const fingerprint=this.transactionFingerprint(row,cardKey);
       if(!card.rows[0]) {
         const existingReview=await client.query(`SELECT id FROM transaction_review

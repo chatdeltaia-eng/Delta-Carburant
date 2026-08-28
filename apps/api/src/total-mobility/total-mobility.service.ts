@@ -910,7 +910,11 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           (v) =>
             v &&
             typeof v === 'object' &&
-            ('transactionDate' in v || 'cardNumber' in v),
+            Object.keys(v).some((key) =>
+              ['transactiondate', 'transactiondatetime', 'cardnumber', 'paymentmethodnumber'].includes(
+                key.toLowerCase().replace(/[^a-z0-9]/g, ''),
+              ),
+            ),
         )
       )
         return value as RemoteTransaction[];
@@ -931,36 +935,49 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
     return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${end ? '23:59:59' : '00:00:00'}`;
   }
   private mapTransaction(row: RemoteTransaction, index: number) {
-    if (!row.transactionDate || !row.cardNumber)
+    // Les quatre comptes Total ne renvoient pas tous la même casse ni les
+    // mêmes alias (currentMileage / odometer / mileage, par exemple).
+    const source=row as Record<string,unknown>;
+    const normalized=new Map(Object.entries(source).map(([key,value])=>[key.toLowerCase().replace(/[^a-z0-9]/g,''),value]));
+    const read=(...keys:string[])=>keys.map(key=>normalized.get(key.toLowerCase().replace(/[^a-z0-9]/g,''))).find(value=>value!==undefined&&value!==null&&String(value).trim()!=='');
+    const text=(...keys:string[])=>String(read(...keys)??'').trim();
+    const number=(...keys:string[])=>Number(text(...keys).replace(/\s/g,'').replace(',','.'));
+    const transactionDate=text('transactionDate','transactionDateTime','dateTransaction','date');
+    const cardNumber=text('cardNumber','paymentMethodNumber','cardNo','numeroCarte');
+    if (!transactionDate || !cardNumber)
       throw new Error(`Transaction Total incomplète à la ligne ${index + 1}`);
-    const match = row.transactionDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    if (!match) throw new Error(`Date Total invalide : ${row.transactionDate}`);
-    const time = (row.transactionTime ?? '00:00').match(
+    const dateOnly=transactionDate.slice(0,10);
+    const frenchDate = dateOnly.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    const isoDate = dateOnly.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!frenchDate&&!isoDate) throw new Error(`Date Total invalide : ${transactionDate}`);
+    const time = (text('transactionTime','heureTransaction','time') || transactionDate.match(/\d{2}:\d{2}(?::\d{2})?/)?.[0] || '00:00').match(
       /^(\d{2}):(\d{2})(?::(\d{2}))?$/,
     );
     if (!time) throw new Error(`Heure Total invalide : ${row.transactionTime}`);
-    const date = `${match[3]}-${match[2]}-${match[1]}T${time[1]}:${time[2]}:${time[3] ?? '00'}+01:00`;
+    const day=isoDate?isoDate[3]:frenchDate![1],month=isoDate?isoDate[2]:frenchDate![2],year=isoDate?isoDate[1]:frenchDate![3];
+    const date = `${year}-${month}-${day}T${time[1]}:${time[2]}:${time[3] ?? '00'}+01:00`;
     const approval = String(
-      row.approvalNumber ?? row.authorisationCode ?? '',
+      read('approvalNumber','authorisationCode','authorizationCode') ?? '',
     ).trim();
-    const providerIdentity = [
-      row.samNumber,
-      row.samTransactionNumber,
-      row.applicationTransactionCounter,
-    ].every((value) => value !== undefined)
-      ? `SAM:${row.samNumber}:${row.samTransactionNumber}:${row.applicationTransactionCounter}`
+    const identityParts = [
+      read('samNumber'),
+      read('samTransactionNumber'),
+      read('applicationTransactionCounter'),
+    ];
+    const providerIdentity = identityParts.every((value) => value !== undefined)
+      ? `SAM:${identityParts.join(':')}`
       : undefined;
     return {
       date,
-      cardNumber: row.cardNumber,
-      vehicle: row.registrationPlate ?? '',
-      beneficiary: row.cardHolderName ?? '',
-      station: row.stationName ?? 'STATION TOTAL',
-      product: row.productName ?? 'PRODUIT TOTAL',
-      liters: Number(row.transactionVolume ?? row.volume ?? 0),
-      amount: Number(row.totalAmount ?? row.transactedAmount ?? 0),
-      previousMileage: Number(row.previousMileage) || undefined,
-      mileage: Number(row.currentMileage) || undefined,
+      cardNumber,
+      vehicle: text('registrationPlate','vehicleRegistration','registration','immatriculation','licensePlate'),
+      beneficiary: text('cardHolderName','beneficiaryName','holderName','beneficiaire'),
+      station: text('stationName','merchantName','station') || 'STATION TOTAL',
+      product: text('productName','product','produit') || 'PRODUIT TOTAL',
+      liters: number('transactionVolume','volume','quantityLiters','liters') || 0,
+      amount: number('totalAmount','transactedAmount','amountInclTax','amount') || 0,
+      previousMileage: number('previousMileage','previousOdometer','oldMileage','kilometragePrecedent') || undefined,
+      mileage: number('currentMileage','reportedMileage','odometer','mileage','kilometrage','km') || undefined,
       authorizationCode: approval || providerIdentity,
       externalId: providerIdentity,
     };

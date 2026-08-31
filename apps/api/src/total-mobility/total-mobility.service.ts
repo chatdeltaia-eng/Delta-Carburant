@@ -69,6 +69,7 @@ export type RemoteTransaction = {
 export type RemoteCardStatus = {
   cardNumber: string;
   paymentMethodNumber?: string;
+  paymentMethodType?: string;
   status: string;
   holderName?: string;
   registration?: string;
@@ -256,7 +257,11 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       const importedNumbers:string[]=[];
       for (const card of cards) {
         const paymentNumber=this.normalizeCardNumber(card.paymentMethodNumber??'');
-        const number=this.canonicalTotalCardNumber(card.cardNumber)||this.canonicalTotalCardNumber(paymentNumber);
+        // Total expose deux identifiants distincts : « Numéro de carte »
+        // (ex. 0033) et « Numéro du mode de paiement » (ex. 0033 0 8).
+        // Le premier identifie la fiche carte ; les transactions portent le
+        // second et sont rapprochées par ses quatre derniers chiffres (3308).
+        const number=this.officialTotalCardNumber(card.cardNumber)||this.officialTotalCardNumber(paymentNumber);
         const paymentKey=this.canonicalTotalCardNumber(paymentNumber);
         const remoteStatus=card.status.trim().toUpperCase();
         if(!number||!remoteStatus)continue;
@@ -283,7 +288,8 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         let updated=await client.query(`UPDATE fuel_card SET total_mobility_status=$3,total_mobility_checked_at=now(),
           masked_card_number=$2,
           official_card_number=$2,
-          total_payment_number=$2,
+          total_payment_number=coalesce(nullif($9::text,''),total_payment_number),
+          total_payment_method_type=coalesce(nullif($10::text,''),total_payment_method_type),
           holder_name=coalesce(nullif($4::text,''),holder_name),
           official_registration=coalesce(nullif($5::text,''),official_registration),
           expires_on=coalesce($6::date,expires_on),
@@ -291,26 +297,28 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           WHERE id=$8::uuid AND company_id=$1::uuid AND deleted_at IS NULL
           RETURNING id,status`,[company.id,number,remoteStatus,
             card.holderName?.trim()??'',card.registration?.trim()??'',card.expiresOn??null,card.monthlyLimit??0,
-            canonicalId??null]);
+            canonicalId??null,paymentNumber,card.paymentMethodType?.trim()??'']);
         if(!updated.rows[0]){
           const applicationStatus=/OPPOS|LOST|STOLEN|PERD|VOLE/.test(remoteStatus)?'OPPOSED'
             :/SUSPEND|BLOCK|BLOQU|TEMPORAIR/.test(remoteStatus)?'SUSPENDED'
             :/CANCEL|ANNULE|EXPIRE/.test(remoteStatus)?'CANCELLED':'TO_ASSIGN';
           const inserted=await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,masked_card_number,
             monthly_limit,status,card_category,total_mobility_status,total_mobility_checked_at,official_card_number,
-            total_payment_number,holder_name,official_registration,expires_on)
+            total_payment_number,holder_name,official_registration,expires_on,total_payment_method_type)
             VALUES($1::uuid,pgp_sym_encrypt($2::text,$3::text,'cipher-algo=aes256'),hmac($2::text,$4::text,'sha256'),$2::text,$5::numeric,$6,'PERSONALIZED',$7::text,now(),
-              $2::text,$2::text,nullif($8::text,''),nullif($9::text,''),$10::date)
+              $2::text,nullif($11::text,''),nullif($8::text,''),nullif($9::text,''),$10::date,nullif($12::text,''))
             ON CONFLICT(company_id,card_number_hmac) DO UPDATE SET
               deleted_at=NULL,deleted_by=NULL,masked_card_number=excluded.masked_card_number,
               official_card_number=excluded.official_card_number,total_payment_number=excluded.total_payment_number,
+              total_payment_method_type=coalesce(excluded.total_payment_method_type,fuel_card.total_payment_method_type),
               total_mobility_status=excluded.total_mobility_status,total_mobility_checked_at=now(),
               holder_name=coalesce(excluded.holder_name,fuel_card.holder_name),
               official_registration=coalesce(excluded.official_registration,fuel_card.official_registration),
               expires_on=coalesce(excluded.expires_on,fuel_card.expires_on),updated_at=now()
             RETURNING id,status`,[company.id,number,
             process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key',card.monthlyLimit??0,
-            applicationStatus,remoteStatus,card.holderName?.trim()??'',card.registration?.trim()??'',card.expiresOn??null]);
+            applicationStatus,remoteStatus,card.holderName?.trim()??'',card.registration?.trim()??'',card.expiresOn??null,
+            paymentNumber,card.paymentMethodType?.trim()??'']);
           updated=inserted;
           if(inserted.rows[0])created++;
         }
@@ -325,6 +333,62 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           }
         }
       }
+      // Une fois les vrais numéros de moyen de paiement enregistrés, reprendre
+      // immédiatement les transactions historiques qui attendaient la carte.
+      // C'est indispensable pour une base déjà migrée : le prochain export ne
+      // doit pas laisser les anciennes lignes bloquées sous « carte inconnue ».
+      const reconciled=await client.query(`WITH matched AS (
+        SELECT tr.id AS review_id,tr.import_batch_id,tr.source_row_number,tr.transaction_date,
+          tr.station,tr.product,tr.quantity_liters,tr.amount_incl_tax,tr.previous_mileage,
+          tr.reported_mileage,tr.authorization_code,fc.id AS fuel_card_id,fc.company_id,
+          coalesce(nullif(trim(tr.beneficiary_name),''),nullif(trim(fc.holder_name),''),
+            'Carte '||right(regexp_replace(tr.card_number,'[^0-9]','','g'),4)) AS beneficiary_name,
+          coalesce(v.id,fc.reference_vehicle_id) AS vehicle_id
+        FROM transaction_review tr
+        CROSS JOIN LATERAL (SELECT candidate.* FROM fuel_card candidate
+          WHERE candidate.company_id=$1::uuid AND candidate.deleted_at IS NULL
+            AND right(regexp_replace(tr.card_number,'[^0-9]','','g'),4) IN (
+              right(regexp_replace(candidate.masked_card_number,'[^0-9]','','g'),4),
+              right(regexp_replace(coalesce(candidate.official_card_number,''),'[^0-9]','','g'),4),
+              right(regexp_replace(coalesce(candidate.total_payment_number,''),'[^0-9]','','g'),4))
+          ORDER BY (right(regexp_replace(coalesce(candidate.total_payment_number,''),'[^0-9]','','g'),4)=
+            right(regexp_replace(tr.card_number,'[^0-9]','','g'),4)) DESC,
+            (nullif(trim(candidate.holder_name),'') IS NOT NULL) DESC,candidate.updated_at DESC NULLS LAST
+          LIMIT 1) fc
+        LEFT JOIN LATERAL (SELECT candidate.id FROM vehicle candidate
+          WHERE candidate.company_id=fc.company_id AND candidate.active AND candidate.deleted_at IS NULL
+            AND regexp_replace(upper(coalesce(candidate.registration_normalized::text,candidate.registration_display)),'[^A-Z0-9]','','g')=
+              regexp_replace(upper(coalesce(tr.vehicle_registration,'')),'[^A-Z0-9]','','g')
+          ORDER BY candidate.updated_at DESC NULLS LAST LIMIT 1) v ON true
+        WHERE tr.company_id=$1::uuid AND tr.status='PENDING'
+          AND length(regexp_replace(tr.card_number,'[^0-9]','','g'))>=4
+          AND tr.issue_type IN ('UNKNOWN_CARD','UNAVAILABLE_CARD','UNKNOWN_VEHICLE','UNAVAILABLE_VEHICLE','MISSING_BENEFICIARY')
+      ), department_row AS (
+        INSERT INTO department(company_id,name) VALUES($1::uuid,'Transactions importées')
+        ON CONFLICT(company_id,name) DO UPDATE SET name=excluded.name RETURNING id
+      ), beneficiaries AS (
+        INSERT INTO beneficiary(company_id,department_id,display_name)
+        SELECT DISTINCT m.company_id,d.id,m.beneficiary_name FROM matched m CROSS JOIN department_row d
+        ON CONFLICT(company_id,display_name) DO UPDATE SET active=true
+        RETURNING id,company_id,display_name
+      ), inserted AS (
+        INSERT INTO fuel_transaction(external_transaction_id,fuel_card_id,beneficiary_id,vehicle_id,
+          transaction_date,station,product,quantity_liters,amount_incl_tax,source,import_batch_id,
+          source_row_number,previous_mileage,reported_mileage,authorization_code)
+        SELECT coalesce('TOTAL:'||nullif(trim(m.authorization_code),''),'review:'||m.review_id),
+          m.fuel_card_id,b.id,m.vehicle_id,m.transaction_date,m.station,m.product,m.quantity_liters,
+          m.amount_incl_tax,'TOTAL_EXCEL',m.import_batch_id,m.source_row_number,m.previous_mileage,
+          m.reported_mileage,m.authorization_code
+        FROM matched m JOIN beneficiaries b ON b.company_id=m.company_id AND b.display_name=m.beneficiary_name
+        ON CONFLICT(external_transaction_id,source) DO UPDATE SET fuel_card_id=excluded.fuel_card_id,
+          beneficiary_id=excluded.beneficiary_id,vehicle_id=coalesce(excluded.vehicle_id,fuel_transaction.vehicle_id),
+          deleted_at=NULL,deleted_by=NULL
+        RETURNING import_batch_id,source_row_number
+      ) UPDATE transaction_review tr SET status='ACCEPTED',fuel_card_id=m.fuel_card_id,
+        decided_at=now(),decision_reason='Carte et consommation rapprochées par le numéro du moyen de paiement Total'
+      FROM matched m WHERE tr.id=m.review_id AND EXISTS(SELECT 1 FROM inserted i
+        WHERE i.import_batch_id=tr.import_batch_id AND i.source_row_number=tr.source_row_number)
+      RETURNING tr.id`,[company.id]);
       // Retirer uniquement les lignes fantômes créées par les anciennes
       // versions de l'extracteur (0, 1, 10, etc.). Une carte ayant une
       // transaction ou une affectation n'est jamais touchée.
@@ -359,8 +423,8 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         removed=cleanup.rowCount??0;
       }
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
-        VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{client:totalName,company:company.code,extracted:cards.length,matched,created,removed}]);
-      return {client:totalName,company:company.code,extracted:cards.length,matched,created,removed,unmatched:cards.length-matched};
+        VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{client:totalName,company:company.code,extracted:cards.length,matched,created,removed,reconciledTransactions:reconciled.rowCount??0}]);
+      return {client:totalName,company:company.code,extracted:cards.length,matched,created,removed,reconciledTransactions:reconciled.rowCount??0,unmatched:cards.length-matched};
     });
   }
   async importDrivers(drivers: RemoteDriver[], actor: Actor, clientName?: string) {
@@ -486,6 +550,10 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
     });
   }
   private normalizeCardNumber(value:string){return value.replace(/[^0-9]/g,'');}
+  private officialTotalCardNumber(value:string){
+    const digits=this.normalizeCardNumber(value);
+    return digits.length>=4?digits.slice(0,4):'';
+  }
   private canonicalTotalCardNumber(value:string){
     const digits=this.normalizeCardNumber(value);
     return digits.length>=4?digits.slice(-4):'';

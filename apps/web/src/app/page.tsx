@@ -87,6 +87,7 @@ type Card = {
   initial_action?:string;
   official_card_number?:string;
   total_payment_number?:string;
+  total_payment_method_type?:string;
   holder_name?:string;
   official_registration?:string;
   expires_on?:string;
@@ -3533,7 +3534,7 @@ function CardTable({
                     {c.company_code} · {c.card_category === "OFF_PARK" ? "Hors parc — responsable attribué" : "Personnalisée"} · créée le {c.created_at}
                   </small>
                 </td>
-                <td><b>{c.total_payment_number ?? "—"}</b><small>N° du mode de paiement</small></td>
+                <td><b>{c.total_payment_number ?? "—"}</b><small>{c.total_payment_method_type ?? "Type non renseigné"} · N° du mode de paiement</small></td>
                 <td>
                   <b>{c.holder_name ?? c.beneficiary ?? "Non affectée"}</b>
                   <small>{c.department ?? "—"}</small>

@@ -687,14 +687,25 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         const paymentDigits=String(paymentMethodNumber??'').replace(/\D/g,'');
         const cardNumber=explicitCard??(paymentDigits.length>=4?paymentDigits.slice(-4):'');
         const holderName=expiry&&cells.indexOf(expiry)>0?cells[cells.indexOf(expiry)-1]:statusIndex>=0?cells[statusIndex+3]??'':'';
+        const paymentMethodType=cells.find(value=>/postpay|prépay|prepay|débit|debit|crédit|credit/i.test(value));
         const limitCell=cells.find(value=>/(?:plafond|limit)/i.test(value)&&/\d/.test(value));
-        return {cardNumber,paymentMethodNumber,status:statusIndex>=0?cells[statusIndex]:'',holderName,registration,
+        return {cardNumber,paymentMethodNumber,paymentMethodType,status:statusIndex>=0?cells[statusIndex]:'',holderName,registration,
           expiresOn:this.parseTotalDate(expiry),monthlyLimit:this.parseAmount(limitCell),raw:{cells}};
       })
         .filter(row=>row.cardNumber&&row.status);
       const visibleTexts=await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>'')));
       const fromVisible=visibleTexts.flatMap(text=>this.cardsFromVisibleText(text));
-      let result=this.uniqueCards([...fromJson,...fromTable,...fromVisible]);
+      // Le tableau « Gérer » est le référentiel visible et paginé de Total.
+      // Les réponses JSON de la SPA contiennent aussi des objets techniques
+      // portant quatre chiffres (compteurs, filtres, anciennes recherches) :
+      // elles ne doivent jamais ajouter des cartes absentes du tableau. Elles
+      // servent uniquement à enrichir les 43 lignes réellement affichées.
+      const tableCards=this.uniqueCards(fromTable);
+      const authoritativeNumbers=new Set(tableCards.map(card=>card.cardNumber));
+      const supplements=[...fromJson,...fromVisible].filter(card=>authoritativeNumbers.has(card.cardNumber));
+      let result=tableCards.length
+        ?this.uniqueCards([...supplements,...tableCards])
+        :this.uniqueCards([...fromJson,...fromVisible]);
       // Le tableau « Gérer » n'expose pas le plafond mensuel. Total le place
       // uniquement dans Modifier > Produit de la carte > Limite. Lire ce
       // détail sans enregistrer la fiche, puis le rattacher au numéro de carte.
@@ -1586,8 +1597,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const paymentNumber=read(/payment.*method.*(number|no)|(?:number|no).*payment.*method|mode.*paiement.*num|num.*mode.*paiement/i);
       const number=cardNumber??paymentNumber;
       const status=read(/card.*status|status.*card|payment.*method.*status|status.*payment.*method|statut|status|state/i);
+      const paymentMethodType=read(/payment.*method.*type|type.*payment.*method|type.*mode.*paiement|mode.*paiement.*type/i);
       if((typeof number==='string'||typeof number==='number')&&(typeof status==='string'||typeof status==='number'))
-        result.push({cardNumber:String(cardNumber??paymentNumber??number).replace(/\D/g,'').slice(-4),paymentMethodNumber:String(paymentNumber??''),status:String(status),
+        result.push({cardNumber:String(cardNumber??paymentNumber??number).replace(/\D/g,'').slice(-4),paymentMethodNumber:String(paymentNumber??''),paymentMethodType:String(paymentMethodType??''),status:String(status),
           holderName:String(read(/holder|titulaire|beneficiary|owner/i)??''),registration:String(read(/registration|immatriculation|plate/i)??''),
           expiresOn:this.parseTotalDate(read(/expir|expiry|valid.*until/i)),monthlyLimit:this.parseAmount(read(/monthly.*limit|card.*limit|plafond|ceiling/i)),raw:row});
       Object.values(row).forEach(visit);
@@ -1612,7 +1624,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         !/postpay|prépay|debit|crédit/i.test(value))??'';
       const paymentMethodNumber=window.find(value=>/^(?:\d{6,18}|\d{4}(?:\s+\d+){1,3})$/.test(value));
       const expiresOn=this.parseTotalDate(window.find(value=>/^\d{2}-\d{2}-\d{4}$/.test(value)));
-      result.push({cardNumber:lines[index],paymentMethodNumber,status,registration,holderName,expiresOn,raw:{source:'visible-text'}});
+      const paymentMethodType=window.find(value=>/postpay|prépay|prepay|débit|debit|crédit|credit/i.test(value));
+      result.push({cardNumber:lines[index],paymentMethodNumber,paymentMethodType,status,registration,holderName,expiresOn,raw:{source:'visible-text'}});
     }
     // Dans la q-table actuelle, innerText peut réunir toutes les cellules
     // d'une ligne. Exemple : « 0004 Postpayée VALIDE 0004 0 8 6987 TU 219
@@ -1627,7 +1640,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const holderName=beforeExpiry.replace(/^\s*\d{4}(?:\s+\d+)+\s*/,'')
         .replace(registration??'','').trim().split(/\s{2,}/)[0]??'';
       const paymentMethodNumber=tail.match(/^\s*((?:\d{6,18}|\d{4}(?:\s+\d+){1,3}))\b/)?.[1];
-      result.push({cardNumber:match[1],paymentMethodNumber,status:match[2],registration,holderName,
+      result.push({cardNumber:match[1],paymentMethodNumber,paymentMethodType:match[0].match(/postpay[ée]e?|pr[ée]pay[ée]e?/i)?.[0],status:match[2],registration,holderName,
         expiresOn:this.parseTotalDate(tail.match(/\b\d{2}-\d{2}-\d{4}\b/)?.[0]),raw:{source:'flat-visible-text'}});
     }
     return result;
@@ -1652,6 +1665,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const previous=merged.get(key);
       merged.set(key,{...previous,...card,cardNumber:key,
         paymentMethodNumber:card.paymentMethodNumber||previous?.paymentMethodNumber,
+        paymentMethodType:card.paymentMethodType||previous?.paymentMethodType,
         holderName:card.holderName||previous?.holderName,registration:card.registration||previous?.registration,
         expiresOn:card.expiresOn||previous?.expiresOn,monthlyLimit:card.monthlyLimit||previous?.monthlyLimit,
         raw:{...(previous?.raw??{}),...(card.raw??{})}});

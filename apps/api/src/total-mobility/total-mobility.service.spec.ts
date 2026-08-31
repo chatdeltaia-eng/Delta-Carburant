@@ -20,6 +20,15 @@ describe('TotalMobilityService multi-company session sync', () => {
     expect(canonical('123')).toBe('');
   });
 
+  it('conserve le numéro de carte distinct du numéro du mode de paiement',()=>{
+    const service=new TotalMobilityService({} as never,{} as never);
+    const official=(value:string)=>(service as unknown as {officialTotalCardNumber(value:string):string})
+      .officialTotalCardNumber(value);
+    expect(official('0033')).toBe('0033');
+    expect(official('0033 0 8')).toBe('0033');
+    expect(official('004108')).toBe('0041');
+  });
+
   it.each([
     ['DC','DELTA CUISINE'],
     ['DCD','DELTA CUISINE DISTRIBUTION'],

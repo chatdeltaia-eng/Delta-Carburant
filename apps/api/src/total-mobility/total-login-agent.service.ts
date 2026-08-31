@@ -688,14 +688,18 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // Les réponses JSON de la SPA contiennent aussi des objets techniques
       // portant quatre chiffres (compteurs, filtres, anciennes recherches) :
       // elles ne doivent jamais ajouter des cartes absentes du tableau. Elles
-      // servent uniquement à enrichir les 43 lignes réellement affichées.
+      // servent uniquement à enrichir les lignes réellement affichées.
       const tableCards=this.uniqueCards(fromTable);
       const authoritativeNumbers=new Set(tableCards.map(card=>card.cardNumber));
       const supplements=[...fromJson,...fromVisible].filter(card=>authoritativeNumbers.has(card.cardNumber));
       let result=tableCards.length
         ?this.uniqueCards([...supplements,...tableCards])
         :this.uniqueCards([...fromJson,...fromVisible]);
-      // Le paginator Total affiche par exemple « 1–43 sur 43 ». Conserver ce
+      // Le référentiel opérationnel demandé correspond au filtre Total
+      // « Statut du mode de paiement = VALIDE ». Ne jamais inclure une carte
+      // inactive, bloquée ou opposée dans ce lot de plafonds actifs.
+      result=result.filter(card=>/^\s*VALIDE?\s*$/i.test(card.status));
+      // Le paginator Total affiche par exemple « 1–40 sur 40 ». Conserver ce
       // total officiel dans le lot afin que l'import puisse supprimer les cinq
       // anciennes lignes locales uniquement lorsqu'une extraction complète a
       // réellement ramené toutes les cartes du client sélectionné.
@@ -885,6 +889,28 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async setCardRowsPerPage50(){
     const page=this.page;if(!page)return false;
     for(const frame of page.frames()){
+      const paginatorCombos=frame.locator([
+        '.q-table__bottom [role="combobox"]','.q-table__bottom .q-select','.q-table__bottom select',
+        '.mat-paginator [role="combobox"]','.mat-paginator select','[class*="paginator"] [role="combobox"]',
+        '[class*="paginator"] select',
+      ].join(',')).filter({visible:true});
+      for(let index=0;index<await paginatorCombos.count();index++){
+        const combo=paginatorCombos.nth(index);
+        if((await combo.evaluate(element=>element.tagName).catch(()=>''))==='SELECT'){
+          const option=combo.locator('option').filter({hasText:/^\s*50\s*$/}).first();
+          if(!await option.count().catch(()=>0))continue;
+          const value=await option.getAttribute('value');
+          await combo.selectOption(value!==null?{value}:{label:'50'});
+        }else{
+          await combo.click({force:true,timeout:3_000});await frame.waitForTimeout(300);
+          const option=frame.locator('[role="option"], .q-menu .q-item, mat-option')
+            .filter({hasText:/^\s*50\s*$/}).filter({visible:true}).last();
+          if(!await option.isVisible({timeout:1_000}).catch(()=>false))continue;
+          await option.click({force:true,timeout:3_000});
+        }
+        await frame.waitForTimeout(900);
+        if(await this.cardPaginatorShowsCompleteDcInventory())return true;
+      }
       // Le portail observé utilise un select natif avec 5, 7, 10, 15, 20,
       // 25 et 50. selectOption déclenche les mêmes événements que le geste
       // utilisateur et reste le chemin le plus fiable.
@@ -897,7 +923,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         const value=await option.getAttribute('value');
         await select.selectOption(value!==null?{value}:{label:'50'});
         await frame.waitForTimeout(700);
-        return true;
+        if(await this.cardPaginatorShowsCompleteDcInventory())return true;
       }
       // Repli Quasar/Material : retrouver le combobox situé dans le même
       // contrôle que « Lignes par page », puis choisir l'option 50.
@@ -912,8 +938,21 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         const option=frame.locator('[role="option"], .q-item, mat-option').filter({hasText:/^\s*50\s*$/}).filter({visible:true}).first();
         if(!await option.isVisible({timeout:1_000}).catch(()=>false))continue;
         await option.click({force:true,timeout:3_000});await frame.waitForTimeout(700);
-        return true;
+        if(await this.cardPaginatorShowsCompleteDcInventory())return true;
       }
+    }
+    return false;
+  }
+
+  private async cardPaginatorShowsCompleteDcInventory(){
+    const page=this.page;if(!page)return false;
+    // Pour les autres sociétés le total varie. Pour DC, les captures Total
+    // du 31/08/2026 confirment 40 moyens de paiement VALIDE et 50 lignes/page.
+    if(this.activeClientName!=='DELTA CUISINE')return true;
+    for(const frame of page.frames()){
+      const text=await frame.locator('.q-table__bottom, .mat-paginator, [class*="paginator"], body')
+        .allTextContents().catch(()=>[]);
+      if(/1\s*[-–]\s*40\s*(?:sur|of)\s*40/i.test(text.join(' ')))return true;
     }
     return false;
   }

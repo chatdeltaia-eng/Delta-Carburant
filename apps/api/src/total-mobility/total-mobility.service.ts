@@ -257,7 +257,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       ).filter(Boolean))];
       const paginatorTotals=cards.map(card=>Number(card.raw?.expectedTotal)).filter(value=>Number.isInteger(value)&&value>0);
       const paginatorTotal=paginatorTotals.length?Math.max(...paginatorTotals):undefined;
-      const requiredTotal=company.code==='DC'?43:paginatorTotal;
+      const requiredTotal=company.code==='DC'?40:paginatorTotal;
       if(requiredTotal===undefined||uniqueRemoteNumbers.length!==requiredTotal)
         throw new BadRequestException(`Inventaire Total ${company.code} incomplet : ${uniqueRemoteNumbers.length} carte(s) unique(s) extraite(s), ${requiredTotal??'total distant inconnu'} attendue(s). Base inchangée.`);
       const extractedLimitCount=cards.filter(card=>card.raw?.monthlyLimitExtracted===true).length;

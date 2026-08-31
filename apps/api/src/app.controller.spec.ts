@@ -2,15 +2,18 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { DatabaseService } from './database/database.service';
+import { TotalLoginAgentService } from './total-mobility/total-login-agent.service';
 
 describe('AppController', () => {
   let appController: AppController;
   const database = { query: jest.fn() };
+  const totalAgent = { getStatus: jest.fn(() => ({ state:'SIGNING_IN',message:'Connexion automatique à Total Mobility…',updatedAt:'2026-08-31T10:14:03.000Z' })) };
 
   beforeEach(async () => {
     const app: TestingModule = await Test.createTestingModule({
       controllers: [AppController],
-      providers: [AppService, { provide: DatabaseService, useValue: database }],
+      providers: [AppService, { provide: DatabaseService, useValue: database },
+        { provide: TotalLoginAgentService, useValue: totalAgent }],
     }).compile();
 
     appController = app.get<AppController>(AppController);
@@ -30,6 +33,7 @@ describe('AppController', () => {
         status: 'ready',
         database: 'connected',
         version: process.env.RENDER_GIT_COMMIT?.slice(0,7) ?? 'local',
+        totalAgent: totalAgent.getStatus(),
       });
     });
 

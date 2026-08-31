@@ -8,5 +8,6 @@ import { TotalLoginAgentService } from './total-login-agent.service';
   imports: [TransactionsModule],
   controllers: [TotalMobilityController],
   providers: [TotalMobilityService, TotalLoginAgentService],
+  exports: [TotalLoginAgentService],
 })
 export class TotalMobilityModule {}

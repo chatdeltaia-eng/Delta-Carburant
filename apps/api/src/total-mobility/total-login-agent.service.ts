@@ -1826,5 +1826,6 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private setStatus(state: AgentState, message: string) {
     this.statusValue = this.status(state, message);
+    this.logger.log(`État agent Total ${state} — ${message}`);
   }
 }

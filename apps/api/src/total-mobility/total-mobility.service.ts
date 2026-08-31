@@ -389,6 +389,36 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       FROM matched m WHERE tr.id=m.review_id AND EXISTS(SELECT 1 FROM inserted i
         WHERE i.import_batch_id=tr.import_batch_id AND i.source_row_number=tr.source_row_number)
       RETURNING tr.id`,[company.id]);
+      // Lors d'une reconstruction complète, certaines anciennes cartes étaient
+      // identifiées par le suffixe du moyen de paiement (ex. 4108), alors que
+      // la nouvelle fiche officielle porte le numéro de carte (ex. 0041) et
+      // conserve 004108 dans total_payment_number. Transférer les consommations
+      // historiques vers la nouvelle fiche sans modifier leurs montants.
+      const remappedTransactions=await client.query(`WITH mapping AS (
+        SELECT old.id AS old_id,matched.id AS new_id
+        FROM fuel_card old
+        CROSS JOIN LATERAL (SELECT current.id FROM fuel_card current
+          WHERE current.company_id=old.company_id AND current.deleted_at IS NULL
+            AND current.id<>old.id
+            AND ARRAY[
+              right(regexp_replace(old.masked_card_number,'[^0-9]','','g'),4),
+              right(regexp_replace(coalesce(old.official_card_number,''),'[^0-9]','','g'),4),
+              right(regexp_replace(coalesce(old.total_payment_number,''),'[^0-9]','','g'),4)
+            ] && ARRAY[
+              right(regexp_replace(current.masked_card_number,'[^0-9]','','g'),4),
+              right(regexp_replace(coalesce(current.official_card_number,''),'[^0-9]','','g'),4),
+              right(regexp_replace(coalesce(current.total_payment_number,''),'[^0-9]','','g'),4)
+            ]
+          ORDER BY (right(regexp_replace(coalesce(current.total_payment_number,''),'[^0-9]','','g'),4)=ANY(ARRAY[
+              right(regexp_replace(old.masked_card_number,'[^0-9]','','g'),4),
+              right(regexp_replace(coalesce(old.official_card_number,''),'[^0-9]','','g'),4),
+              right(regexp_replace(coalesce(old.total_payment_number,''),'[^0-9]','','g'),4)
+            ])) DESC,
+            current.updated_at DESC NULLS LAST LIMIT 1) matched
+        WHERE old.company_id=$1::uuid AND old.deleted_at IS NOT NULL
+      ) UPDATE fuel_transaction ft SET fuel_card_id=m.new_id
+      FROM mapping m WHERE ft.fuel_card_id=m.old_id AND ft.deleted_at IS NULL
+      RETURNING ft.id`,[company.id]);
       // Retirer uniquement les lignes fantômes créées par les anciennes
       // versions de l'extracteur (0, 1, 10, etc.). Une carte ayant une
       // transaction ou une affectation n'est jamais touchée.
@@ -425,8 +455,8 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         removed=cleanup.rowCount??0;
       }
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
-        VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{client:totalName,company:company.code,expectedTotal,extracted:cards.length,matched,created,removed,reconciledTransactions:reconciled.rowCount??0}]);
-      return {client:totalName,company:company.code,expectedTotal,extracted:cards.length,matched,created,removed,reconciledTransactions:reconciled.rowCount??0,unmatched:cards.length-matched};
+        VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{client:totalName,company:company.code,expectedTotal,extracted:cards.length,matched,created,removed,reconciledTransactions:reconciled.rowCount??0,remappedTransactions:remappedTransactions.rowCount??0}]);
+      return {client:totalName,company:company.code,expectedTotal,extracted:cards.length,matched,created,removed,reconciledTransactions:reconciled.rowCount??0,remappedTransactions:remappedTransactions.rowCount??0,unmatched:cards.length-matched};
     });
   }
   async importDrivers(drivers: RemoteDriver[], actor: Actor, clientName?: string) {

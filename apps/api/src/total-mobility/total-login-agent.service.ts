@@ -625,6 +625,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         }
       }
       await page.waitForTimeout(1_500);
+      this.setStatus('EXTRACTING','Total : affichage de 50 cartes par page…');
+      const pageSize50=await this.setCardRowsPerPage50();
+      if(!pageSize50)throw new Error('Le sélecteur « Lignes par page » ne propose pas 50 cartes');
+      await page.waitForTimeout(1_000);
       // Attendre la disparition du panneau « Récupération de vos
       // informations » avant de lire le tableau.
       await Promise.all(page.frames().map(frame=>frame.getByText(/récupération de vos informations/i)
@@ -876,6 +880,42 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     }
     }finally{page.off('response',detailListener);}
     return limits;
+  }
+
+  private async setCardRowsPerPage50(){
+    const page=this.page;if(!page)return false;
+    for(const frame of page.frames()){
+      // Le portail observé utilise un select natif avec 5, 7, 10, 15, 20,
+      // 25 et 50. selectOption déclenche les mêmes événements que le geste
+      // utilisateur et reste le chemin le plus fiable.
+      const selects=frame.locator('select');
+      for(let index=0;index<await selects.count();index++){
+        const select=selects.nth(index);
+        if(!await select.isVisible({timeout:200}).catch(()=>false))continue;
+        const option=select.locator('option').filter({hasText:/^\s*50\s*$/}).first();
+        if(!await option.count().catch(()=>0))continue;
+        const value=await option.getAttribute('value');
+        await select.selectOption(value!==null?{value}:{label:'50'});
+        await frame.waitForTimeout(700);
+        return true;
+      }
+      // Repli Quasar/Material : retrouver le combobox situé dans le même
+      // contrôle que « Lignes par page », puis choisir l'option 50.
+      const labels=frame.getByText(/lignes par page|rows per page/i).filter({visible:true});
+      for(let index=0;index<await labels.count();index++){
+        const label=labels.nth(index);
+        const control=label.locator('xpath=ancestor-or-self::*[contains(@class,"q-table__control") or contains(@class,"mat-paginator") or contains(@class,"paginator")][1]');
+        const combo=(await control.count().catch(()=>0)?control:label.locator('xpath=..'))
+          .locator('[role="combobox"], .q-select, .mat-select').first();
+        if(!await combo.isVisible({timeout:300}).catch(()=>false))continue;
+        await combo.click({force:true,timeout:3_000});await frame.waitForTimeout(300);
+        const option=frame.locator('[role="option"], .q-item, mat-option').filter({hasText:/^\s*50\s*$/}).filter({visible:true}).first();
+        if(!await option.isVisible({timeout:1_000}).catch(()=>false))continue;
+        await option.click({force:true,timeout:3_000});await frame.waitForTimeout(700);
+        return true;
+      }
+    }
+    return false;
   }
 
   private cardProductLimitFromUnknown(input:unknown){

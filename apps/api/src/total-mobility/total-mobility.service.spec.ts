@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { TotalMobilityService } from './total-mobility.service';
+import { TotalLoginAgentService } from './total-login-agent.service';
 
 describe('TotalMobilityService multi-company session sync', () => {
   const actor={sub:'00000000-0000-4000-8000-000000000001',email:'admin@delta.test'};
@@ -27,6 +28,23 @@ describe('TotalMobilityService multi-company session sync', () => {
     expect(official('0033')).toBe('0033');
     expect(official('0033 0 8')).toBe('0033');
     expect(official('004108')).toBe('0041');
+  });
+
+  it('conserve un plafond Total explicitement lu à zéro lors de la fusion',()=>{
+    const agent=new TotalLoginAgentService({} as never,{} as never);
+    const unique=(cards:unknown[])=>(agent as unknown as {uniqueCards(value:unknown[]):unknown[]}).uniqueCards(cards);
+    expect(unique([
+      {cardNumber:'0001',paymentMethodNumber:'0001 0 1',status:'VALIDE',monthlyLimit:500},
+      {cardNumber:'0001',paymentMethodNumber:'0001 0 1',status:'VALIDE',monthlyLimit:0},
+    ])).toEqual([expect.objectContaining({cardNumber:'0001',monthlyLimit:0})]);
+  });
+
+  it('normalise les quatre derniers chiffres du moyen de paiement pour les transactions',()=>{
+    const service=new TotalMobilityService({} as never,{} as never);
+    const canonical=(value:string)=>(service as unknown as {canonicalTotalCardNumber(value:string):string})
+      .canonicalTotalCardNumber(value);
+    expect(canonical('0001 0 8')).toBe('0108');
+    expect(canonical('790351010836001503')).toBe('1503');
   });
 
   it.each([

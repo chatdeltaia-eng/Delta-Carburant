@@ -254,6 +254,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       if(!company)throw new BadRequestException(`Société introuvable pour le client Total ${totalName||'sélectionné'}`);
       await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,[`total-cards:${company.id}`]);
       let matched=0,created=0,removed=0;
+      const importedNumbers:string[]=[];
       for (const card of cards) {
         const paymentNumber=this.normalizeCardNumber(card.paymentMethodNumber??'');
         // Total expose deux identifiants distincts : « Numéro de carte »
@@ -264,6 +265,10 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         const paymentKey=this.canonicalTotalCardNumber(paymentNumber);
         const remoteStatus=card.status.trim().toUpperCase();
         if(!number||!remoteStatus)continue;
+        importedNumbers.push(number);
+        const extractedLimit=card.raw?.monthlyLimitExtracted===true
+          ? Number(card.monthlyLimit??0)
+          : null;
         await client.query(`INSERT INTO total_mobility_card_snapshot(card_number,remote_status,holder_name,registration,raw_data)
           VALUES($1,$2,$3,$4,$5)`,[number,remoteStatus,card.holderName??null,card.registration??null,card.raw??{}]);
         const candidates=await client.query<{id:string}>(`SELECT fc.id FROM fuel_card fc
@@ -291,10 +296,10 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           holder_name=coalesce(nullif($4::text,''),holder_name),
           official_registration=coalesce(nullif($5::text,''),official_registration),
           expires_on=coalesce($6::date,expires_on),
-          monthly_limit=CASE WHEN $7::numeric>0 THEN $7::numeric ELSE monthly_limit END,updated_at=now()
+          monthly_limit=CASE WHEN $7::numeric IS NOT NULL THEN $7::numeric ELSE monthly_limit END,updated_at=now()
           WHERE id=$8::uuid AND company_id=$1::uuid AND deleted_at IS NULL
           RETURNING id,status`,[company.id,number,remoteStatus,
-            card.holderName?.trim()??'',card.registration?.trim()??'',card.expiresOn??null,card.monthlyLimit??0,
+            card.holderName?.trim()??'',card.registration?.trim()??'',card.expiresOn??null,extractedLimit,
             canonicalId??null,paymentNumber,card.paymentMethodType?.trim()??'']);
         if(!updated.rows[0]){
           const applicationStatus=/OPPOS|LOST|STOLEN|PERD|VOLE/.test(remoteStatus)?'OPPOSED'
@@ -303,18 +308,19 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
           const inserted=await client.query(`INSERT INTO fuel_card(company_id,card_number_ciphertext,card_number_hmac,masked_card_number,
             monthly_limit,status,card_category,total_mobility_status,total_mobility_checked_at,official_card_number,
             total_payment_number,holder_name,official_registration,expires_on,total_payment_method_type)
-            VALUES($1::uuid,pgp_sym_encrypt($2::text,$3::text,'cipher-algo=aes256'),hmac($2::text,$4::text,'sha256'),$2::text,$5::numeric,$6,'PERSONALIZED',$7::text,now(),
+            VALUES($1::uuid,pgp_sym_encrypt($2::text,$3::text,'cipher-algo=aes256'),hmac($2::text,$4::text,'sha256'),$2::text,coalesce($5::numeric,0),$6,'PERSONALIZED',$7::text,now(),
               $2::text,nullif($11::text,''),nullif($8::text,''),nullif($9::text,''),$10::date,nullif($12::text,''))
             ON CONFLICT(company_id,card_number_hmac) DO UPDATE SET
               deleted_at=NULL,deleted_by=NULL,masked_card_number=excluded.masked_card_number,
               official_card_number=excluded.official_card_number,total_payment_number=excluded.total_payment_number,
               total_payment_method_type=coalesce(excluded.total_payment_method_type,fuel_card.total_payment_method_type),
               total_mobility_status=excluded.total_mobility_status,total_mobility_checked_at=now(),
+              monthly_limit=CASE WHEN $5::numeric IS NOT NULL THEN $5::numeric ELSE fuel_card.monthly_limit END,
               holder_name=coalesce(excluded.holder_name,fuel_card.holder_name),
               official_registration=coalesce(excluded.official_registration,fuel_card.official_registration),
               expires_on=coalesce(excluded.expires_on,fuel_card.expires_on),updated_at=now()
             RETURNING id,status`,[company.id,number,
-            process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key',card.monthlyLimit??0,
+            process.env.CARD_ENCRYPTION_KEY??'delta-development-card-key',process.env.CARD_HMAC_KEY??'delta-development-hmac-key',extractedLimit,
             applicationStatus,remoteStatus,card.holderName?.trim()??'',card.registration?.trim()??'',card.expiresOn??null,
             paymentNumber,card.paymentMethodType?.trim()??'']);
           updated=inserted;
@@ -444,9 +450,39 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       // être archivées automatiquement.
       const expectedTotals=cards.map(card=>Number(card.raw?.expectedTotal)).filter(value=>Number.isInteger(value)&&value>0);
       const expectedTotal=expectedTotals.length?Math.max(...expectedTotals):undefined;
+      const officialNumbers=[...new Set(importedNumbers)];
+      const limitsExtracted=cards.filter(card=>card.raw?.monthlyLimitExtracted===true).length;
+      // Une liste distante n'est autoritaire que si le paginator et le nombre
+      // de numéros uniques concordent. Dans ce seul cas, fusionner d'abord les
+      // consommations des anciennes identités puis masquer les cinq doublons
+      // locaux. Une extraction partielle ne retire jamais une carte.
+      if(expectedTotal!==undefined&&officialNumbers.length===expectedTotal){
+        await client.query(`WITH stale AS (
+          SELECT old.id,
+            right(regexp_replace(coalesce(old.total_payment_number,old.official_card_number,old.masked_card_number),'[^0-9]','','g'),4) payment_last4
+          FROM fuel_card old
+          WHERE old.company_id=$1::uuid AND old.deleted_at IS NULL
+            AND regexp_replace(coalesce(old.official_card_number,old.masked_card_number),'[^0-9]','','g')<>ALL($2::text[])
+        ), mapping AS (
+          SELECT stale.id old_id,current.id new_id
+          FROM stale CROSS JOIN LATERAL (
+            SELECT fc.id FROM fuel_card fc
+            WHERE fc.company_id=$1::uuid AND fc.deleted_at IS NULL AND fc.id<>stale.id
+              AND (regexp_replace(coalesce(fc.official_card_number,fc.masked_card_number),'[^0-9]','','g')=stale.payment_last4
+                OR right(regexp_replace(coalesce(fc.total_payment_number,''),'[^0-9]','','g'),4)=stale.payment_last4)
+            ORDER BY fc.total_mobility_checked_at DESC NULLS LAST LIMIT 1
+          ) current
+        ) UPDATE fuel_transaction ft SET fuel_card_id=m.new_id
+          FROM mapping m WHERE ft.fuel_card_id=m.old_id AND ft.deleted_at IS NULL`,[company.id,officialNumbers]);
+        const cleanup=await client.query(`UPDATE fuel_card fc SET deleted_at=now(),updated_at=now()
+          WHERE fc.company_id=$1::uuid AND fc.deleted_at IS NULL
+            AND regexp_replace(coalesce(fc.official_card_number,fc.masked_card_number),'[^0-9]','','g')<>ALL($2::text[])
+          RETURNING fc.id`,[company.id,officialNumbers]);
+        removed=cleanup.rowCount??0;
+      }
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
-        VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{client:totalName,company:company.code,expectedTotal,extracted:cards.length,matched,created,removed,reconciledTransactions:reconciled.rowCount??0,remappedTransactions:remappedTransactions.rowCount??0}]);
-      return {client:totalName,company:company.code,expectedTotal,extracted:cards.length,matched,created,removed,reconciledTransactions:reconciled.rowCount??0,remappedTransactions:remappedTransactions.rowCount??0,unmatched:cards.length-matched};
+        VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{client:totalName,company:company.code,expectedTotal,extracted:cards.length,limitsExtracted,matched,created,removed,reconciledTransactions:reconciled.rowCount??0,remappedTransactions:remappedTransactions.rowCount??0}]);
+      return {client:totalName,company:company.code,expectedTotal,extracted:cards.length,limitsExtracted,matched,created,removed,reconciledTransactions:reconciled.rowCount??0,remappedTransactions:remappedTransactions.rowCount??0,unmatched:cards.length-matched};
     });
   }
   async importDrivers(drivers: RemoteDriver[], actor: Actor, clientName?: string) {

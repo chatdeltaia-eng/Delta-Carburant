@@ -688,7 +688,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`Plafonds Total : ${error instanceof Error?error.message:String(error)}`);
         return new Map<string,number>();
       });
-      result=result.map(card=>({...card,monthlyLimit:detailedLimits.get(card.cardNumber)??card.monthlyLimit}));
+      result=result.map(card=>detailedLimits.has(card.cardNumber)
+        ?{...card,monthlyLimit:detailedLimits.get(card.cardNumber),raw:{...(card.raw??{}),monthlyLimitExtracted:true}}
+        :{...card,raw:{...(card.raw??{}),monthlyLimitExtracted:false}});
       this.lastCardDiagnostic=`JSON=${captured.length}, lignes=${rows.length}, JSON-cartes=${fromJson.length}, tableau=${fromTable.length}, texte=${fromVisible.length}, total=${expectedTotal??'inconnu'}, url=${page.url()}`;
       if(!result.length){
         const visible=(await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>''))))
@@ -746,6 +748,17 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         if(!await edit.isVisible({timeout:300}).catch(()=>false))continue;
         opened=await edit.click({force:true,timeout:3_000}).then(()=>true).catch(()=>false);if(opened)break;
       }
+      // Sur le portail actuel, Modifier se trouve parfois dans la barre
+      // d'actions au-dessus du tableau et n'apparaît qu'après sélection de
+      // la ligne. Utiliser ce bouton global si la ligne n'en contient pas.
+      if(!opened){
+        for(const frame of page.frames()){
+          const edit=frame.getByRole('button',{name:/^\s*modifier\s*$/i}).filter({visible:true}).first();
+          if(!await edit.isVisible({timeout:300}).catch(()=>false))continue;
+          opened=await edit.click({force:true,timeout:3_000}).then(()=>true).catch(()=>false);
+          if(opened)break;
+        }
+      }
       if(!opened){this.logger.warn(`Plafond Total ${card.cardNumber} : bouton Modifier introuvable`);continue;}
       await page.waitForURL(/\/cards\/edit-card/i,{timeout:10_000}).catch(()=>undefined);
       // La première étape contient « Limite de Crédit » (ligne de crédit du
@@ -759,6 +772,15 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         }
       }
       if(!continued){this.logger.warn(`Plafond Total ${card.cardNumber} : bouton Continuer introuvable`);continue;}
+      // La deuxième étape peut s'ouvrir sur un autre panneau. Le plafond
+      // recherché est exclusivement dans « Produit de la carte ».
+      for(const frame of page.frames()){
+        const product=frame.getByText(/^\s*Produit de la carte\s*$/i).filter({visible:true}).first();
+        if(await product.isVisible({timeout:500}).catch(()=>false)){
+          await product.click({force:true,timeout:3_000}).catch(()=>undefined);
+          break;
+        }
+      }
       await Promise.all(page.frames().map(frame=>frame.getByText(/^\s*Limite de\s*$/i).first()
         .waitFor({state:'visible',timeout:10_000}).catch(()=>undefined)));
       let amount:number|undefined;
@@ -778,12 +800,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
             const input=field.querySelector<HTMLInputElement>('input');
             if(input?.value)result.push(input.value);
             const ownText=normalize(field.textContent??'');
-            const match=ownText.match(/^(?:Limite de|Limit of)\s*([\d\s.,]+)$/i);
+            const match=ownText.match(/^(?:Limite de|Limit of)\s*([\d\s.,]+)\s*(?:TND|DT)?(?:\s*(?:Par mois|Monthly))?/i);
             if(match)result.push(match[1]);
           }
           return result;
         }).catch(()=>[]);
-        amount=values.map(value=>this.parseAmount(value)).find(value=>value!==undefined&&value>0);
+        amount=values.map(value=>this.parseAmount(value)).find(value=>value!==undefined&&value>=0);
         if(amount!==undefined)break;
       }
       if(amount!==undefined){limits.set(card.cardNumber,amount);this.logger.log(`Plafond Total ${card.cardNumber} : ${amount} TND`);}
@@ -1661,7 +1683,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         paymentMethodNumber:card.paymentMethodNumber||previous?.paymentMethodNumber,
         paymentMethodType:card.paymentMethodType||previous?.paymentMethodType,
         holderName:card.holderName||previous?.holderName,registration:card.registration||previous?.registration,
-        expiresOn:card.expiresOn||previous?.expiresOn,monthlyLimit:card.monthlyLimit||previous?.monthlyLimit,
+        expiresOn:card.expiresOn||previous?.expiresOn,
+        monthlyLimit:card.monthlyLimit!==undefined?card.monthlyLimit:previous?.monthlyLimit,
         raw:{...(previous?.raw??{}),...(card.raw??{})}});
     }
     return [...merged.values()];

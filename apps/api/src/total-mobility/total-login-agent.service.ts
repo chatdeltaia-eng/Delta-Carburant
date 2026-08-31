@@ -744,6 +744,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         // tableau. Le portail possède plusieurs filtres : ne remplir que le
         // champ explicitement associé au numéro de carte/mode de paiement.
         const inputs=frame.locator('input:visible');
+        let filterFilled=false;
         for(let index=0;index<await inputs.count();index++){
           const input=inputs.nth(index);
           const token=await input.evaluate(element=>[
@@ -751,8 +752,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
             element.closest('label,mat-form-field,.q-field')?.textContent,
           ].filter(Boolean).join(' ')).catch(()=>'');
           if(!/num[ée]ro.*(?:carte|mode de paiement)|(?:carte|mode de paiement).*num[ée]ro/i.test(token))continue;
-          await input.fill(card.cardNumber);break;
+          // Le filtre Total porte sur le numéro DU MODE DE PAIEMENT, pas sur
+          // le numéro de carte affiché dans la première colonne.
+          await input.fill(String(card.paymentMethodNumber??card.cardNumber).replace(/\s+/g,''));
+          filterFilled=true;break;
         }
+        if(!filterFilled)continue;
         const search=frame.getByRole('button',{name:/^\s*recherche\s*$/i}).first();
         if(await search.isVisible({timeout:300}).catch(()=>false)){
           await search.click({force:true}).catch(()=>undefined);await page.waitForTimeout(600);
@@ -766,6 +771,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(await radio.isVisible({timeout:300}).catch(()=>false))await radio.click({force:true});
       const editCandidates=[
         row.locator('button[aria-label*="modifier" i], button[title*="modifier" i], button:has-text("edit"), .q-icon:has-text("edit")').first(),
+        row.locator('mat-icon:has-text("edit"), .material-icons:has-text("edit"), svg[aria-label*="modifier" i]').first(),
         row.locator('button, [role="button"]').filter({hasText:/modifier|edit/i}).first(),
       ];
       let opened=false;
@@ -775,29 +781,42 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
       if(!opened){this.logger.warn(`Plafond Total ${card.cardNumber} : bouton Modifier introuvable`);continue;}
       await page.waitForURL(/\/cards\/edit-card/i,{timeout:10_000}).catch(()=>undefined);
+      // La première étape contient « Limite de Crédit » (ligne de crédit du
+      // client, ex. 16 000 TND). Ce n'est jamais le plafond de la carte. Le
+      // parcours officiel impose Continuer avant d'ouvrir Produit de la carte.
+      let continued=false;
       for(const frame of page.frames()){
-        const product=frame.getByText(/^\s*Produit de la carte\s*$/i).first();
-        if(await product.isVisible({timeout:500}).catch(()=>false)){await product.click({force:true});break;}
         const next=frame.getByRole('button',{name:/^\s*continuer\s*$/i}).first();
-        if(await next.isVisible({timeout:300}).catch(()=>false)){await next.click({force:true});break;}
+        if(await next.isVisible({timeout:1_000}).catch(()=>false)){
+          continued=await next.click({force:true,timeout:3_000}).then(()=>true).catch(()=>false);break;
+        }
       }
-      await page.waitForTimeout(500);
+      if(!continued){this.logger.warn(`Plafond Total ${card.cardNumber} : bouton Continuer introuvable`);continue;}
+      await Promise.all(page.frames().map(frame=>frame.getByText(/^\s*Limite de\s*$/i).first()
+        .waitFor({state:'visible',timeout:10_000}).catch(()=>undefined)));
       let amount:number|undefined;
       for(const frame of page.frames()){
         const values=await frame.locator('body').evaluate(()=>{
           const normalize=(value:string)=>value.replace(/\s+/g,' ').trim();
           const result:string[]=[];
-          for(const node of Array.from(document.querySelectorAll<HTMLElement>('input, [contenteditable="true"], mat-form-field, .q-field, label, div'))){
-            const text=normalize(node.textContent??'');
-            const context=normalize(node.closest('section,form,fieldset,.card,.row')?.textContent??text);
-            if(!/(?:Limite de|Limit of)/i.test(text+' '+context))continue;
-            if(node instanceof HTMLInputElement&&node.value)result.push(node.value);
-            const match=(text+' '+context).match(/(?:Limite de|Limit of)\s*([\d\s.,]+)/i);
+          const labels=Array.from(document.querySelectorAll<HTMLElement>('label, .q-field__label, .mat-form-field-label, div, span'))
+            .filter(node=>/^(?:Limite de|Limit of)$/i.test(normalize(node.textContent??'')));
+          for(const label of labels){
+            // Rester dans le petit champ associé au libellé exact. Ne jamais
+            // remonter au formulaire complet, qui contient aussi « Limite de
+            // Crédit », « Consommation » et « % consommation ».
+            const field=label.closest<HTMLElement>('.q-field, mat-form-field, .mat-mdc-form-field, .form-group, .col, [class*="field"]')
+              ??label.parentElement;
+            if(!field)continue;
+            const input=field.querySelector<HTMLInputElement>('input');
+            if(input?.value)result.push(input.value);
+            const ownText=normalize(field.textContent??'');
+            const match=ownText.match(/^(?:Limite de|Limit of)\s*([\d\s.,]+)$/i);
             if(match)result.push(match[1]);
           }
           return result;
         }).catch(()=>[]);
-        amount=values.map(value=>this.parseAmount(value)).find(value=>value!==undefined&&value>=0);
+        amount=values.map(value=>this.parseAmount(value)).find(value=>value!==undefined&&value>0);
         if(amount!==undefined)break;
       }
       if(amount!==undefined){limits.set(card.cardNumber,amount);this.logger.log(`Plafond Total ${card.cardNumber} : ${amount} TND`);}

@@ -491,6 +491,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     );
     const customer=connection?.customer_number?.trim();if(!customer)return;
     try{
+      this.setStatus('EXTRACTING','Total : vérification du client Delta Cuisine actif…');
       const aliases:Record<string,string>={DC:'DELTA CUISINE',DCD:'DELTA CUISINE DISTRIBUTION',IKIT:'IKIT TN',TCM:'STE LES TECHNIQUES DE MARBRE'};
       const candidates=[aliases[String(connection.company_code??'').toUpperCase()],connection.customer_name,
         connection.company_code,customer].map(value=>String(value??'').trim()).filter(Boolean);
@@ -513,6 +514,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         }
       }
       await this.openTotalCustomerSelection();
+      this.setStatus('EXTRACTING','Total : sélection automatique de Delta Cuisine…');
       let selectedName='';
       for(const candidate of [...new Set(candidates)]){
         if(await this.selectTotalClientByName(candidate)){selectedName=candidate;break;}
@@ -520,6 +522,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(!selectedName)throw new Error(`client ${candidates.join(' / ')||customer} introuvable dans les radios ou la liste Total`);
       const confirmed=await this.confirmTotalCustomerSelection();
       if(!confirmed)throw new Error('bouton Ok de sélection du client introuvable ou désactivé');
+      this.setStatus('EXTRACTING','Total : validation du client Delta Cuisine…');
       await this.waitForTotalRoute(
         url=>!url.pathname.includes('customer-selection')&&!url.pathname.includes('/oauth2'),
         'validation du client Total configuré',
@@ -608,7 +611,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     };
     page.on('response',listener);
     try{
+      this.setStatus('EXTRACTING','Total : ouverture de Gérer les cartes…');
       await this.openManageCardsFromMenu();
+      this.setStatus('EXTRACTING','Total : lecture de la grille des cartes…');
       await page.waitForTimeout(2_500);
       // La page « Gérer » n'appelle pas toujours l'API des cartes au premier
       // rendu. Le clic sur Recherche est nécessaire, comme dans le parcours
@@ -1202,6 +1207,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     const code=companyCodes[clientName.trim().toUpperCase()];
     const [company]=await this.db.query<{id:string}>(`SELECT id FROM company WHERE active AND upper(code)=$1 LIMIT 1`,[code]);
     if(!company)throw new Error(`Société Delta ${code??clientName} introuvable`);
+    this.setStatus('EXTRACTING',`Total ${clientName} : extraction automatique des cartes et plafonds…`);
     const cardRows=await this.extractCardStatuses().catch(error=>{
       this.logger.warn(`Cartes Total ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
     });

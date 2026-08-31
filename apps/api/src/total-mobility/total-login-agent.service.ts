@@ -706,6 +706,14 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       let result=tableCards.length
         ?this.uniqueCards([...supplements,...tableCards])
         :this.uniqueCards([...fromJson,...fromVisible]);
+      // Le paginator Total affiche par exemple « 1–43 sur 43 ». Conserver ce
+      // total officiel dans le lot afin que l'import puisse supprimer les cinq
+      // anciennes lignes locales uniquement lorsqu'une extraction complète a
+      // réellement ramené toutes les cartes du client sélectionné.
+      const paginatorTotals=visibleTexts.flatMap(text=>[...text.matchAll(/\b(?:sur|of)\s+(\d{1,5})\b/gi)]
+        .map(match=>Number(match[1])).filter(value=>Number.isInteger(value)&&value>0));
+      const expectedTotal=paginatorTotals.length?Math.max(...paginatorTotals):undefined;
+      if(expectedTotal!==undefined)result=result.map(card=>({...card,raw:{...(card.raw??{}),expectedTotal}}));
       // Le tableau « Gérer » n'expose pas le plafond mensuel. Total le place
       // uniquement dans Modifier > Produit de la carte > Limite. Lire ce
       // détail sans enregistrer la fiche, puis le rattacher au numéro de carte.
@@ -714,7 +722,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         return new Map<string,number>();
       });
       result=result.map(card=>({...card,monthlyLimit:detailedLimits.get(card.cardNumber)??card.monthlyLimit}));
-      this.lastCardDiagnostic=`JSON=${captured.length}, lignes=${rows.length}, JSON-cartes=${fromJson.length}, tableau=${fromTable.length}, texte=${fromVisible.length}, url=${page.url()}`;
+      this.lastCardDiagnostic=`JSON=${captured.length}, lignes=${rows.length}, JSON-cartes=${fromJson.length}, tableau=${fromTable.length}, texte=${fromVisible.length}, total=${expectedTotal??'inconnu'}, url=${page.url()}`;
       if(!result.length){
         const visible=(await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>''))))
           .join(' ').replace(/\s+/g,' ').slice(0,400);

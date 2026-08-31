@@ -15,10 +15,10 @@ export class AppController {
   }
 
   @Get('health')
-  async getHealth(): Promise<{ status: 'ready'; database: 'connected' }> {
+  async getHealth(): Promise<{ status: 'ready'; database: 'connected'; version: string }> {
     try {
       await this.database.query('SELECT 1');
-      return { status: 'ready', database: 'connected' };
+      return { status: 'ready', database: 'connected', version: process.env.RENDER_GIT_COMMIT?.slice(0,7) ?? 'local' };
     } catch {
       throw new ServiceUnavailableException('Database unavailable');
     }

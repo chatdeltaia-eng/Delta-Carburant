@@ -29,6 +29,7 @@ describe('AppController', () => {
       await expect(appController.getHealth()).resolves.toEqual({
         status: 'ready',
         database: 'connected',
+        version: process.env.RENDER_GIT_COMMIT?.slice(0,7) ?? 'local',
       });
     });
 

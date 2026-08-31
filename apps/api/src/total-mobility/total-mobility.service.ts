@@ -415,7 +415,9 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       // sont archivées comme données parasites. Le soft-delete conserve les
       // transactions et la piste d'audit historiques.
       const officialNumbers=[...new Set(importedNumbers)];
-      if(company.code==='DC'&&officialNumbers.length===43){
+      const expectedTotals=cards.map(card=>Number(card.raw?.expectedTotal)).filter(value=>Number.isInteger(value)&&value>0);
+      const expectedTotal=expectedTotals.length?Math.max(...expectedTotals):undefined;
+      if(expectedTotal!==undefined&&officialNumbers.length===expectedTotal){
         const cleanup=await client.query(`UPDATE fuel_card fc SET deleted_at=now(),updated_at=now()
           WHERE fc.company_id=$1 AND fc.deleted_at IS NULL
             AND NOT (regexp_replace(coalesce(fc.official_card_number,fc.masked_card_number), '[^0-9]', '', 'g') = ANY($2::text[]))
@@ -423,8 +425,8 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         removed=cleanup.rowCount??0;
       }
       await client.query(`INSERT INTO audit_log(actor,action,entity_type,entity_id,new_values)
-        VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{client:totalName,company:company.code,extracted:cards.length,matched,created,removed,reconciledTransactions:reconciled.rowCount??0}]);
-      return {client:totalName,company:company.code,extracted:cards.length,matched,created,removed,reconciledTransactions:reconciled.rowCount??0,unmatched:cards.length-matched};
+        VALUES($1,'IMPORT_TOTAL_CARD_STATUSES','integration','TOTAL_MOBILITY_CARDS',$2)`,[actor.email,{client:totalName,company:company.code,expectedTotal,extracted:cards.length,matched,created,removed,reconciledTransactions:reconciled.rowCount??0}]);
+      return {client:totalName,company:company.code,expectedTotal,extracted:cards.length,matched,created,removed,reconciledTransactions:reconciled.rowCount??0,unmatched:cards.length-matched};
     });
   }
   async importDrivers(drivers: RemoteDriver[], actor: Actor, clientName?: string) {

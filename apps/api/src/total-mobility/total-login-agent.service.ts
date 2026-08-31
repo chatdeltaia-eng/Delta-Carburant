@@ -518,12 +518,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         if(await this.selectTotalClientByName(candidate)){selectedName=candidate;break;}
       }
       if(!selectedName)throw new Error(`client ${candidates.join(' / ')||customer} introuvable dans les radios ou la liste Total`);
-      let confirmed=false;
-      for(const frame of page.frames()){
-        const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).filter({visible:true}).first();
-        if(!await ok.isEnabled({timeout:1_000}).catch(()=>false))continue;
-        await ok.click({force:true,timeout:3_000});confirmed=true;break;
-      }
+      const confirmed=await this.confirmTotalCustomerSelection();
       if(!confirmed)throw new Error('bouton Ok de sélection du client introuvable ou désactivé');
       await this.waitForTotalRoute(
         url=>!url.pathname.includes('customer-selection')&&!url.pathname.includes('/oauth2'),
@@ -1141,13 +1136,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       await this.openTotalCustomerSelection();
       const selected=await this.selectTotalClientByName(name);
       if(!selected){results.push({client:name,error:'Client non sélectionnable'});continue;}
-      let confirmed=false;
-      for(const frame of page.frames()){
-        const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).first();
-        if(await ok.isVisible({timeout:500}).catch(()=>false)&&await ok.isEnabled().catch(()=>false)){
-          await ok.click({timeout:3_000});confirmed=true;break;
-        }
-      }
+      const confirmed=await this.confirmTotalCustomerSelection();
       if(!confirmed){results.push({client:name,error:'Client non coché : bouton Ok désactivé'});continue;}
       await this.waitForTotalRoute(
         url=>!url.pathname.includes('customer-selection')&&!url.pathname.includes('/oauth2'),
@@ -1190,13 +1179,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     await this.openTotalCustomerSelection();
     if(!await this.selectTotalClientByName(clientName))
       throw new Error(`Le client Total ${clientName} n'est pas sélectionnable`);
-    let confirmed=false;
-    for(const frame of this.page?.frames()??[]){
-      const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).first();
-      if(await ok.isVisible({timeout:500}).catch(()=>false)&&await ok.isEnabled().catch(()=>false)){
-        await ok.click({timeout:3_000});confirmed=true;break;
-      }
-    }
+    const confirmed=await this.confirmTotalCustomerSelection();
     if(!confirmed)throw new Error(`Le client Total ${clientName} n'a pas été confirmé`);
     await this.waitForTotalRoute(
       url=>!url.pathname.includes('customer-selection')&&!url.pathname.includes('/oauth2'),
@@ -1622,8 +1605,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const directRadio=scope.locator('.q-radio, [role="radio"], label').filter({hasText:exact}).first();
       if(await directRadio.isVisible({timeout:700}).catch(()=>false)){
         await directRadio.click({timeout:3_000});await frame.waitForTimeout(500);
-        const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).first();
-        if(await ok.isEnabled({timeout:2_000}).catch(()=>false))return true;
+        return true;
       }
       const search=frame.locator('input[type="search"], input[placeholder*="recherche" i], input[placeholder*="client" i]').first();
       if(await search.isVisible({timeout:250}).catch(()=>false)){
@@ -1638,6 +1620,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           .filter({hasText:exact}).first();
         if(await option.isVisible({timeout:1_500}).catch(()=>false)){
           await option.click({timeout:3_000});await frame.waitForTimeout(500);
+          return true;
         }
       }
       const choices=[
@@ -1656,8 +1639,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           if(!checked)await radio.click({force:true,timeout:2_000}).catch(()=>undefined);
         }
         await frame.waitForTimeout(500);
-        const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).first();
-        if(await ok.isEnabled({timeout:2_000}).catch(()=>false))return true;
+        return true;
       }
       // Repli DOM pour les nouvelles tuiles Total qui n'exposent plus de
       // role=radio/option exploitable. Choisir le plus petit élément visible
@@ -1678,8 +1660,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       },name).catch(()=>false);
       if(nativeSelected){
         await frame.waitForTimeout(500);
-        const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).filter({visible:true}).first();
-        if(await ok.isEnabled({timeout:2_000}).catch(()=>false))return true;
+        return true;
       }
       // Certains comptes demandent aussi un site après le client. Choisir le
       // site configuré, ou à défaut la première option disponible.
@@ -1697,6 +1678,32 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           if(await ok.isEnabled({timeout:2_000}).catch(()=>false))return true;
         }
       }
+    }
+    return false;
+  }
+
+  private async confirmTotalCustomerSelection(){
+    const page=this.page;if(!page)return false;
+    for(const frame of page.frames()){
+      const candidates=[
+        frame.getByRole('button',{name:/^\s*ok\s*$/i}).first(),
+        frame.locator('button, .q-btn, [role="button"]').filter({hasText:/^\s*ok\s*$/i}).first(),
+      ];
+      for(const ok of candidates){
+        if(!await ok.isVisible({timeout:400}).catch(()=>false)||!await ok.isEnabled().catch(()=>true))continue;
+        if(await ok.click({force:true,timeout:3_000}).then(()=>true).catch(()=>false))return true;
+      }
+      const native=await frame.evaluate(()=>{
+        const visible=(element:HTMLElement)=>{
+          const style=getComputedStyle(element);
+          return style.display!=='none'&&style.visibility!=='hidden'&&Boolean(element.offsetWidth||element.offsetHeight||element.getClientRects().length);
+        };
+        const ok=Array.from(document.querySelectorAll<HTMLElement>('button, .q-btn, [role="button"], div'))
+          .filter(element=>visible(element)&&/^\s*ok\s*$/i.test(element.textContent??''))
+          .sort((left,right)=>(left.textContent??'').length-(right.textContent??'').length)[0];
+        if(!ok)return false;ok.click();return true;
+      }).catch(()=>false);
+      if(native)return true;
     }
     return false;
   }

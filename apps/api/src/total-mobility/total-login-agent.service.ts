@@ -494,6 +494,24 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const aliases:Record<string,string>={DC:'DELTA CUISINE',DCD:'DELTA CUISINE DISTRIBUTION',IKIT:'IKIT TN',TCM:'STE LES TECHNIQUES DE MARBRE'};
       const candidates=[aliases[String(connection.company_code??'').toUpperCase()],connection.customer_name,
         connection.company_code,customer].map(value=>String(value??'').trim()).filter(Boolean);
+      // Après le SSO, Mobility Business ouvre souvent directement le
+      // tableau de bord du dernier client validé. Dans ce cas il n'existe ni
+      // radio ni liste à resélectionner : le nom du client actif est affiché
+      // dans l'en-tête. Accepter ce contexte uniquement lorsqu'un marqueur
+      // visible correspond exactement au client attendu. Les noms connus sont
+      // testés du plus long au plus court afin de ne jamais confondre DC et DCD.
+      const expectedName=aliases[String(connection.company_code??'').toUpperCase()]??String(connection.customer_name??'').trim().toUpperCase();
+      const knownNames=Object.values(aliases).sort((left,right)=>right.length-left.length);
+      for(const frame of page.frames()){
+        const visible=await frame.locator('header, .q-header, nav, [class*="customer" i], [class*="client" i]')
+          .allTextContents().catch(()=>[]);
+        const normalized=visible.join(' ').toUpperCase().replace(/[^A-Z0-9]/g,'');
+        const detected=knownNames.find(name=>normalized.includes(name.replace(/[^A-Z0-9]/g,'')));
+        if(detected&&detected===expectedName){
+          this.activeClientName=detected;
+          return;
+        }
+      }
       await this.openTotalCustomerSelection();
       let selectedName='';
       for(const candidate of [...new Set(candidates)]){

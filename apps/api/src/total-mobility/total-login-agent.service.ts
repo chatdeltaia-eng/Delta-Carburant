@@ -724,7 +724,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     };
     page.on('response',detailListener);
     try{
-    for(const card of cards){
+    for(const [cardIndex,card] of cards.entries()){
+      this.setStatus('EXTRACTING',`Plafonds Total : carte ${cardIndex+1}/${cards.length} — ${card.cardNumber}`);
       detailPayloads.length=0;
       await this.openManageCardsFromMenu();
       await page.waitForTimeout(600);

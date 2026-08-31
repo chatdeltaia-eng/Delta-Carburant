@@ -980,6 +980,25 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async openManageCardsFromMenu(){
     const page=this.page;if(!page)throw new Error('La session Total est indisponible');
     if(/\/cards\/manage-card/i.test(page.url()))return;
+    // Parcours principal observé sur Mobility Business Tunisie : depuis le
+    // tableau de bord, cliquer le libellé visible « Méthodes de paiement »,
+    // puis la tuile « Gérer ». Ce chemin court évite les attentes du tiroir
+    // mini Quasar lorsque les libellés sont déjà affichés.
+    for(const frame of page.frames()){
+      const payment=frame.getByText(/^\s*M[\u00e9e]thodes? de paiement\s*$/i).filter({visible:true}).first();
+      if(!await payment.isVisible({timeout:800}).catch(()=>false))continue;
+      if(!await payment.click({force:true,timeout:3_000}).then(()=>true).catch(()=>false))continue;
+      await this.waitForTotalRoute(url=>/\/tn\/(?:cards|payment)/i.test(url.pathname),'ouverture directe de Méthodes de paiement',12_000).catch(()=>undefined);
+      await page.waitForTimeout(800);
+      for(const currentFrame of page.frames()){
+        const manage=currentFrame.getByText(/^\s*G[\u00e9e]rer\s*$/i).filter({visible:true}).first();
+        if(!await manage.isVisible({timeout:1_000}).catch(()=>false))continue;
+        if(!await manage.click({force:true,timeout:3_000}).then(()=>true).catch(()=>false))continue;
+        await this.waitForTotalRoute(url=>/\/cards\/manage-card/i.test(url.pathname),'ouverture directe de Gérer les cartes',15_000);
+        await page.waitForTimeout(800);
+        return;
+      }
+    }
     // Le date-picker Transactions laisse parfois dans le DOM un q-dialog
     // aria-hidden="true" dont le backdrop continue pourtant à intercepter les
     // clics. Neutraliser uniquement ces dialogues déjà fermés.

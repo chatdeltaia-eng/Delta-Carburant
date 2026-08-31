@@ -639,12 +639,45 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // informations » avant de lire le tableau.
       await Promise.all(page.frames().map(frame=>frame.getByText(/récupération de vos informations/i)
         .waitFor({state:'hidden',timeout:20_000}).catch(()=>undefined)));
+      const rows:string[][]=[];
+      // La q-table Total affiche bien 40 lignes par page mais virtualise le
+      // DOM : selon la hauteur du viewport, seulement 20 à 30 lignes existent
+      // simultanément. Balayer progressivement la page et les conteneurs
+      // scrollables, en mémorisant les lignes avant qu'elles soient recyclées.
+      for(const frame of page.frames()){
+        const harvested=await frame.evaluate(async()=>{
+          const selector='table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row';
+          const unique=new Map<string,string[]>();
+          const collect=()=>{
+            for(const row of document.querySelectorAll<HTMLElement>(selector)){
+              const cells=Array.from(row.querySelectorAll<HTMLElement>('td, [role="cell"], mat-cell'))
+                .map(cell=>(cell.textContent??'').replace(/\s+/g,' ').trim());
+              const key=cells.join('|');if(cells.length&&key)unique.set(key,cells);
+            }
+          };
+          const pause=()=>new Promise(resolve=>setTimeout(resolve,120));
+          const containers=[document.scrollingElement,...Array.from(document.querySelectorAll<HTMLElement>(
+            '.q-table__middle, .q-virtual-scroll, .q-virtual-scroll__content, [role="grid"], [role="table"], main',
+          ))].filter((value):value is HTMLElement=>Boolean(value));
+          for(const container of containers){
+            const maximum=Math.max(0,container.scrollHeight-container.clientHeight);
+            const step=Math.max(180,Math.floor(container.clientHeight*.65));
+            for(let position=0;position<=maximum;position+=step){
+              container.scrollTop=Math.min(position,maximum);window.scrollTo(0,Math.min(position,document.documentElement.scrollHeight));
+              await pause();collect();
+            }
+            container.scrollTop=maximum;await pause();collect();
+          }
+          window.scrollTo(0,document.documentElement.scrollHeight);await pause();collect();
+          return [...unique.values()];
+        }).catch(()=>[] as string[][]);
+        rows.push(...harvested);
+      }
       for(const frame of page.frames())await frame.evaluate(async()=>{
         const candidates=[document.scrollingElement,...Array.from(document.querySelectorAll<HTMLElement>('[role="grid"], [role="table"], .table-container, .mat-table, main'))].filter(Boolean) as HTMLElement[];
         for(const element of candidates){element.scrollTop=element.scrollHeight;}
         await new Promise(resolve=>setTimeout(resolve,700));
       }).catch(()=>undefined);
-      const rows:string[][]=[];
       for(let pageIndex=0;pageIndex<100;pageIndex++){
         rows.push(...(await Promise.all(page.frames().map(frame=>frame.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row').evaluateAll(elements=>elements.map(row=>
           Array.from(row.querySelectorAll('td, [role="cell"], mat-cell')).map(cell=>(cell.textContent??'').replace(/\s+/g,' ').trim()))).catch(()=>[])))).flat());

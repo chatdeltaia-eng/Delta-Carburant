@@ -180,11 +180,12 @@ export class TransactionsService {
           AND (right(regexp_replace(fc.masked_card_number,'[^0-9]','','g'),4)=$1
             OR right(regexp_replace(coalesce(fc.total_payment_number,''),'[^0-9]','','g'),4)=$1
             OR right(regexp_replace(coalesce(fc.official_card_number,''),'[^0-9]','','g'),4)=$1)
-          AND 1=(SELECT count(*) FROM fuel_card matching_card
-            WHERE matching_card.deleted_at IS NULL AND matching_card.company_id=fc.company_id
-              AND (right(regexp_replace(matching_card.masked_card_number,'[^0-9]','','g'),4)=$1
-                OR right(regexp_replace(coalesce(matching_card.total_payment_number,''),'[^0-9]','','g'),4)=$1
-                OR right(regexp_replace(coalesce(matching_card.official_card_number,''),'[^0-9]','','g'),4)=$1))
+        ORDER BY
+          (right(regexp_replace(coalesce(fc.total_payment_number,''),'[^0-9]','','g'),4)=$1) DESC,
+          (nullif(trim(fc.holder_name),'') IS NOT NULL) DESC,
+          (fc.reference_vehicle_id IS NOT NULL) DESC,
+          (fc.status='ACTIVE') DESC,
+          fc.updated_at DESC NULLS LAST,fc.created_at,fc.id
         LIMIT 1`,[cardKey,dto.companyId??null]);
       // Le journal de transactions Total est aussi une source officielle. Si
       // la carte manque du referentiel local mais que sa societe et son

@@ -764,7 +764,18 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(!row){this.logger.warn(`Plafond Total ${card.cardNumber} : ligne introuvable`);continue;}
       const radio=row.locator('input[type="radio"], [role="radio"], mat-radio-button').first();
       if(await radio.isVisible({timeout:300}).catch(()=>false))await radio.click({force:true});
+      // La grille Total utilise une colonne « Modifier » dont l'icône crayon
+      // n'a parfois aucun texte/aria-label. Repérer l'index de l'en-tête puis
+      // cliquer le contrôle de la cellule correspondante.
+      let columnEdit:Locator|undefined;
+      const table=row.locator('xpath=ancestor::table[1]');
+      if(await table.count().catch(()=>0)){
+        const headers=await table.locator('thead th').allTextContents().catch(()=>[]);
+        const editIndex=headers.findIndex(value=>/^\s*modifier\s*$/i.test(value));
+        if(editIndex>=0)columnEdit=row.locator('td').nth(editIndex).locator('button, [role="button"], svg, i').first();
+      }
       const editCandidates=[
+        ...(columnEdit?[columnEdit]:[]),
         row.locator('button[aria-label*="modifier" i], button[title*="modifier" i], button:has-text("edit"), .q-icon:has-text("edit")').first(),
         row.locator('mat-icon:has-text("edit"), .material-icons:has-text("edit"), svg[aria-label*="modifier" i]').first(),
         row.locator('button, [role="button"]').filter({hasText:/modifier|edit/i}).first(),
@@ -828,6 +839,20 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
             const ownText=normalize(field.textContent??'');
             const match=ownText.match(/^(?:Limite de|Limit of)\s*([\d\s.,]+)\s*(?:TND|DT)?(?:\s*(?:Par mois|Monthly))?/i);
             if(match)result.push(match[1]);
+            // Dans la fiche actuelle, « Limite de » est une colonne texte
+            // et la valeur est le premier input visuellement à sa droite sur
+            // la même ligne. Choisir le champ le plus proche évite les champs
+            // Consommation et % consommation situés plus loin.
+            const labelRect=label.getBoundingClientRect();
+            const visual=Array.from(document.querySelectorAll<HTMLInputElement>('input'))
+              .filter(input=>{
+                const rect=input.getBoundingClientRect();const style=getComputedStyle(input);
+                return Boolean(input.value)&&style.display!=='none'&&style.visibility!=='hidden'&&
+                  rect.width>0&&rect.height>0&&rect.left>=labelRect.right-5&&
+                  Math.abs((rect.top+rect.height/2)-(labelRect.top+labelRect.height/2))<55;
+              })
+              .sort((left,right)=>left.getBoundingClientRect().left-right.getBoundingClientRect().left)[0];
+            if(visual?.value)result.push(visual.value);
           }
           return result;
         }).catch(()=>[]);

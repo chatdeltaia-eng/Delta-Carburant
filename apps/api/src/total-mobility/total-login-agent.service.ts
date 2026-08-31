@@ -491,61 +491,28 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     );
     const customer=connection?.customer_number?.trim();if(!customer)return;
     try{
-      const chooser=page.getByText(/choisir un client/i).first();
-      if(await chooser.isVisible({timeout:1_500}).catch(()=>false)){
-        await chooser.click();await page.waitForTimeout(2_500);
+      const aliases:Record<string,string>={DC:'DELTA CUISINE',DCD:'DELTA CUISINE DISTRIBUTION',IKIT:'IKIT TN',TCM:'STE LES TECHNIQUES DE MARBRE'};
+      const candidates=[aliases[String(connection.company_code??'').toUpperCase()],connection.customer_name,
+        connection.company_code,customer].map(value=>String(value??'').trim()).filter(Boolean);
+      await this.openTotalCustomerSelection();
+      let selectedName='';
+      for(const candidate of [...new Set(candidates)]){
+        if(await this.selectTotalClientByName(candidate)){selectedName=candidate;break;}
       }
-      const search=page.locator('input[type="search"], input[placeholder*="recherche" i], input[placeholder*="client" i]').filter({visible:true}).first();
-      const names=[connection.customer_name,connection.company_code]
-        .map(value=>value?.trim()).filter((value):value is string=>Boolean(value));
-      // Sur cette version du portail, la recherche accepte le nom commercial
-      // (« DELTA CUISINE »), pas le numéro client 10391.
-      if(await search.isVisible({timeout:1_000}).catch(()=>false)){
-        await search.fill(names[0]??'');await page.waitForTimeout(1_200);
+      if(!selectedName)throw new Error(`client ${candidates.join(' / ')||customer} introuvable dans les radios ou la liste Total`);
+      let confirmed=false;
+      for(const frame of page.frames()){
+        const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).filter({visible:true}).first();
+        if(!await ok.isEnabled({timeout:1_000}).catch(()=>false))continue;
+        await ok.click({force:true,timeout:3_000});confirmed=true;break;
       }
-      // La version tunisienne affiche des boutons radio suivis d'un bouton
-      // « Ok ». Cliquer seulement le texte/la carte ne valide pas le client et
-      // laisse l'agent bloqué sur /customer-selection.
-      if(/customer-selection/i.test(page.url())){
-        let selected=false;
-        for(const frame of page.frames()){
-          for(const name of names){
-            const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-            const exactName=new RegExp(`^\\s*${escaped}\\s*$`,'i');
-            const text=frame.getByText(exactName).first();
-            if(!await text.isVisible({timeout:500}).catch(()=>false))continue;
-            // Le radio Quasar possède un input natif caché qui ne reflète pas
-            // toujours immédiatement son état. Cliquer sur le texte visible,
-            // comme le fait l'utilisateur, déclenche correctement le modèle.
-            await text.click({timeout:3_000});
-            await frame.waitForTimeout(700);
-            selected=true;
-            break;
-          }
-          if(selected)break;
-        }
-        if(!selected)throw new Error(`client ${names.join(' / ')||customer} introuvable`);
-
-        let confirmed=false;
-        for(const frame of page.frames()){
-          const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).first();
-          if(await ok.isVisible({timeout:500}).catch(()=>false)){
-            await ok.click();confirmed=true;break;
-          }
-          const fallback=frame.locator('button, [role="button"], input[type="submit"]')
-            .filter({hasText:/^\s*ok\s*$/i}).first();
-          if(await fallback.isVisible({timeout:300}).catch(()=>false)){
-            await fallback.click();confirmed=true;break;
-          }
-        }
-        if(!confirmed)throw new Error('bouton Ok de sélection du client introuvable');
-        await this.waitForTotalRoute(
-          url=>!url.pathname.includes('customer-selection')&&!url.pathname.includes('/oauth2'),
-          'validation du client Total configuré',
-        );
-        await page.waitForLoadState('domcontentloaded').catch(()=>undefined);
-        this.activeClientName=(names[0]??'DELTA CUISINE').trim().toUpperCase();
-      }
+      if(!confirmed)throw new Error('bouton Ok de sélection du client introuvable ou désactivé');
+      await this.waitForTotalRoute(
+        url=>!url.pathname.includes('customer-selection')&&!url.pathname.includes('/oauth2'),
+        'validation du client Total configuré',
+      );
+      await page.waitForLoadState('domcontentloaded').catch(()=>undefined);
+      this.activeClientName=(aliases[String(connection.company_code??'').toUpperCase()]??selectedName).toUpperCase();
       const site=connection.site_number?.trim();
       if(site){
         const siteChoice=page.getByText(new RegExp(site.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),{exact:false}).last();

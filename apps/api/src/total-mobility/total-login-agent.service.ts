@@ -722,7 +722,15 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async extractCardProductLimits(cards:RemoteCardStatus[]){
     const page=this.page;if(!page)throw new Error('Le navigateur Total a été fermé pendant les plafonds');
     const limits=new Map<string,number>();
+    const detailPayloads:unknown[]=[];
+    const detailListener=async(response:import('playwright').Response)=>{
+      if(!/card|payment|product|limit/i.test(response.url())||!/json/i.test(response.headers()['content-type']??''))return;
+      try{detailPayloads.push(await response.json());}catch{/* Réponse Total non JSON. */}
+    };
+    page.on('response',detailListener);
+    try{
     for(const card of cards){
+      detailPayloads.length=0;
       await this.openManageCardsFromMenu();
       await page.waitForTimeout(600);
       let row:Locator|undefined;
@@ -826,6 +834,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         amount=values.map(value=>this.parseAmount(value)).find(value=>value!==undefined&&value>=0);
         if(amount!==undefined)break;
       }
+      // Certaines versions Quasar n'exposent pas la valeur du q-select dans
+      // le texte DOM. La réponse JSON chargée par la même fiche Modifier est
+      // alors une seconde source fiable, limitée aux champs produit/carte et
+      // excluant explicitement toute limite de crédit client.
+      if(amount===undefined)amount=this.cardProductLimitFromUnknown(detailPayloads);
       if(amount!==undefined){limits.set(card.cardNumber,amount);this.logger.log(`Plafond Total ${card.cardNumber} : ${amount} TND`);}
       else this.logger.warn(`Plafond Total ${card.cardNumber} : valeur introuvable dans Produit de la carte`);
       // Revenir sans sauvegarder : l'agent est strictement en lecture seule.
@@ -835,7 +848,28 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
       await page.waitForTimeout(350);
     }
+    }finally{page.off('response',detailListener);}
     return limits;
+  }
+
+  private cardProductLimitFromUnknown(input:unknown){
+    const candidates:number[]=[];
+    const visit=(value:unknown,path:string[])=>{
+      if(Array.isArray(value)){value.forEach((entry,index)=>visit(entry,[...path,String(index)]));return;}
+      if(!value||typeof value!=='object')return;
+      for(const [key,entry] of Object.entries(value as Record<string,unknown>)){
+        const next=[...path,key];const token=next.join('.').toLowerCase();
+        if(/limit|limite|ceiling/.test(key.toLowerCase())&&
+          !/credit|customer|client|consum|used|remaining|available|percentage|percent/.test(token)&&
+          (typeof entry==='number'||typeof entry==='string')){
+          const parsed=this.parseAmount(entry);if(parsed!==undefined&&parsed>=0)candidates.push(parsed);
+        }
+        visit(entry,next);
+      }
+    };
+    visit(input,[]);
+    const unique=[...new Set(candidates)];
+    return unique.length===1?unique[0]:undefined;
   }
 
   private async openManageCardsFromMenu(){
@@ -1598,6 +1632,28 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         }
         await frame.waitForTimeout(500);
         const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).first();
+        if(await ok.isEnabled({timeout:2_000}).catch(()=>false))return true;
+      }
+      // Repli DOM pour les nouvelles tuiles Total qui n'exposent plus de
+      // role=radio/option exploitable. Choisir le plus petit élément visible
+      // contenant le nom ou le numéro client, puis cliquer sa ligne interactive.
+      const nativeSelected=name.replace(/[^A-Z0-9]/gi,'').length>=4&&await frame.evaluate((candidate)=>{
+        const normalize=(value:string)=>value.toUpperCase().replace(/[^A-Z0-9]/g,'');
+        const wanted=normalize(candidate);
+        const visible=(element:Element)=>{
+          const node=element as HTMLElement;const style=getComputedStyle(node);
+          return style.display!=='none'&&style.visibility!=='hidden'&&Boolean(node.offsetWidth||node.offsetHeight||node.getClientRects().length);
+        };
+        const matches=Array.from(document.querySelectorAll<HTMLElement>('label, [role="radio"], [role="option"], .q-radio, .q-item, button, li, tr'))
+          .filter(element=>visible(element)&&normalize(element.textContent??'').includes(wanted))
+          .sort((left,right)=>(left.textContent??'').length-(right.textContent??'').length);
+        const target=matches[0];if(!target)return false;
+        (target.closest<HTMLElement>('label, [role="radio"], [role="option"], .q-radio, .q-item, button, li, tr')??target).click();
+        return true;
+      },name).catch(()=>false);
+      if(nativeSelected){
+        await frame.waitForTimeout(500);
+        const ok=frame.getByRole('button',{name:/^\s*ok\s*$/i}).filter({visible:true}).first();
         if(await ok.isEnabled({timeout:2_000}).catch(()=>false))return true;
       }
       // Certains comptes demandent aussi un site après le client. Choisir le

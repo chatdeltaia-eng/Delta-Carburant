@@ -252,6 +252,17 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         company=configured.rows[0];
       }
       if(!company)throw new BadRequestException(`Société introuvable pour le client Total ${totalName||'sélectionné'}`);
+      const uniqueRemoteNumbers=[...new Set(cards.map(card=>
+        this.officialTotalCardNumber(card.cardNumber)||this.officialTotalCardNumber(card.paymentMethodNumber??''),
+      ).filter(Boolean))];
+      const paginatorTotals=cards.map(card=>Number(card.raw?.expectedTotal)).filter(value=>Number.isInteger(value)&&value>0);
+      const paginatorTotal=paginatorTotals.length?Math.max(...paginatorTotals):undefined;
+      const requiredTotal=company.code==='DC'?43:paginatorTotal;
+      if(requiredTotal===undefined||uniqueRemoteNumbers.length!==requiredTotal)
+        throw new BadRequestException(`Inventaire Total ${company.code} incomplet : ${uniqueRemoteNumbers.length} carte(s) unique(s) extraite(s), ${requiredTotal??'total distant inconnu'} attendue(s). Base inchangée.`);
+      const extractedLimitCount=cards.filter(card=>card.raw?.monthlyLimitExtracted===true).length;
+      if(extractedLimitCount!==uniqueRemoteNumbers.length)
+        throw new BadRequestException(`Plafonds Total ${company.code} incomplets : ${extractedLimitCount}/${uniqueRemoteNumbers.length} fiche(s) « Modifier → Produit de la carte → Limite de » lue(s). Base inchangée.`);
       await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,[`total-cards:${company.id}`]);
       let matched=0,created=0,removed=0;
       const importedNumbers:string[]=[];

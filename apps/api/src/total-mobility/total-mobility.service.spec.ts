@@ -47,6 +47,15 @@ describe('TotalMobilityService multi-company session sync', () => {
     expect(canonical('790351010836001503')).toBe('1503');
   });
 
+  it('lit uniquement la limite produit carte et ignore la limite de crédit client',()=>{
+    const agent=new TotalLoginAgentService({} as never,{} as never);
+    const read=(value:unknown)=>(agent as unknown as {cardProductLimitFromUnknown(value:unknown):number|undefined})
+      .cardProductLimitFromUnknown(value);
+    expect(read({customer:{creditLimit:16000},cardProduct:{monthlyLimit:700}})).toBe(700);
+    expect(read({cardProduct:{limit:0}})).toBe(0);
+    expect(read({cardProduct:{limit:500,ceiling:700}})).toBeUndefined();
+  });
+
   it.each([
     ['DC','DELTA CUISINE'],
     ['DCD','DELTA CUISINE DISTRIBUTION'],

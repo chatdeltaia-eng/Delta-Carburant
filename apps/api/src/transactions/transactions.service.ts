@@ -165,6 +165,16 @@ export class TransactionsService {
           AND (company_id=$3::uuid OR fuel_card_id IN (SELECT id FROM fuel_card WHERE company_id=$3::uuid))`,[dto.replaceFrom,actor.sub,dto.companyId]);
     }
     let imported=0,review=0,duplicates=0,verified=0,mismatches=0,unpriced=0;
+    const rebuildResult=dto.companyId?await client.query<{pending:boolean}>(`SELECT EXISTS(
+      SELECT 1 FROM company c JOIN audit_log rebuild ON rebuild.entity_id='TOTAL_MOBILITY_CARDS:DC'
+        AND rebuild.action='ARCHIVE_DC_CARDS_FOR_TOTAL_REEXTRACTION'
+      WHERE c.id=$1::uuid AND c.code='DC' AND NOT EXISTS(
+        SELECT 1 FROM audit_log imported WHERE imported.action='IMPORT_TOTAL_CARD_STATUSES'
+          AND imported.new_values->>'company'='DC' AND imported.created_at>rebuild.created_at
+          AND coalesce((imported.new_values->>'extracted')::int,0)=40
+          AND coalesce((imported.new_values->>'limitsExtracted')::int,0)=40)
+    ) pending`,[dto.companyId]):undefined;
+    const officialCardRebuildPending=Boolean(rebuildResult?.rows[0]?.pending);
     for (let index=0;index<dto.rows.length;index++) {
       const row=dto.rows[index], cardKey=this.cardLast4(row.cardNumber);
       if (!cardKey) throw new BadRequestException(
@@ -191,7 +201,7 @@ export class TransactionsService {
       // la carte manque du referentiel local mais que sa societe et son
       // vehicule sont identifies sans ambiguite, la creer immediatement au
       // lieu de bloquer sa consommation dans les controles manuels.
-      if(!card.rows[0]&&dto.companyId&&String(row.vehicle??'').trim()){
+      if(!card.rows[0]&&!officialCardRebuildPending&&dto.companyId&&String(row.vehicle??'').trim()){
         const registrationKey=String(row.vehicle).toUpperCase().replace(/[^A-Z0-9]/g,'');
         const matchingVehicle=await client.query(`SELECT id,registration_display FROM vehicle
           WHERE company_id=$1::uuid AND active AND deleted_at IS NULL

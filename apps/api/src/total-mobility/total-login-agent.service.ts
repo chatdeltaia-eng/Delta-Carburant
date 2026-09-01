@@ -896,9 +896,14 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         // scrollables jusqu'à rendre la carte cible dans le DOM.
         await frame.evaluate(()=>{
           window.scrollTo(0,0);
-          for(const element of document.querySelectorAll<HTMLElement>(
-            '.q-table__middle,.q-virtual-scroll,.q-virtual-scroll__content,[role="grid"],[role="table"],main',
-          ))element.scrollTop=0;
+          const known=Array.from(document.querySelectorAll<HTMLElement>(
+            '.q-table__middle,.q-virtual-scroll,.q-virtual-scroll__content,[role="grid"],[role="table"],main,.q-page-container,.q-page',
+          ));
+          const generic=Array.from(document.querySelectorAll<HTMLElement>('body *')).filter(element=>{
+            const style=getComputedStyle(element);
+            return element.scrollHeight>element.clientHeight+2&&/(auto|scroll)/.test(style.overflowY);
+          });
+          for(const element of new Set([...known,...generic]))element.scrollTop=0;
         }).catch(()=>undefined);
         for(let sweep=0;sweep<60&&!row;sweep++){
           const candidates=frame.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row');
@@ -912,9 +917,14 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           }
           if(row)break;
           const advanced=await frame.evaluate(()=>{
-            const elements=Array.from(document.querySelectorAll<HTMLElement>(
-              '.q-table__middle,.q-virtual-scroll,[role="grid"],[role="table"],main',
-            )).filter(element=>element.scrollHeight>element.clientHeight+2);
+            const known=Array.from(document.querySelectorAll<HTMLElement>(
+              '.q-table__middle,.q-virtual-scroll,[role="grid"],[role="table"],main,.q-page-container,.q-page',
+            ));
+            const generic=Array.from(document.querySelectorAll<HTMLElement>('body *')).filter(element=>{
+              const style=getComputedStyle(element);
+              return element.scrollHeight>element.clientHeight+2&&/(auto|scroll)/.test(style.overflowY);
+            });
+            const elements=[...new Set([...known,...generic])].filter(element=>element.scrollHeight>element.clientHeight+2);
             let changed=false;
             for(const element of elements){
               const before=element.scrollTop;

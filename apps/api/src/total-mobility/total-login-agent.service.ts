@@ -958,6 +958,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private async setCardRowsPerPage50(){
     const page=this.page;if(!page)return false;
+    // Si une passe précédente a déjà choisi 50, ne pas rouvrir le menu.
+    if(await this.waitForCompleteCardPaginator(700))return true;
     for(const frame of page.frames()){
       const paginatorCombos=frame.locator([
         '.q-table__bottom [role="combobox"]','.q-table__bottom .q-select','.q-table__bottom select',
@@ -982,8 +984,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           // natif, exactement comme le gestionnaire q-item du portail.
           await option.evaluate(element=>(element as HTMLElement).click());
         }
-        await frame.waitForTimeout(900);
-        if(await this.cardPaginatorShowsCompleteDcInventory())return true;
+        if(await this.waitForCompleteCardPaginator())return true;
       }
       // Le portail observé utilise un select natif avec 5, 7, 10, 15, 20,
       // 25 et 50. selectOption déclenche les mêmes événements que le geste
@@ -996,8 +997,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         if(!await option.count().catch(()=>0))continue;
         const value=await option.getAttribute('value');
         await select.selectOption(value!==null?{value}:{label:'50'});
-        await frame.waitForTimeout(700);
-        if(await this.cardPaginatorShowsCompleteDcInventory())return true;
+        if(await this.waitForCompleteCardPaginator())return true;
       }
       // Repli Quasar/Material : retrouver le combobox situé dans le même
       // contrôle que « Lignes par page », puis choisir l'option 50.
@@ -1011,9 +1011,19 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         await combo.click({force:true,timeout:3_000});await frame.waitForTimeout(300);
         const option=frame.locator('[role="option"], .q-item, mat-option').filter({hasText:/^\s*50\s*$/}).filter({visible:true}).first();
         if(!await option.isVisible({timeout:1_000}).catch(()=>false))continue;
-        await option.evaluate(element=>(element as HTMLElement).click());await frame.waitForTimeout(700);
-        if(await this.cardPaginatorShowsCompleteDcInventory())return true;
+        await option.evaluate(element=>(element as HTMLElement).click());
+        if(await this.waitForCompleteCardPaginator())return true;
       }
+    }
+    return false;
+  }
+
+  private async waitForCompleteCardPaginator(timeout=8_000){
+    const page=this.page;if(!page)return false;
+    const deadline=Date.now()+timeout;
+    while(Date.now()<deadline){
+      if(await this.cardPaginatorShowsCompleteDcInventory())return true;
+      await page.waitForTimeout(250);
     }
     return false;
   }
@@ -1026,7 +1036,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     for(const frame of page.frames()){
       const text=await frame.locator('.q-table__bottom, .mat-paginator, [class*="paginator"], body')
         .allTextContents().catch(()=>[]);
-      if(/1\s*[-–]\s*40\s*(?:sur|of)\s*40/i.test(text.join(' ')))return true;
+      const normalized=text.join(' ').replace(/[\u00a0\u202f]/g,' ').replace(/\s+/g,' ').trim();
+      if(/(?:^|\D)1\s*[-–—−]\s*40\s*(?:sur|of)\s*40(?:\D|$)/i.test(normalized))return true;
     }
     return false;
   }

@@ -905,11 +905,23 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // client, ex. 16 000 TND). Ce n'est jamais le plafond de la carte. Le
       // parcours officiel impose Continuer avant d'ouvrir Produit de la carte.
       let continued=false;
-      for(const frame of page.frames()){
-        const next=frame.getByRole('button',{name:/^\s*continuer\s*$/i}).first();
-        if(await next.isVisible({timeout:1_000}).catch(()=>false)){
-          continued=await next.click({force:true,timeout:3_000}).then(()=>true).catch(()=>false);break;
+      const continueDeadline=Date.now()+10_000;
+      while(!continued&&Date.now()<continueDeadline){
+        for(const frame of page.frames()){
+          const candidates=frame.locator('button, .q-btn, [role="button"], a')
+            .filter({hasText:/^\s*Continuer\s*$/i}).filter({visible:true});
+          for(let index=0;index<await candidates.count();index++){
+            const next=candidates.nth(index);
+            continued=await next.evaluate(element=>{
+              const target=element.closest<HTMLElement>('button,a,[role="button"],.q-btn')??element as HTMLElement;
+              if(target.matches('[disabled], [aria-disabled="true"], .disabled, .q-btn--disable'))return false;
+              target.click();return true;
+            }).catch(()=>false);
+            if(continued)break;
+          }
+          if(continued)break;
         }
+        if(!continued)await page.waitForTimeout(250);
       }
       if(!continued)throw new Error(`Plafond Total ${card.cardNumber} : bouton Continuer introuvable sur Détails du client`);
       // La deuxième étape peut s'ouvrir sur un autre panneau. Le plafond

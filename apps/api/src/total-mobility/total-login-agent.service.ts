@@ -620,16 +620,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       this.setStatus('EXTRACTING','Total : ouverture de Gérer les cartes…');
       await this.openManageCardsFromMenu();
       this.setStatus('EXTRACTING','Total : lecture de la grille des cartes…');
-      await page.waitForTimeout(2_500);
-      // La page « Gérer » n'appelle pas toujours l'API des cartes au premier
-      // rendu. Le clic sur Recherche est nécessaire, comme dans le parcours
-      // utilisateur visible sur Mobility Business.
-      for(const frame of page.frames()){
-        const search=frame.getByRole('button',{name:/^\s*recherche\s*$/i}).first();
-        if(await search.isVisible({timeout:500}).catch(()=>false)){
-          await search.click();break;
-        }
-      }
+      // La grille contient déjà les cartes VALIDE. Ne jamais cliquer sur
+      // Recherche : ce bouton est inutile pour l'inventaire complet et un
+      // ancien backdrop Quasar invisible peut intercepter son clic.
       await page.waitForTimeout(1_500);
       this.setStatus('EXTRACTING','Total : affichage de 50 cartes par page…');
       const pageSize50=await this.setCardRowsPerPage50();

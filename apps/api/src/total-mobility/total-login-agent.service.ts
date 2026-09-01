@@ -639,6 +639,23 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async extractCardStatuses(): Promise<RemoteCardStatus[]> {
     const page=this.page;
     if(!page)throw new Error('Le navigateur Total a été fermé avant l’extraction des cartes');
+    const checkpointClient=(this.activeClientName??'').trim().toUpperCase();
+    const storedInventory=checkpointClient?await this.db.query<{card_data:RemoteCardStatus;expected_total:number}>(
+      `SELECT card_data,expected_total FROM total_card_inventory_extraction_checkpoint
+       WHERE client_name=$1 ORDER BY card_number,payment_method_number`,[checkpointClient],
+    ).catch(()=>[]):[];
+    const storedExpected=storedInventory.length?Math.max(...storedInventory.map(row=>Number(row.expected_total)||0)):0;
+    if(storedExpected>0&&storedInventory.length===storedExpected){
+      const cachedCards=storedInventory.map(row=>({
+        ...row.card_data,
+        raw:{...(row.card_data.raw??{}),expectedTotal:storedExpected,inventoryCheckpoint:true},
+      }));
+      this.setStatus('EXTRACTING',`Total ${checkpointClient} : inventaire ${storedExpected}/${storedExpected} rechargé, reprise directe des plafonds…`);
+      const detailedLimits=await this.extractCardProductLimits(cachedCards);
+      return cachedCards.map(card=>detailedLimits.has(card.cardNumber)
+        ?{...card,monthlyLimit:detailedLimits.get(card.cardNumber),raw:{...(card.raw??{}),monthlyLimitExtracted:true}}
+        :{...card,raw:{...(card.raw??{}),monthlyLimitExtracted:false}});
+    }
     const captured: unknown[]=[];
     const listener=async(response: import('playwright').Response)=>{
       // L'endpoint actuel porte un nom générique de recherche de « moyens de
@@ -780,6 +797,16 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         .map(match=>Number(match[1])).filter(value=>Number.isInteger(value)&&value>0));
       const expectedTotal=paginatorTotals.length?Math.max(...paginatorTotals):undefined;
       if(expectedTotal!==undefined)result=result.map(card=>({...card,raw:{...(card.raw??{}),expectedTotal}}));
+      if(checkpointClient&&expectedTotal!==undefined&&result.length===expectedTotal){
+        await this.db.query(`INSERT INTO total_card_inventory_extraction_checkpoint(
+          client_name,card_number,payment_method_number,card_data,expected_total,updated_at)
+          SELECT $1,item->>'cardNumber',coalesce(item->>'paymentMethodNumber',''),item,$3,now()
+          FROM jsonb_array_elements($2::jsonb) item
+          ON CONFLICT(client_name,card_number,payment_method_number) DO UPDATE SET
+            card_data=excluded.card_data,expected_total=excluded.expected_total,updated_at=now()`,[
+          checkpointClient,JSON.stringify(result),expectedTotal,
+        ]);
+      }
       // Le tableau « Gérer » n'expose pas le plafond mensuel. Total le place
       // uniquement dans Modifier > Produit de la carte > Limite. Lire ce
       // détail sans enregistrer la fiche, puis le rattacher au numéro de carte.
@@ -1771,6 +1798,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     // Le client entier est maintenant validé et importé. Les checkpoints ne
     // sont plus nécessaires ; le prochain cycle relira volontairement Total.
     await this.db.query(`DELETE FROM total_card_limit_extraction_checkpoint WHERE client_name=$1`,[
+      clientName.trim().toUpperCase(),
+    ]);
+    await this.db.query(`DELETE FROM total_card_inventory_extraction_checkpoint WHERE client_name=$1`,[
       clientName.trim().toUpperCase(),
     ]);
     for(const key of this.cardLimitCheckpoint.keys())if(key.startsWith(`${clientName.trim().toUpperCase()}|`))

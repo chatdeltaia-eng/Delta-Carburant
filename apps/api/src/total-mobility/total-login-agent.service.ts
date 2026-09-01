@@ -832,6 +832,33 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // La grille Total utilise une colonne « Modifier » dont l'icône crayon
       // n'a parfois aucun texte/aria-label. Repérer l'index de l'en-tête puis
       // cliquer le contrôle de la cellule correspondante.
+      let opened=false;
+      // Dans la q-table actuelle, « Action » peut couvrir plusieurs cellules :
+      // l'index des <th> ne correspond donc pas toujours à celui des <td>.
+      // Après sélection, aligner géométriquement la colonne Modifier avec la
+      // cellule de la ligne et attendre que son contrôle soit activé.
+      const editDeadline=Date.now()+8_000;
+      while(!opened&&Date.now()<editDeadline){
+        opened=await row.evaluate(element=>{
+          const visible=(node:Element)=>{const rect=(node as HTMLElement).getBoundingClientRect();return rect.width>0&&rect.height>0;};
+          const header=Array.from(document.querySelectorAll<HTMLElement>('th, [role="columnheader"]'))
+            .find(node=>visible(node)&&/^\s*Modifier\s*$/i.test((node.textContent??'').replace(/\s+/g,' ')));
+          if(!header)return false;
+          const headerCenter=header.getBoundingClientRect().left+header.getBoundingClientRect().width/2;
+          const cells=Array.from(element.querySelectorAll<HTMLElement>('td, [role="cell"], mat-cell')).filter(visible);
+          const cell=cells.sort((left,right)=>{
+            const leftCenter=left.getBoundingClientRect().left+left.getBoundingClientRect().width/2;
+            const rightCenter=right.getBoundingClientRect().left+right.getBoundingClientRect().width/2;
+            return Math.abs(leftCenter-headerCenter)-Math.abs(rightCenter-headerCenter);
+          })[0];
+          if(!cell)return false;
+          const icon=cell.querySelector<HTMLElement>('button,a,[role="button"],[tabindex],.q-icon,mat-icon,svg,img,i,[class*="edit" i]');
+          const target=icon?.closest<HTMLElement>('button,a,[role="button"],[tabindex]')??icon??cell;
+          if(target.matches('[disabled], [aria-disabled="true"], .disabled, .q-btn--disable'))return false;
+          target.click();return true;
+        }).catch(()=>false);
+        if(!opened)await page.waitForTimeout(250);
+      }
       let columnEdit:Locator|undefined;
       const table=row.locator('xpath=ancestor::table[1]');
       if(await table.count().catch(()=>0)){
@@ -846,8 +873,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         row.locator('mat-icon:has-text("edit"), .material-icons:has-text("edit"), svg[aria-label*="modifier" i]').first(),
         row.locator('button, [role="button"]').filter({hasText:/modifier|edit/i}).first(),
       ];
-      let opened=false;
       for(const edit of editCandidates){
+        if(opened)break;
         if(!await edit.isVisible({timeout:300}).catch(()=>false))continue;
         opened=await edit.evaluate(element=>{
           const target=element.closest<HTMLElement>('button,a,[role="button"],[tabindex]')??element as HTMLElement;

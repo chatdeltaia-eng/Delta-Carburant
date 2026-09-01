@@ -766,27 +766,18 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     };
     page.on('response',detailListener);
     try{
-    // Préparer une seule fois la grille complète. Les itérations suivantes
-    // réutilisent directement les 40 lignes tant que le portail les conserve.
-    await this.openManageCardsFromMenu();
-    await page.waitForTimeout(600);
-    if(!await this.setCardRowsPerPage50())
-      throw new Error('Plafonds Total : impossible de confirmer la grille complète 1–40 sur 40');
-    await page.waitForTimeout(500);
     for(const [cardIndex,card] of cards.entries()){
       this.setStatus('EXTRACTING',`Plafonds Total : carte ${cardIndex+1}/${cards.length} — ${card.cardNumber}`);
       detailPayloads.length=0;
-      // Une fois « 50 lignes par page » sélectionné, les 40 cartes VALIDE de
-      // Delta Cuisine sont déjà présentes dans la grille. Ne jamais utiliser
-      // le formulaire Recherche ici : il filtre sur le moyen de paiement et
-      // peut masquer une carte (notamment 0001/0002) ou ne rien retourner.
-      if(!await this.cardPaginatorShowsCompleteDcInventory()){
-        await this.openManageCardsFromMenu();
-        await page.waitForTimeout(600);
-        if(!await this.setCardRowsPerPage50())
-          throw new Error(`Plafond Total ${card.cardNumber} : impossible de retrouver la grille complète 1–40 sur 40`);
-        await page.waitForTimeout(500);
-      }
+      // Reproduire le parcours humain complet pour CHAQUE carte. Ne jamais
+      // réutiliser la sélection de la passe précédente : Total conserve sinon
+      // l'ancien moyen de paiement dans son modèle Vue et ouvre le mauvais
+      // titulaire malgré le radio visuellement coché.
+      await this.openManageCardsFromMenu();
+      await page.waitForTimeout(600);
+      if(!await this.setCardRowsPerPage50())
+        throw new Error(`Plafond Total ${card.cardNumber} : impossible de confirmer la grille complète 1–40 sur 40`);
+      await page.waitForTimeout(500);
       let row:Locator|undefined;
       for(const frame of page.frames()){
         const candidates=frame.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row');
@@ -1070,12 +1061,42 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(amount===undefined)amount=this.cardProductLimitFromUnknown(detailPayloads);
       if(amount!==undefined){limits.set(card.cardNumber,amount);this.logger.log(`Plafond Total ${card.cardNumber} : ${amount} TND`);}
       else throw new Error(`Plafond Total ${card.cardNumber} : valeur introuvable dans Produit de la carte`);
-      // Revenir sans sauvegarder : l'agent est strictement en lecture seule.
+      // Revenir sans sauvegarder exactement comme l'utilisateur : Annuler,
+      // puis confirmer Oui dans l'avertissement. Cette sortie remet Total au
+      // menu des cartes et efface la sélection avant la carte suivante.
+      let cancelled=false;
       for(const frame of page.frames()){
-        const cancel=frame.getByRole('button',{name:/^\s*annuler\s*$/i}).first();
-        if(await cancel.isVisible({timeout:300}).catch(()=>false)){await cancel.click({force:true}).catch(()=>undefined);break;}
+        cancelled=await frame.evaluate(()=>{
+          const normalize=(value:string)=>value.replace(/\s+/g,' ').trim();
+          const label=Array.from(document.querySelectorAll<HTMLElement>('body *'))
+            .filter(node=>/^Annuler$/i.test(normalize(node.innerText||node.textContent||''))&&node.getBoundingClientRect().width>0)
+            .sort((left,right)=>left.getBoundingClientRect().width*left.getBoundingClientRect().height-
+              right.getBoundingClientRect().width*right.getBoundingClientRect().height)[0];
+          const target=label?.closest<HTMLElement>('button,.q-btn,[role="button"],a')??label;
+          if(!target)return false;target.click();return true;
+        }).catch(()=>false);
+        if(cancelled)break;
       }
-      await page.waitForTimeout(350);
+      if(!cancelled)throw new Error(`Plafond Total ${card.cardNumber} : bouton Annuler introuvable après lecture de Limite de`);
+      let confirmedExit=false;const exitDeadline=Date.now()+10_000;
+      while(!confirmedExit&&Date.now()<exitDeadline){
+        for(const frame of page.frames()){
+          confirmedExit=await frame.evaluate(()=>{
+            const normalize=(value:string)=>value.replace(/\s+/g,' ').trim();
+            const dialog=Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"],.q-dialog,.modal'))
+              .find(node=>node.getBoundingClientRect().width>0&&/vouloir quitter cette page/i.test(node.innerText||node.textContent||''));
+            if(!dialog)return false;
+            const label=Array.from(dialog.querySelectorAll<HTMLElement>('button,.q-btn,[role="button"],a,span'))
+              .find(node=>/^Oui$/i.test(normalize(node.innerText||node.textContent||''))&&node.getBoundingClientRect().width>0);
+            const target=label?.closest<HTMLElement>('button,.q-btn,[role="button"],a')??label;
+            if(!target)return false;target.click();return true;
+          }).catch(()=>false);
+          if(confirmedExit)break;
+        }
+        if(!confirmedExit)await page.waitForTimeout(250);
+      }
+      if(!confirmedExit)throw new Error(`Plafond Total ${card.cardNumber} : confirmation Oui introuvable après Annuler`);
+      await page.waitForTimeout(1_000);
     }
     }finally{page.off('response',detailListener);}
     return limits;

@@ -848,6 +848,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
       selectionConfirmed=selectionConfirmed&&checkedCard===card.cardNumber;
       if(!selectionConfirmed)throw new Error(`Plafond Total ${card.cardNumber} : la carte n'a pas été sélectionnée`);
+      this.setStatus('EXTRACTING',`Plafond ${card.cardNumber} — étape 1/6 : carte sélectionnée et vérifiée`);
       // La grille Total utilise une colonne « Modifier » dont l'icône crayon
       // n'a parfois aucun texte/aria-label. Repérer l'index de l'en-tête puis
       // cliquer le contrôle de la cellule correspondante.
@@ -946,12 +947,22 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(!detailsReady)
         throw new Error(`Plafond Total ${card.cardNumber} : Modifier n'a pas ouvert Détails du client`);
       if(card.holderName?.trim()){
-        const expected=card.holderName.toUpperCase().replace(/[^A-Z0-9]/g,'');
-        const firstPage=(await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>''))))
-          .join(' ').toUpperCase().replace(/[^A-Z0-9]/g,'');
+        const normalizeIdentity=(value:string)=>value.normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+          .toUpperCase().replace(/[^A-Z0-9]/g,'');
+        const expected=normalizeIdentity(card.holderName);
+        // Nom du porteur est un champ modifiable : input.value n'est pas
+        // inclus dans body.innerText(). Lire explicitement toutes les valeurs
+        // de formulaire, comme pour le champ modifiable « Limite de ».
+        const firstPageParts=(await Promise.all(page.frames().map(frame=>frame.locator('body').evaluate(element=>({
+          text:(element as HTMLElement).innerText,
+          values:Array.from(element.querySelectorAll<HTMLInputElement|HTMLTextAreaElement|HTMLSelectElement>('input,textarea,select'))
+            .map(field=>field.value).filter(Boolean),
+        })).catch(()=>({text:'',values:[]})))));
+        const firstPage=normalizeIdentity(firstPageParts.flatMap(part=>[part.text,...part.values]).join(' '));
         if(expected.length>=3&&!firstPage.includes(expected))
           throw new Error(`Plafond Total ${card.cardNumber} : la fiche Modifier ouverte ne correspond pas au titulaire ${card.holderName}`);
       }
+      this.setStatus('EXTRACTING',`Plafond ${card.cardNumber} — étape 2/6 : fiche Modifier et titulaire vérifiés`);
       // La première étape contient « Limite de Crédit » (ligne de crédit du
       // client, ex. 16 000 TND). Ce n'est jamais le plafond de la carte. Le
       // parcours officiel impose Continuer avant d'ouvrir Produit de la carte.
@@ -990,6 +1001,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         if(!continued)await page.waitForTimeout(250);
       }
       if(!continued)throw new Error(`Plafond Total ${card.cardNumber} : bouton Continuer introuvable sur Détails du client`);
+      this.setStatus('EXTRACTING',`Plafond ${card.cardNumber} — étape 3/6 : Continuer cliqué`);
       // La deuxième étape peut s'ouvrir sur un autre panneau. Le plafond
       // recherché est exclusivement dans « Produit de la carte ».
       let productOpened=false;
@@ -1010,6 +1022,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         if(!productOpened)await page.waitForTimeout(250);
       }
       if(!productOpened)throw new Error(`Plafond Total ${card.cardNumber} : étape Produit de la carte introuvable après Continuer`);
+      this.setStatus('EXTRACTING',`Plafond ${card.cardNumber} — étape 4/6 : Produit de la carte ouvert`);
       await Promise.all(page.frames().map(frame=>frame.getByText(/^\s*Limite de\s*$/i).first()
         .waitFor({state:'visible',timeout:10_000}).catch(()=>undefined)));
       const productText=(await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>'')))).join(' ');
@@ -1059,7 +1072,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // alors une seconde source fiable, limitée aux champs produit/carte et
       // excluant explicitement toute limite de crédit client.
       if(amount===undefined)amount=this.cardProductLimitFromUnknown(detailPayloads);
-      if(amount!==undefined){limits.set(card.cardNumber,amount);this.logger.log(`Plafond Total ${card.cardNumber} : ${amount} TND`);}
+      if(amount!==undefined){
+        limits.set(card.cardNumber,amount);this.logger.log(`Plafond Total ${card.cardNumber} : ${amount} TND`);
+        this.setStatus('EXTRACTING',`Plafond ${card.cardNumber} — étape 5/6 : Limite de = ${amount} TND`);
+      }
       else throw new Error(`Plafond Total ${card.cardNumber} : valeur introuvable dans Produit de la carte`);
       // Revenir sans sauvegarder exactement comme l'utilisateur : Annuler,
       // puis confirmer Oui dans l'avertissement. Cette sortie remet Total au
@@ -1097,6 +1113,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
       if(!confirmedExit)throw new Error(`Plafond Total ${card.cardNumber} : confirmation Oui introuvable après Annuler`);
       await page.waitForTimeout(1_000);
+      this.setStatus('EXTRACTING',`Plafond ${card.cardNumber} — étape 6/6 : Annuler puis Oui confirmés`);
     }
     }finally{page.off('response',detailListener);}
     return limits;

@@ -46,6 +46,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private liveTimer?: NodeJS.Timeout;
   private watchdogTimer?: NodeJS.Timeout;
   private lastCardDiagnostic='';
+  private readonly cardLimitCheckpoint=new Map<string,{amount:number;holder:string}>();
   private statusValue: AgentStatus = this.status('IDLE', 'Agent Total prêt');
 
   constructor(
@@ -121,6 +122,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException(
         'Les secrets TOTAL_USERNAME et TOTAL_PASSWORD ne sont pas configurés sur le service API',
       );
+    // Après une vraie perte de session, conserver les plafonds déjà validés
+    // afin de reprendre à la première carte inachevée. Un nouveau lancement
+    // volontaire après SUCCESS/IDLE repart en revanche sur un contrôle frais.
+    if(this.statusValue.state!=='FAILED')this.cardLimitCheckpoint.clear();
     this.actor = actor;
     this.requestedCompanyId = companyId;
     this.activeClientName = undefined;
@@ -354,6 +359,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     try{
+      this.cardLimitCheckpoint.clear();
       this.setStatus('EXTRACTING','Actualisation des transactions Total…');
       // La passe précédente se termine sur le dernier client. Revenir au
       // client configuré avant chaque cycle empêche d'attribuer les données du
@@ -797,6 +803,16 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     page.on('response',detailListener);
     try{
     for(const [cardIndex,card] of cards.entries()){
+      const checkpointKey=[this.activeClientName??'',card.cardNumber,
+        String(card.paymentMethodNumber??'').replace(/\D/g,'')].join('|');
+      const holderKey=String(card.holderName??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+        .toUpperCase().replace(/[^A-Z0-9]/g,'');
+      const checkpoint=this.cardLimitCheckpoint.get(checkpointKey);
+      if(checkpoint&&checkpoint.holder===holderKey){
+        limits.set(card.cardNumber,checkpoint.amount);
+        this.setStatus('EXTRACTING',`Plafonds Total : carte ${cardIndex+1}/${cards.length} — ${card.cardNumber} déjà validée, reprise sans doublon`);
+        continue;
+      }
       this.setStatus('EXTRACTING',`Plafonds Total : carte ${cardIndex+1}/${cards.length} — ${card.cardNumber}`);
       detailPayloads.length=0;
       // Reproduire le parcours humain complet pour CHAQUE carte. Ne jamais
@@ -1168,6 +1184,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(amount===undefined)amount=this.cardProductLimitFromUnknown(detailPayloads);
       if(amount!==undefined){
         limits.set(card.cardNumber,amount);this.logger.log(`Plafond Total ${card.cardNumber} : ${amount} TND`);
+        this.cardLimitCheckpoint.set(checkpointKey,{amount,holder:holderKey});
         this.setStatus('EXTRACTING',`Plafond ${card.cardNumber} — étape 5/6 : Limite de = ${amount} TND`);
       }
       else throw new Error(`Plafond Total ${card.cardNumber} : valeur introuvable dans Produit de la carte`);

@@ -618,7 +618,16 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     page.on('response',listener);
     try{
       this.setStatus('EXTRACTING','Total : ouverture de Gérer les cartes…');
-      await this.openManageCardsFromMenu();
+      let manageOpened=false;let manageError:unknown;
+      for(let attempt=0;attempt<2&&!manageOpened;attempt++){
+        try{await this.openManageCardsFromMenu();manageOpened=true;}
+        catch(error){
+          manageError=error;
+          await page.keyboard.press('Escape').catch(()=>undefined);
+          await page.waitForTimeout(750);
+        }
+      }
+      if(!manageOpened)throw manageError;
       this.setStatus('EXTRACTING','Total : lecture de la grille des cartes…');
       // La grille contient déjà les cartes VALIDE. Ne jamais cliquer sur
       // Recherche : ce bouton est inutile pour l'inventaire complet et un
@@ -1268,14 +1277,20 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private async cardPaginatorShowsCompleteDcInventory(){
     const page=this.page;if(!page)return false;
-    // Pour les autres sociétés le total varie. Pour DC, les captures Total
-    // du 31/08/2026 confirment 40 moyens de paiement VALIDE et 50 lignes/page.
-    if(this.activeClientName!=='DELTA CUISINE')return true;
     for(const frame of page.frames()){
       const text=await frame.locator('.q-table__bottom, .mat-paginator, [class*="paginator"], body')
         .allTextContents().catch(()=>[]);
       const normalized=text.join(' ').replace(/[\u00a0\u202f]/g,' ').replace(/\s+/g,' ').trim();
-      if(/(?:^|\D)1\s*[-–—−]\s*40\s*(?:sur|of)\s*40(?:\D|$)/i.test(normalized))return true;
+      // DC possède exactement 40 cartes VALIDES : preuve stricte 1–40/40.
+      if(this.activeClientName==='DELTA CUISINE'&&
+        /(?:^|\D)1\s*[-–—−]\s*40\s*(?:sur|of)\s*40(?:\D|$)/i.test(normalized))return true;
+      // Pour les autres sociétés, le total varie. Confirmer que la plage
+      // affichée commence à 1 et atteint bien le total propre à ce client
+      // (ex. 1–8 sur 8), au lieu de valider immédiatement sans choisir 50.
+      if(this.activeClientName!=='DELTA CUISINE'){
+        const range=normalized.match(/(?:^|\D)1\s*[-–—−]\s*(\d+)\s*(?:sur|of)\s*(\d+)(?:\D|$)/i);
+        if(range&&Number(range[1])>=Number(range[2])&&Number(range[2])>0)return true;
+      }
     }
     return false;
   }
@@ -1631,6 +1646,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private async extractCurrentClientData(clientName:string){
     if(!this.actor)throw new Error('Utilisateur de synchronisation Total absent');
+    this.activeClientName=clientName.trim().toUpperCase();
     // Rafraîchir d'abord les cartes : leur immatriculation officielle permet
     // de rattacher immédiatement les transactions dont la colonne véhicule
     // est vide (cas fréquent de DCD).

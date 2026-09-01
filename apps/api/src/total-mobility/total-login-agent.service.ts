@@ -541,12 +541,20 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         const expectedName=aliases[String(connection.company_code??'').toUpperCase()]??String(connection.customer_name??'').trim().toUpperCase();
         const knownNames=Object.values(aliases).sort((left,right)=>right.length-left.length);
         for(const frame of page.frames()){
-          const visible=await frame.locator('header, .q-header, nav, [class*="customer" i], [class*="client" i]')
+          const visible=await frame.locator('header, .q-header, nav, [class*="customer" i], [class*="client" i], main, .q-page')
             .allTextContents().catch(()=>[]);
           const normalized=visible.join(' ').toUpperCase().replace(/[^A-Z0-9]/g,'');
           const detected=knownNames.find(name=>normalized.includes(name.replace(/[^A-Z0-9]/g,'')));
           if(detected&&detected===expectedName){
             this.activeClientName=detected;
+            return;
+          }
+          // Après reconnexion, le tableau de bord affiche parfois seulement
+          // « No. du client 10391 » dans son contenu, sans répéter le nom dans
+          // l'en-tête. Cette preuve est sûre hors /customer-selection.
+          const customerDigits=customer.replace(/\D/g,'');
+          if(customerDigits&&normalized.includes(customerDigits)){
+            this.activeClientName=expectedName;
             return;
           }
         }

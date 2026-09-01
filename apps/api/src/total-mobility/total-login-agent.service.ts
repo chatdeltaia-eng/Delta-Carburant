@@ -783,7 +783,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // l'ancien moyen de paiement dans son modèle Vue et ouvre le mauvais
       // titulaire malgré le radio visuellement coché.
       await this.openManageCardsFromMenu();
-      await page.waitForTimeout(600);
+      await page.waitForTimeout(250);
       let completeGrid=false;
       for(let gridAttempt=0;gridAttempt<3&&!completeGrid;gridAttempt++){
         // Après Annuler → Oui, Quasar peut conserver brièvement un backdrop
@@ -795,12 +795,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
             for(const backdrop of dialog.querySelectorAll<HTMLElement>('.q-dialog__backdrop'))backdrop.style.pointerEvents='none';
           }
         }).catch(()=>undefined);
-        if(gridAttempt>0){await page.keyboard.press('Escape').catch(()=>undefined);await page.waitForTimeout(750);}
+        if(gridAttempt>0){await page.keyboard.press('Escape').catch(()=>undefined);await page.waitForTimeout(300);}
         completeGrid=await this.setCardRowsPerPage50();
       }
       if(!completeGrid)
         throw new Error(`Plafond Total ${card.cardNumber} : impossible de confirmer la grille complète 1–40 sur 40`);
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(200);
       let row:Locator|undefined;
       for(const frame of page.frames()){
         const candidates=frame.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row');
@@ -841,7 +841,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         }).catch(()=>false);
       }
       if(!selected)throw new Error(`Plafond Total ${card.cardNumber} : contrôle de sélection de la carte introuvable`);
-      await page.waitForTimeout(1_000);
+      await page.waitForTimeout(350);
       let selectionConfirmed=await row.evaluate(element=>{
         const input=element.querySelector<HTMLInputElement>('input[type="radio"]');
         const radio=element.querySelector<HTMLElement>('[role="radio"]');
@@ -1196,7 +1196,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
       if(/\/cards\/edit-card/i.test(page.url()))
         throw new Error(`Plafond Total ${card.cardNumber} : Oui n'a pas quitté la fiche Modifier`);
-      await page.waitForTimeout(750);
+      await page.waitForTimeout(250);
       this.setStatus('EXTRACTING',`Plafond ${card.cardNumber} — étape 6/6 : Annuler puis Oui confirmés`);
     }
     }finally{page.off('response',detailListener);}
@@ -1571,11 +1571,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     // Toujours repartir du client configuré : une passe précédente se termine
     // sur STE LES TECHNIQUES DE MARBRE et le navigateur reste sur ce client.
     await this.selectConfiguredClient();
-    try{
-      results.push(await this.extractCurrentClientData('DELTA CUISINE'));
-    }catch(error){
-      results.push({client:'DELTA CUISINE',error:error instanceof Error?error.message:String(error)});
-    }
+    // DELTA CUISINE est prioritaire : ses 40 cartes et 40 plafonds doivent
+    // être complètement validés avant même d'ouvrir la sélection d'un autre
+    // client. Ne jamais avaler une erreur DC puis perdre du temps sur IKIT,
+    // DCD ou TCM avec un référentiel principal incomplet.
+    results.push(await this.extractCurrentClientData('DELTA CUISINE'));
     // Si l'utilisateur a choisi une société pendant ce cycle automatique,
     // arrêter immédiatement le parcours groupe et honorer ce périmètre seul.
     if(this.requestedCompanyId)

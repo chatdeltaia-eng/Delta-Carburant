@@ -893,7 +893,18 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         }
       }
       if(!opened)throw new Error(`Plafond Total ${card.cardNumber} : bouton Modifier introuvable`);
-      await page.waitForURL(/\/cards\/edit-card/i,{timeout:10_000}).catch(()=>undefined);
+      const detailsDeadline=Date.now()+10_000;
+      let detailsReady=false;
+      while(!detailsReady&&Date.now()<detailsDeadline){
+        if(/\/cards\/edit-card/i.test(page.url()))detailsReady=true;
+        for(const frame of page.frames()){
+          const body=await frame.locator('body').innerText().catch(()=>'');
+          if(/Détails du client/i.test(body)&&/Limite de Crédit/i.test(body)){detailsReady=true;break;}
+        }
+        if(!detailsReady)await page.waitForTimeout(250);
+      }
+      if(!detailsReady)
+        throw new Error(`Plafond Total ${card.cardNumber} : Modifier n'a pas ouvert Détails du client`);
       if(card.holderName?.trim()){
         const expected=card.holderName.toUpperCase().replace(/[^A-Z0-9]/g,'');
         const firstPage=(await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>''))))
@@ -913,19 +924,25 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           // peut le considérer hors du locator pendant la transition d'étape.
           continued=await frame.evaluate(()=>{
             const normalize=(value:string)=>value.replace(/[\u00a0\u202f]/g,' ').replace(/\s+/g,' ').trim();
-            const candidates=Array.from(document.querySelectorAll<HTMLElement>('button,.q-btn,[role="button"],a'));
-            const target=candidates.find(element=>{
+            const visible=(element:HTMLElement)=>{
               const rect=element.getBoundingClientRect();const style=getComputedStyle(element);
-              return /^Continuer$/i.test(normalize(element.innerText||element.textContent||''))&&
-                rect.width>0&&rect.height>0&&style.display!=='none'&&style.visibility!=='hidden'&&
-                !element.matches('[disabled],[aria-disabled="true"],.disabled,.q-btn--disable');
-            });
+              return rect.width>0&&rect.height>0&&style.display!=='none'&&style.visibility!=='hidden';
+            };
+            // Le libellé peut vivre dans un span .q-btn__content accompagné
+            // d'autres nœuds Quasar. Choisir le plus petit nœud visible qui
+            // contient « Continuer », puis remonter au contrôle cliquable.
+            const label=Array.from(document.querySelectorAll<HTMLElement>('body *'))
+              .filter(element=>visible(element)&&/\bContinuer\b/i.test(normalize(element.innerText||element.textContent||'')))
+              .sort((left,right)=>{
+                const a=left.getBoundingClientRect(),b=right.getBoundingClientRect();
+                return a.width*a.height-b.width*b.height;
+              })[0];
+            const target=label?.closest<HTMLElement>('button,.q-btn,[role="button"],a')??label;
             if(!target)return false;
+            if(target.matches('[disabled],[aria-disabled="true"],.disabled,.q-btn--disable'))return false;
             target.scrollIntoView({block:'center',inline:'center'});
-            target.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerType:'mouse'}));
             target.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
             target.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
-            target.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerType:'mouse'}));
             target.click();return true;
           }).catch(()=>false);
           if(continued)break;

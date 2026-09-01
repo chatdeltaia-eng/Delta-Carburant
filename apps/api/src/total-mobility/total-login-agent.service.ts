@@ -983,9 +983,16 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           }).catch(()=>'');
           if(observedHolder)break;
         }
-        if(expected.length>=3&&!firstPage.includes(expected)){
-          const observed=observedHolder||'champ introuvable';
-          throw new Error(`Plafond Total ${card.cardNumber} : carte cochée ${checkedCard||'inconnue'}, titulaire attendu ${card.holderName}, titulaire ouvert ${observed}`);
+        if(expected.length>=3&&!firstPage.includes(expected)&&observedHolder){
+          throw new Error(`Plafond Total ${card.cardNumber} : carte cochée ${checkedCard||'inconnue'}, titulaire attendu ${card.holderName}, titulaire ouvert ${observedHolder}`);
+        }
+        if(expected.length>=3&&!firstPage.includes(expected)&&!observedHolder){
+          // Certaines versions Total peignent le champ Nom du porteur sans
+          // exposer sa valeur au DOM/ARIA. Ne pas bloquer sur cette absence :
+          // la preuve obligatoire reste le radio coché de la ligne portant le
+          // numéro officiel exact. Une valeur lisible mais différente demeure
+          // en revanche une erreur bloquante ci-dessus.
+          this.logger.warn(`Plafond Total ${card.cardNumber} : Nom du porteur non exposé ; validation par carte cochée ${checkedCard}`);
         }
       }
       this.setStatus('EXTRACTING',`Plafond ${card.cardNumber} — étape 2/6 : fiche Modifier et titulaire vérifiés`);

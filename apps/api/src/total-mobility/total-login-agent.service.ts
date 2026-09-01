@@ -808,8 +808,34 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         if(row)break;
       }
       if(!row)throw new Error(`Plafond Total ${card.cardNumber} : carte absente de la grille complète 1–40 sur 40`);
-      const radio=row.locator('input[type="radio"], [role="radio"], mat-radio-button').first();
-      if(await radio.isVisible({timeout:300}).catch(()=>false))await radio.click({force:true});
+      // Total masque l'input radio natif dans un composant Quasar/Material.
+      // Cliquer uniquement l'input lorsqu'il est visible laissait donc la
+      // carte non sélectionnée et le crayon Modifier désactivé. Actionner le
+      // contrôle visuel, puis utiliser le clic natif du composant en repli.
+      let selected=false;
+      const visibleRadio=row.locator('.q-radio, mat-radio-button, [role="radio"], label:has(input[type="radio"])')
+        .filter({visible:true}).first();
+      if(await visibleRadio.isVisible({timeout:500}).catch(()=>false)){
+        selected=await visibleRadio.click({force:true,timeout:3_000}).then(()=>true).catch(()=>false);
+      }
+      if(!selected){
+        selected=await row.evaluate(element=>{
+          const input=element.querySelector<HTMLInputElement>('input[type="radio"]');
+          const target=input?.closest<HTMLElement>('.q-radio,mat-radio-button,label,[role="radio"]')??input;
+          if(!target)return false;
+          target.click();
+          return true;
+        }).catch(()=>false);
+      }
+      if(!selected)throw new Error(`Plafond Total ${card.cardNumber} : contrôle de sélection de la carte introuvable`);
+      await page.waitForTimeout(500);
+      const selectionConfirmed=await row.evaluate(element=>{
+        const input=element.querySelector<HTMLInputElement>('input[type="radio"]');
+        const radio=element.querySelector<HTMLElement>('[role="radio"]');
+        return Boolean(input?.checked||radio?.getAttribute('aria-checked')==='true'||
+          element.querySelector('.q-radio__inner--truthy, .mat-radio-checked, .mat-mdc-radio-checked'));
+      }).catch(()=>false);
+      if(!selectionConfirmed)throw new Error(`Plafond Total ${card.cardNumber} : la carte n'a pas été sélectionnée`);
       // La grille Total utilise une colonne « Modifier » dont l'icône crayon
       // n'a parfois aucun texte/aria-label. Repérer l'index de l'en-tête puis
       // cliquer le contrôle de la cellule correspondante.
@@ -818,7 +844,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(await table.count().catch(()=>0)){
         const headers=await table.locator('thead th').allTextContents().catch(()=>[]);
         const editIndex=headers.findIndex(value=>/^\s*modifier\s*$/i.test(value));
-        if(editIndex>=0)columnEdit=row.locator('td').nth(editIndex).locator('button, [role="button"], svg, i').first();
+        if(editIndex>=0)columnEdit=row.locator('td').nth(editIndex)
+          .locator('button, a, [role="button"], .q-icon, mat-icon, svg, img, [class*="edit" i]').first();
       }
       const editCandidates=[
         ...(columnEdit?[columnEdit]:[]),
@@ -829,7 +856,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       let opened=false;
       for(const edit of editCandidates){
         if(!await edit.isVisible({timeout:300}).catch(()=>false))continue;
-        opened=await edit.click({force:true,timeout:3_000}).then(()=>true).catch(()=>false);if(opened)break;
+        opened=await edit.evaluate(element=>{
+          const target=element.closest<HTMLElement>('button,a,[role="button"],[tabindex]')??element as HTMLElement;
+          target.click();
+        }).then(()=>true).catch(()=>false);if(opened)break;
       }
       // Sur le portail actuel, Modifier se trouve parfois dans la barre
       // d'actions au-dessus du tableau et n'apparaît qu'après sélection de

@@ -908,17 +908,26 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const continueDeadline=Date.now()+10_000;
       while(!continued&&Date.now()<continueDeadline){
         for(const frame of page.frames()){
-          const candidates=frame.locator('button, .q-btn, [role="button"], a')
-            .filter({hasText:/^\s*Continuer\s*$/i}).filter({visible:true});
-          for(let index=0;index<await candidates.count();index++){
-            const next=candidates.nth(index);
-            continued=await next.evaluate(element=>{
-              const target=element.closest<HTMLElement>('button,a,[role="button"],.q-btn')??element as HTMLElement;
-              if(target.matches('[disabled], [aria-disabled="true"], .disabled, .q-btn--disable'))return false;
-              target.click();return true;
-            }).catch(()=>false);
-            if(continued)break;
-          }
+          // Ne pas dépendre de locator.filter({visible:true}) : sur cette
+          // version Quasar le bouton est peint et cliquable, mais Playwright
+          // peut le considérer hors du locator pendant la transition d'étape.
+          continued=await frame.evaluate(()=>{
+            const normalize=(value:string)=>value.replace(/[\u00a0\u202f]/g,' ').replace(/\s+/g,' ').trim();
+            const candidates=Array.from(document.querySelectorAll<HTMLElement>('button,.q-btn,[role="button"],a'));
+            const target=candidates.find(element=>{
+              const rect=element.getBoundingClientRect();const style=getComputedStyle(element);
+              return /^Continuer$/i.test(normalize(element.innerText||element.textContent||''))&&
+                rect.width>0&&rect.height>0&&style.display!=='none'&&style.visibility!=='hidden'&&
+                !element.matches('[disabled],[aria-disabled="true"],.disabled,.q-btn--disable');
+            });
+            if(!target)return false;
+            target.scrollIntoView({block:'center',inline:'center'});
+            target.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerType:'mouse'}));
+            target.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
+            target.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
+            target.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerType:'mouse'}));
+            target.click();return true;
+          }).catch(()=>false);
           if(continued)break;
         }
         if(!continued)await page.waitForTimeout(250);
@@ -926,13 +935,24 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(!continued)throw new Error(`Plafond Total ${card.cardNumber} : bouton Continuer introuvable sur Détails du client`);
       // La deuxième étape peut s'ouvrir sur un autre panneau. Le plafond
       // recherché est exclusivement dans « Produit de la carte ».
-      for(const frame of page.frames()){
-        const product=frame.getByText(/^\s*Produit de la carte\s*$/i).filter({visible:true}).first();
-        if(await product.isVisible({timeout:500}).catch(()=>false)){
-          await product.click({force:true,timeout:3_000}).catch(()=>undefined);
-          break;
+      let productOpened=false;
+      const productDeadline=Date.now()+10_000;
+      while(!productOpened&&Date.now()<productDeadline){
+        for(const frame of page.frames()){
+          productOpened=await frame.evaluate(()=>{
+            const normalize=(value:string)=>value.replace(/[\u00a0\u202f]/g,' ').replace(/\s+/g,' ').trim();
+            const node=Array.from(document.querySelectorAll<HTMLElement>('button,a,[role="button"],.q-stepper__tab,.q-tab,body *'))
+              .find(element=>/^Produit de la carte$/i.test(normalize(element.innerText||element.textContent||''))&&
+                element.getBoundingClientRect().width>0&&element.getBoundingClientRect().height>0);
+            if(!node)return false;
+            const target=node.closest<HTMLElement>('button,a,[role="button"],.q-stepper__tab,.q-tab')??node;
+            target.click();return true;
+          }).catch(()=>false);
+          if(productOpened)break;
         }
+        if(!productOpened)await page.waitForTimeout(250);
       }
+      if(!productOpened)throw new Error(`Plafond Total ${card.cardNumber} : étape Produit de la carte introuvable après Continuer`);
       await Promise.all(page.frames().map(frame=>frame.getByText(/^\s*Limite de\s*$/i).first()
         .waitFor({state:'visible',timeout:10_000}).catch(()=>undefined)));
       const productText=(await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>'')))).join(' ');

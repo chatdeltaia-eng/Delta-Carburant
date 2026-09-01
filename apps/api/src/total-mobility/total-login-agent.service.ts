@@ -936,6 +936,23 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           target.click();
         }).then(()=>true).catch(()=>false);if(opened)break;
       }
+      // Lorsque la ligne est située plus bas dans les 40 résultats, l'en-tête
+      // Modifier peut être hors viewport et l'alignement géométrique devient
+      // impossible. Dans la grille Total observée, la dernière cellule est la
+      // case « Mise en opposition temporaire » et l'avant-dernière est le
+      // crayon Modifier. Utiliser cette structure sur la ligne déjà cochée.
+      if(!opened){
+        const cells=row.locator('td, [role="cell"], mat-cell');
+        const count=await cells.count();
+        if(count>=2){
+          const editCell=cells.nth(count-2);
+          await editCell.scrollIntoViewIfNeeded().catch(()=>undefined);
+          const control=editCell.locator('button,a,[role="button"],[tabindex],.q-icon,mat-icon,svg,img,i,[class*="edit" i]')
+            .filter({visible:true}).first();
+          opened=await (await control.isVisible({timeout:500}).catch(()=>false)?control:editCell)
+            .click({force:true,timeout:3_000}).then(()=>true).catch(()=>false);
+        }
+      }
       // Sur le portail actuel, Modifier se trouve parfois dans la barre
       // d'actions au-dessus du tableau et n'apparaît qu'après sélection de
       // la ligne. Utiliser ce bouton global si la ligne n'en contient pas.

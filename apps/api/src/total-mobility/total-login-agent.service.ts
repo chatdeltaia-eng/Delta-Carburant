@@ -327,9 +327,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       ? 'Extraction des transactions du client sélectionné…'
       : 'Extraction complète des transactions de tous les clients…');
     const selectedCompanyId=this.requestedCompanyId;
-    const clients=selectedCompanyId
-      ? [await this.extractSelectedCompany(selectedCompanyId)]
-      : await this.extractAllClientCards();
+    const clients=await this.extractClientsWithSessionRecovery(selectedCompanyId);
     const summary=this.summarizeClientResults(clients);
     if(summary.fetched<1)
       throw new Error('Total n’a renvoyé aucune transaction : actualisation refusée');
@@ -360,14 +358,41 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // La passe précédente se termine sur le dernier client. Revenir au
       // client configuré avant chaque cycle empêche d'attribuer les données du
       // dernier client à DELTA CUISINE lors de la prochaine extraction.
-      const clients=this.requestedCompanyId
-        ? [await this.extractSelectedCompany(this.requestedCompanyId)]
-        : await this.extractAllClientCards();
+      const clients=await this.extractClientsWithSessionRecovery(this.requestedCompanyId);
       const summary=this.summarizeClientResults(clients);
       if(summary.fetched<1)
         throw new Error('Total n’a renvoyé aucune transaction : données existantes conservées');
       this.statusValue={...this.status('SUCCESS',`${summary.visible} transaction(s) Total actualisée(s) automatiquement`),result:{clients,...summary,live:true}};
     }catch(error){this.fail(error);}
+  }
+
+  private async extractClientsWithSessionRecovery(companyId?:string){
+    let lastError:unknown;
+    for(let attempt=1;attempt<=3;attempt++){
+      try{
+        return companyId
+          ?[await this.extractSelectedCompany(companyId)]
+          :await this.extractAllClientCards();
+      }catch(error){
+        lastError=error;
+        const page=this.page;
+        // Une session réellement fermée ou revenue à l'authentification exige
+        // une reconnexion. Les erreurs de grille/navigation, elles, doivent
+        // être reprises dans la session courante sans fermer Chromium.
+        if(!page||page.isClosed()||/customer-selection|\/oauth2|gigya|login|access-?denied/i.test(page.url()))throw error;
+        if(attempt>=3)break;
+        this.setStatus('EXTRACTING',`Incident d'interface Total — reprise ${attempt}/2 dans la même session…`);
+        await page.keyboard.press('Escape').catch(()=>undefined);
+        for(const frame of page.frames())await frame.evaluate(()=>{
+          for(const dialog of document.querySelectorAll<HTMLElement>('.q-dialog[aria-hidden="true"]')){
+            dialog.style.pointerEvents='none';
+            for(const backdrop of dialog.querySelectorAll<HTMLElement>('.q-dialog__backdrop'))backdrop.style.pointerEvents='none';
+          }
+        }).catch(()=>undefined);
+        await page.waitForTimeout(750);
+      }
+    }
+    throw lastError;
   }
 
   private summarizeClientResults(clients:unknown[]){

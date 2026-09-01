@@ -25,9 +25,14 @@ describe('TotalMobilityService multi-company session sync', () => {
     const service=new TotalMobilityService({} as never,{} as never);
     const official=(value:string)=>(service as unknown as {officialTotalCardNumber(value:string):string})
       .officialTotalCardNumber(value);
+    const fromPayment=(value:string)=>(service as unknown as {cardNumberFromPaymentMethod(value:string):string})
+      .cardNumberFromPaymentMethod(value);
     expect(official('0033')).toBe('0033');
-    expect(official('0033 0 8')).toBe('0033');
-    expect(official('004108')).toBe('0041');
+    expect(official('1')).toBe('0001');
+    expect(official('02')).toBe('0002');
+    expect(official('790351010836001503')).toBe('1503');
+    expect(fromPayment('0033 0 8')).toBe('0033');
+    expect(fromPayment('004108')).toBe('0041');
   });
 
   it('conserve un plafond Total explicitement lu à zéro lors de la fusion',()=>{

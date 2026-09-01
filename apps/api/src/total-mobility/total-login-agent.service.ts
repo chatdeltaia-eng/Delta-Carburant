@@ -749,10 +749,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // Le tableau « Gérer » n'expose pas le plafond mensuel. Total le place
       // uniquement dans Modifier > Produit de la carte > Limite. Lire ce
       // détail sans enregistrer la fiche, puis le rattacher au numéro de carte.
-      const detailedLimits=await this.extractCardProductLimits(result).catch(error=>{
-        this.logger.warn(`Plafonds Total : ${error instanceof Error?error.message:String(error)}`);
-        return new Map<string,number>();
-      });
+      const detailedLimits=await this.extractCardProductLimits(result);
       result=result.map(card=>detailedLimits.has(card.cardNumber)
         ?{...card,monthlyLimit:detailedLimits.get(card.cardNumber),raw:{...(card.raw??{}),monthlyLimitExtracted:true}}
         :{...card,raw:{...(card.raw??{}),monthlyLimitExtracted:false}});
@@ -809,7 +806,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           .filter({hasText:new RegExp(`(?:^|\\D)${card.cardNumber}(?:\\D|$)`) }).first();
         if(await candidate.isVisible({timeout:700}).catch(()=>false)){row=candidate;break;}
       }
-      if(!row){this.logger.warn(`Plafond Total ${card.cardNumber} : ligne introuvable`);continue;}
+      if(!row)throw new Error(`Plafond Total ${card.cardNumber} : ligne introuvable après recherche par moyen de paiement`);
       const radio=row.locator('input[type="radio"], [role="radio"], mat-radio-button').first();
       if(await radio.isVisible({timeout:300}).catch(()=>false))await radio.click({force:true});
       // La grille Total utilise une colonne « Modifier » dont l'icône crayon
@@ -844,8 +841,15 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           if(opened)break;
         }
       }
-      if(!opened){this.logger.warn(`Plafond Total ${card.cardNumber} : bouton Modifier introuvable`);continue;}
+      if(!opened)throw new Error(`Plafond Total ${card.cardNumber} : bouton Modifier introuvable`);
       await page.waitForURL(/\/cards\/edit-card/i,{timeout:10_000}).catch(()=>undefined);
+      if(card.holderName?.trim()){
+        const expected=card.holderName.toUpperCase().replace(/[^A-Z0-9]/g,'');
+        const firstPage=(await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>''))))
+          .join(' ').toUpperCase().replace(/[^A-Z0-9]/g,'');
+        if(expected.length>=3&&!firstPage.includes(expected))
+          throw new Error(`Plafond Total ${card.cardNumber} : la fiche Modifier ouverte ne correspond pas au titulaire ${card.holderName}`);
+      }
       // La première étape contient « Limite de Crédit » (ligne de crédit du
       // client, ex. 16 000 TND). Ce n'est jamais le plafond de la carte. Le
       // parcours officiel impose Continuer avant d'ouvrir Produit de la carte.
@@ -856,7 +860,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           continued=await next.click({force:true,timeout:3_000}).then(()=>true).catch(()=>false);break;
         }
       }
-      if(!continued){this.logger.warn(`Plafond Total ${card.cardNumber} : bouton Continuer introuvable`);continue;}
+      if(!continued)throw new Error(`Plafond Total ${card.cardNumber} : bouton Continuer introuvable sur Détails du client`);
       // La deuxième étape peut s'ouvrir sur un autre panneau. Le plafond
       // recherché est exclusivement dans « Produit de la carte ».
       for(const frame of page.frames()){
@@ -868,6 +872,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
       await Promise.all(page.frames().map(frame=>frame.getByText(/^\s*Limite de\s*$/i).first()
         .waitFor({state:'visible',timeout:10_000}).catch(()=>undefined)));
+      const productText=(await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>'')))).join(' ');
+      if(!/Limite de/i.test(productText)||!/(?:^|\s)TND(?:\s|$)/i.test(productText)||!/(?:^|\s)Mois(?:\s|$)/i.test(productText))
+        throw new Error(`Plafond Total ${card.cardNumber} : restriction Limite de / TND / Mois incomplète sur Produit de la carte`);
       let amount:number|undefined;
       for(const frame of page.frames()){
         const values=await frame.locator('body').evaluate(()=>{
@@ -913,7 +920,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // excluant explicitement toute limite de crédit client.
       if(amount===undefined)amount=this.cardProductLimitFromUnknown(detailPayloads);
       if(amount!==undefined){limits.set(card.cardNumber,amount);this.logger.log(`Plafond Total ${card.cardNumber} : ${amount} TND`);}
-      else this.logger.warn(`Plafond Total ${card.cardNumber} : valeur introuvable dans Produit de la carte`);
+      else throw new Error(`Plafond Total ${card.cardNumber} : valeur introuvable dans Produit de la carte`);
       // Revenir sans sauvegarder : l'agent est strictement en lecture seule.
       for(const frame of page.frames()){
         const cancel=frame.getByRole('button',{name:/^\s*annuler\s*$/i}).first();
@@ -1345,12 +1352,13 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     const [company]=await this.db.query<{id:string}>(`SELECT id FROM company WHERE active AND upper(code)=$1 LIMIT 1`,[code]);
     if(!company)throw new Error(`Société Delta ${code??clientName} introuvable`);
     this.setStatus('EXTRACTING',`Total ${clientName} : extraction automatique des cartes et plafonds…`);
-    const cardRows=await this.extractCardStatuses().catch(error=>{
-      this.logger.warn(`Cartes Total ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
-    });
-    const cards=cardRows.length
-      ?await this.total.importCardStatuses(cardRows,this.actor,clientName)
-      :{extracted:0,error:`Aucune carte visible (${this.lastCardDiagnostic})`};
+    // Les cartes et leurs plafonds constituent le référentiel parent. Ne
+    // jamais poursuivre vers les transactions lorsque cette étape échoue :
+    // cela recréerait des pseudo-cartes à partir de simples suffixes.
+    const cardRows=await this.extractCardStatuses();
+    if(!cardRows.length)throw new Error(`Aucune carte Total visible pour ${clientName} (${this.lastCardDiagnostic})`);
+    const cards=await this.total.importCardStatuses(cardRows,this.actor,clientName);
+    this.setStatus('EXTRACTING',`Total ${clientName} : cartes et plafonds validés, extraction des transactions…`);
     const transactions=await this.extractCurrentClientTransactions(clientName,company.id);
     const driverRows=await this.extractDrivers().catch(error=>{
       this.logger.warn(`Chauffeurs Total ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
@@ -1864,10 +1872,14 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const number=cardNumber??paymentNumber;
       const status=read(/card.*status|status.*card|payment.*method.*status|status.*payment.*method|statut|status|state/i);
       const paymentMethodType=read(/payment.*method.*type|type.*payment.*method|type.*mode.*paiement|mode.*paiement.*type/i);
-      if((typeof number==='string'||typeof number==='number')&&(typeof status==='string'||typeof status==='number'))
-        result.push({cardNumber:String(cardNumber??paymentNumber??number).replace(/\D/g,'').slice(-4),paymentMethodNumber:String(paymentNumber??''),paymentMethodType:String(paymentMethodType??''),status:String(status),
+      if((typeof number==='string'||typeof number==='number')&&(typeof status==='string'||typeof status==='number')){
+        const cardDigits=String(cardNumber??'').replace(/\D/g,'');
+        const paymentDigits=String(paymentNumber??'').replace(/\D/g,'');
+        const official=(cardDigits?cardDigits.slice(-4):paymentDigits.slice(0,4)).padStart(4,'0');
+        result.push({cardNumber:official,paymentMethodNumber:String(paymentNumber??''),paymentMethodType:String(paymentMethodType??''),status:String(status),
           holderName:String(read(/holder|titulaire|beneficiary|owner/i)??''),registration:String(read(/registration|immatriculation|plate/i)??''),
           expiresOn:this.parseTotalDate(read(/expir|expiry|valid.*until/i)),monthlyLimit:this.parseAmount(read(/monthly.*limit|card.*limit|plafond|ceiling/i)),raw:row});
+      }
       Object.values(row).forEach(visit);
     };
     visit(input);return result;
@@ -1920,7 +1932,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private uniqueCards(cards:RemoteCardStatus[]){
     const merged=new Map<string,RemoteCardStatus>();
     for(const card of cards){
-      const digits=card.cardNumber.replace(/\D/g,'');
+      const rawDigits=card.cardNumber.replace(/\D/g,'');
+      const digits=rawDigits&&rawDigits.length<=4?rawDigits.padStart(4,'0'):rawDigits.slice(-4);
       const paymentDigits=String(card.paymentMethodNumber??'').replace(/\D/g,'');
       const corroborated=paymentDigits.length>4||Boolean(card.registration?.trim())||Boolean(card.holderName?.trim())||Boolean(card.expiresOn);
       // Les numéros de carte Total visibles dans « Gérer » ont exactement

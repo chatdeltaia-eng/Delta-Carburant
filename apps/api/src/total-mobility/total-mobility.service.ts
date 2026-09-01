@@ -253,7 +253,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
       }
       if(!company)throw new BadRequestException(`Société introuvable pour le client Total ${totalName||'sélectionné'}`);
       const uniqueRemoteNumbers=[...new Set(cards.map(card=>
-        this.officialTotalCardNumber(card.cardNumber)||this.officialTotalCardNumber(card.paymentMethodNumber??''),
+        this.officialTotalCardNumber(card.cardNumber)||this.cardNumberFromPaymentMethod(card.paymentMethodNumber??''),
       ).filter(Boolean))];
       const paginatorTotals=cards.map(card=>Number(card.raw?.expectedTotal)).filter(value=>Number.isInteger(value)&&value>0);
       const paginatorTotal=paginatorTotals.length?Math.max(...paginatorTotals):undefined;
@@ -272,7 +272,7 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
         // (ex. 0033) et « Numéro du mode de paiement » (ex. 0033 0 8).
         // Le premier identifie la fiche carte ; les transactions portent le
         // second et sont rapprochées par ses quatre derniers chiffres (3308).
-        const number=this.officialTotalCardNumber(card.cardNumber)||this.officialTotalCardNumber(paymentNumber);
+        const number=this.officialTotalCardNumber(card.cardNumber)||this.cardNumberFromPaymentMethod(paymentNumber);
         const paymentKey=this.canonicalTotalCardNumber(paymentNumber);
         const remoteStatus=card.status.trim().toUpperCase();
         if(!number||!remoteStatus)continue;
@@ -621,7 +621,11 @@ export class TotalMobilityService implements OnModuleInit, OnModuleDestroy {
   private normalizeCardNumber(value:string){return value.replace(/[^0-9]/g,'');}
   private officialTotalCardNumber(value:string){
     const digits=this.normalizeCardNumber(value);
-    return digits.length>=4?digits.slice(0,4):'';
+    return digits&&digits.length<=4?digits.padStart(4,'0'):digits.slice(-4);
+  }
+  private cardNumberFromPaymentMethod(value:string){
+    const digits=this.normalizeCardNumber(value);
+    return digits?digits.slice(0,4).padStart(4,'0'):'';
   }
   private canonicalTotalCardNumber(value:string){
     const digits=this.normalizeCardNumber(value);

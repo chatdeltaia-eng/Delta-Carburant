@@ -384,7 +384,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         // une reconnexion. Les erreurs de grille/navigation, elles, doivent
         // être reprises dans la session courante sans fermer Chromium.
         if(!page||page.isClosed()||/customer-selection|\/oauth2|gigya|login|access-?denied/i.test(page.url()))throw error;
-        this.setStatus('EXTRACTING',`Incident d'interface Total — reprise ${attempt} dans la même session, aucune carte abandonnée…`);
+        const message=error instanceof Error?error.message:String(error);
+        const [progress]=await this.db.query<{count:number}>(`SELECT count(*)::int count
+          FROM total_card_limit_extraction_checkpoint WHERE client_name='DELTA CUISINE'`).catch(()=>[]);
+        const completed=Number(progress?.count??0);
+        this.setStatus('EXTRACTING',`Reprise ${attempt} dans la même session — ${completed}/40 plafonds DC conservés — blocage : ${message}`);
+        this.logger.warn(`Reprise Total ${attempt}, checkpoints DC ${completed}/40 : ${message}`);
         await page.keyboard.press('Escape').catch(()=>undefined);
         for(const frame of page.frames())await frame.evaluate(()=>{
           for(const dialog of document.querySelectorAll<HTMLElement>('.q-dialog[aria-hidden="true"]')){

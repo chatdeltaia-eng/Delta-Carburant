@@ -959,8 +959,34 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
             .map(field=>field.value).filter(Boolean),
         })).catch(()=>({text:'',values:[]})))));
         const firstPage=normalizeIdentity(firstPageParts.flatMap(part=>[part.text,...part.values]).join(' '));
-        if(expected.length>=3&&!firstPage.includes(expected))
-          throw new Error(`Plafond Total ${card.cardNumber} : la fiche Modifier ouverte ne correspond pas au titulaire ${card.holderName}`);
+        let observedHolder='';
+        for(const frame of page.frames()){
+          observedHolder=await frame.locator('body').evaluate(()=>{
+            const normalize=(value:string)=>value.replace(/[\u00a0\u202f]/g,' ').replace(/\s+/g,' ').trim();
+            const labels=Array.from(document.querySelectorAll<HTMLElement>('label,.q-field__label,.mat-form-field-label,div,span'))
+              .filter(node=>/^Nom du porteur$/i.test(normalize(node.textContent??'')));
+            for(const label of labels){
+              const field=label.closest<HTMLElement>('.q-field,mat-form-field,.mat-mdc-form-field,.form-group,[class*="field"]')
+                ??label.parentElement;
+              const input=field?.querySelector<HTMLInputElement>('input,textarea');
+              if(input?.value.trim())return input.value.trim();
+              const own=normalize(field?.textContent??'').replace(/^Nom du porteur\s*/i,'').trim();
+              if(own)return own;
+              const labelBox=label.getBoundingClientRect();
+              const nearest=Array.from(document.querySelectorAll<HTMLInputElement>('input'))
+                .filter(candidate=>candidate.value.trim()&&Math.abs(candidate.getBoundingClientRect().top-labelBox.top)<70)
+                .sort((left,right)=>Math.abs(left.getBoundingClientRect().left-labelBox.right)-
+                  Math.abs(right.getBoundingClientRect().left-labelBox.right))[0];
+              if(nearest?.value.trim())return nearest.value.trim();
+            }
+            return '';
+          }).catch(()=>'');
+          if(observedHolder)break;
+        }
+        if(expected.length>=3&&!firstPage.includes(expected)){
+          const observed=observedHolder||'champ introuvable';
+          throw new Error(`Plafond Total ${card.cardNumber} : carte cochée ${checkedCard||'inconnue'}, titulaire attendu ${card.holderName}, titulaire ouvert ${observed}`);
+        }
       }
       this.setStatus('EXTRACTING',`Plafond ${card.cardNumber} — étape 2/6 : fiche Modifier et titulaire vérifiés`);
       // La première étape contient « Limite de Crédit » (ligne de crédit du

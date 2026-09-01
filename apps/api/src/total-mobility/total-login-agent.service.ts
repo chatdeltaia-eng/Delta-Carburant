@@ -878,8 +878,16 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         if(gridAttempt>0){await page.keyboard.press('Escape').catch(()=>undefined);await page.waitForTimeout(300);}
         completeGrid=await this.setCardRowsPerPage50();
       }
-      if(!completeGrid)
-        throw new Error(`Plafond Total ${card.cardNumber} : impossible de confirmer la grille complète 1–40 sur 40`);
+      if(!completeGrid){
+        // Le contrôle Quasar affiche parfois bien 50 et rend la carte cible,
+        // sans exposer un paginateur lisible par Playwright. Ne pas boucler
+        // sur cette preuve secondaire : la recherche exacte de la ligne, son
+        // numéro et son radio coché constituent les contrôles bloquants juste
+        // après. Si la carte n'est réellement pas rendue, l'erreur « carte
+        // absente » déclenchera alors la reprise utile.
+        this.logger.warn(`Plafond Total ${card.cardNumber} : paginateur 50 non confirmé, vérification directe de la carte`);
+        this.setStatus('EXTRACTING',`Plafond ${card.cardNumber} : vérification directe dans la grille…`);
+      }
       await page.waitForTimeout(200);
       let row:Locator|undefined;
       for(const frame of page.frames()){

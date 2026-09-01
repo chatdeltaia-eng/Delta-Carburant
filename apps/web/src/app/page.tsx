@@ -117,6 +117,8 @@ type Notification = {
   createdAt: string;
 };
 
+type AssistantMessage = { id: string; role: "user" | "assistant"; text: string };
+
 const toNotification = (row: Record<string, unknown>, role: Role): Notification => ({
   id: String(row.id),
   target: role,
@@ -2151,6 +2153,12 @@ export default function Home() {
           />
         )}
       </main>
+      <VoiceAssistant
+        token={token}
+        companyId={selectedClientId??""}
+        cards={cardsForUser}
+        go={(destination)=>{setView(destination);setSearch("")}}
+      />
       {allocationRow && user?.role === "NAJIB_ASSIGNER" && (() => {
         const original = parseNumeric(allocationRow.montant);
         const allocated = parseNumeric(allocationRow.montantReparti);
@@ -2325,6 +2333,114 @@ function WorkflowGuide({
   );
 }
 
+function VoiceAssistant({token,companyId,cards,go}:{token:string;companyId:string;cards:Card[];go:(view:View)=>void}) {
+  const [open,setOpen]=useState(false);
+  const [input,setInput]=useState("");
+  const [listening,setListening]=useState(false);
+  const [busy,setBusy]=useState(false);
+  const [messages,setMessages]=useState<AssistantMessage[]>([
+    {id:"welcome",role:"assistant",text:"Bonjour, je peux vous guider dans l’application et répondre aux questions de consommation mensuelle."},
+  ]);
+  const recognitionRef=useRef<{start:()=>void;stop:()=>void}|null>(null);
+  const bottomRef=useRef<HTMLDivElement>(null);
+  useEffect(()=>bottomRef.current?.scrollIntoView({behavior:"smooth"}),[messages,open]);
+  const say=(text:string)=>{
+    if(typeof window==="undefined"||!("speechSynthesis" in window))return;
+    window.speechSynthesis.cancel();
+    const utterance=new SpeechSynthesisUtterance(text);
+    utterance.lang="fr-FR";
+    utterance.rate=1;
+    window.speechSynthesis.speak(utterance);
+  };
+  const reply=(text:string,voice=true)=>{
+    setMessages(current=>[...current,{id:crypto.randomUUID(),role:"assistant",text}]);
+    if(voice)say(text);
+  };
+  const monthFrom=(value:string)=>{
+    const normalized=normalizedKey(value);
+    const names=["janvier","fevrier","mars","avril","mai","juin","juillet","aout","septembre","octobre","novembre","decembre"];
+    const index=names.findIndex(name=>normalized.includes(name));
+    const yearMatch=normalized.match(/\b(20\d{2})\b/);
+    const now=new Date();
+    return index<0?now.toISOString().slice(0,7):`${yearMatch?.[1]??now.getFullYear()}-${String(index+1).padStart(2,"0")}`;
+  };
+  const destinations:{view:View;words:string[];label:string}[]=[
+    {view:"dashboard",words:["accueil","vue d ensemble","tableau de bord"],label:"la vue d’ensemble"},
+    {view:"transactions",words:["consommation","consommations","transaction","transactions","carburant"],label:"la page Consommations et transactions"},
+    {view:"cards",words:["carte","cartes"],label:"la page Cartes"},
+    {view:"vehicles",words:["vehicule","vehicules","voiture","voitures"],label:"la page Véhicules"},
+    {view:"drivers",words:["chauffeur","chauffeurs"],label:"la page Chauffeurs"},
+    {view:"mileage",words:["kilometrage","kilometrages"],label:"la page Kilométrage"},
+    {view:"anomalies",words:["anomalie","anomalies","alerte","alertes"],label:"la page Anomalies"},
+    {view:"requests",words:["demande","demandes"],label:"la page Demandes"},
+    {view:"reports",words:["rapport","rapports","analyse"],label:"la page Rapports"},
+    {view:"complaints",words:["reclamation","reclamations","aide"],label:"la page Réclamations"},
+    {view:"documents",words:["facture","factures","document","documents"],label:"la page Factures"},
+  ];
+  const submit=async(raw=input)=>{
+    const question=raw.trim();
+    if(!question||busy)return;
+    setInput("");
+    setMessages(current=>[...current,{id:crypto.randomUUID(),role:"user",text:question}]);
+    const normalized=normalizedKey(question);
+    const navigationRequested=["dirige","ouvre","affiche","aller","va a","emmene"].some(word=>normalized.includes(word));
+    const destination=destinations.find(item=>item.words.some(word=>normalized.includes(word)));
+    if(navigationRequested&&destination){
+      go(destination.view);
+      reply(`Je vous dirige vers ${destination.label}.`);
+      return;
+    }
+    if(["consommation","consomme","montant","plafond","depasse"].some(word=>normalized.includes(word))){
+      setBusy(true);
+      try{
+        const month=monthFrom(question);
+        const scope=companyId?`&companyId=${encodeURIComponent(companyId)}`:"";
+        const response=await fetch(`${API}/dashboard/history?month=${month}${scope}`,{headers:{Authorization:`Bearer ${token}`},cache:"no-store"});
+        if(!response.ok)throw new Error();
+        const payload=await response.json() as {amount:number;liters:number;transactions:number;cards:{id:string;card:string;monthlyLimit:number;consumed:number;liters:number;rate:number}[]};
+        const label=new Date(`${month}-01T12:00:00`).toLocaleDateString("fr-FR",{month:"long",year:"numeric"});
+        const digits=question.match(/\b\d{4}\b/)?.[0];
+        if(digits){
+          const card=payload.cards.find(item=>cardLast4(item.card)===digits)||payload.cards.find(item=>cards.find(source=>source.id===item.id&&cardLast4(source.masked_card_number)===digits));
+          if(!card)reply(`Je ne trouve pas la carte ${digits} dans le périmètre sélectionné.`);
+          else reply(`En ${label}, la carte ${digits} a consommé ${Number(card.consumed).toLocaleString("fr-FR",{maximumFractionDigits:3})} dinars, soit ${Number(card.rate).toFixed(1)} pour cent de son plafond de ${Number(card.monthlyLimit).toLocaleString("fr-FR",{maximumFractionDigits:3})} dinars.`);
+        }else{
+          const exceeded=payload.cards.filter(card=>Number(card.monthlyLimit)>0&&Number(card.consumed)>=Number(card.monthlyLimit));
+          reply(`En ${label}, la consommation est de ${Number(payload.amount).toLocaleString("fr-FR",{maximumFractionDigits:3})} dinars et ${Number(payload.liters).toLocaleString("fr-FR",{maximumFractionDigits:2})} litres. ${exceeded.length} carte${exceeded.length>1?"s ont":" a"} atteint ou dépassé le plafond.`);
+        }
+      }catch{reply("Je n’arrive pas à lire les consommations pour le moment. Veuillez réessayer.");}
+      finally{setBusy(false)}
+      return;
+    }
+    reply("Je peux ouvrir une page ou répondre sur une consommation mensuelle. Exemple : « consommation d’août » ou « dirige-moi vers les transactions ». ");
+  };
+  const listen=()=>{
+    if(typeof window==="undefined")return;
+    type RecognitionEvent={results:{[index:number]:{[index:number]:{transcript:string}}}};
+    type Recognition={lang:string;interimResults:boolean;continuous:boolean;onresult:(event:RecognitionEvent)=>void;onend:()=>void;onerror:()=>void;start:()=>void;stop:()=>void};
+    type RecognitionConstructor=new()=>Recognition;
+    const speechWindow=window as typeof window & {SpeechRecognition?:RecognitionConstructor;webkitSpeechRecognition?:RecognitionConstructor};
+    const Constructor=speechWindow.SpeechRecognition??speechWindow.webkitSpeechRecognition;
+    if(!Constructor){reply("La reconnaissance vocale n’est pas disponible dans ce navigateur. Vous pouvez utiliser le champ écrit.",false);return;}
+    const recognition=new Constructor();
+    recognition.lang="fr-FR";recognition.interimResults=false;recognition.continuous=false;
+    recognition.onresult=event=>{const transcript=event.results[0][0].transcript;setInput(transcript);void submit(transcript)};
+    recognition.onend=()=>setListening(false);
+    recognition.onerror=()=>{setListening(false);reply("Je n’ai pas compris. Réessayez ou écrivez votre demande.",false)};
+    recognitionRef.current=recognition;
+    setListening(true);recognition.start();
+  };
+  return <aside className={`${styles.aiAssistant} ${open?styles.aiAssistantOpen:""}`} aria-label="Assistant vocal et écrit">
+    {open&&<section className={styles.aiPanel}>
+      <header><div><span>✦</span><div><b>Assistant Delta IA</b><small>Vocal et écrit · données du client actif</small></div></div><button type="button" onClick={()=>setOpen(false)} aria-label="Fermer">×</button></header>
+      <div className={styles.aiMessages}>{messages.map(message=><p key={message.id} className={message.role==="user"?styles.aiUser:styles.aiBot}>{message.text}</p>)}{busy&&<p className={styles.aiBot}>Analyse des données…</p>}<div ref={bottomRef}/></div>
+      <form onSubmit={event=>{event.preventDefault();void submit()}}><input value={input} onChange={event=>setInput(event.target.value)} placeholder="Écrivez votre demande…" aria-label="Message à l’assistant"/><button type="button" className={listening?styles.aiListening:""} onClick={()=>listening?recognitionRef.current?.stop():listen()} aria-label="Parler">{listening?"■":"●"}</button><button type="submit" disabled={!input.trim()||busy} aria-label="Envoyer">➤</button></form>
+      <div className={styles.aiExamples}><button onClick={()=>void submit("Dirige-moi vers la page consommation")}>Ouvrir consommations</button><button onClick={()=>void submit("Montant de consommation de ce mois")}>Consommation du mois</button></div>
+    </section>}
+    <button type="button" className={styles.aiLauncher} onClick={()=>setOpen(value=>!value)} aria-expanded={open}><span>{open?"×":"✦"}</span><b>{open?"Fermer":"Assistant IA"}</b><small>Voix + texte</small></button>
+  </aside>;
+}
+
 function Dashboard({
   token,
   companyId,
@@ -2385,7 +2501,8 @@ function Dashboard({
   const officialMonthlyConsumed = Number(history?.amount??summary.officialMonthAmount ??
     activeCards.reduce((sum, card) => sum + Number(card.consumed_amount ?? 0), 0));
   const utilization = activeMonthlyLimit ? Math.round((officialMonthlyConsumed / activeMonthlyLimit) * 100) : 0;
-  const cardsAtRisk = activeCards.filter((card) => Number(card.consumption_rate ?? 0) >= 80);
+  const periodActiveCards = periodCards.filter((card) => ["ACTIVE","DISTRIBUTED","ASSIGNED"].includes(card.status));
+  const cardsAtRisk = periodActiveCards.filter((card) => Number(card.consumption_rate ?? 0) >= 80);
   const openAnomalies = Number(analytics?.openAnomalies ?? 0);
   const billingMismatches = Number(analytics?.billingMismatches ?? 0);
   return (
@@ -2409,7 +2526,14 @@ function Dashboard({
             placeholder="Carte, bénéficiaire, véhicule, société…"
           />
         </div>
-        <CardTable cards={overviewCards} transactions={transactions} user={user} edit={edit} full />
+        <CardTable
+          cards={overviewCards}
+          transactions={transactions}
+          user={user}
+          edit={edit}
+          full
+          consumptionLabel={new Date(`${historyMonth}-01T12:00:00`).toLocaleDateString("fr-FR",{month:"long",year:"numeric"})}
+        />
       </section>
       <section className={styles.dashboardActions}>
         <div className={styles.panel}>
@@ -3437,12 +3561,14 @@ function CardTable({
   user,
   edit,
   full = false,
+  consumptionLabel = "mois en cours",
 }: {
   cards: Card[];
   transactions: Row[];
   user: User;
   edit: (c: Card) => void;
   full?: boolean;
+  consumptionLabel?: string;
 }) {
   const [page,setPage]=useState(1);
   const [pageSize,setPageSize]=useState(10);
@@ -3500,7 +3626,7 @@ function CardTable({
               <th>VÉHICULE</th>
               <th>EXPIRATION</th>
               <th>ANCIENNE → NOUVELLE</th>
-              <th>PLAFOND / CONSOMMATION TOTALE</th>
+              <th>PLAFOND / CONSOMMATION DU MOIS</th>
               <th>STATUT</th>
               <th>RESPONSABLE ACTUEL</th>
               <th>ACTION</th>
@@ -3514,7 +3640,6 @@ function CardTable({
               // Le plafond est mensuel : le cumul affiché doit donc provenir du
               // calcul mensuel de l'API, et non de toutes les lignes chargées.
               const consumed = Number(c.consumed_amount ?? 0);
-              const totalConsumed = Number(c.total_consumed_amount ?? consumed);
               const allocations = allocationDetails(cardTransactions);
               const allocated = allocations.reduce((sum, item) => sum + item.amount, 0);
               const rate = cardRate(c);
@@ -3568,9 +3693,8 @@ function CardTable({
                       <span style={{ width: `${rate}%` }} />
                     </div>
                     <small>
-                      Ce mois : <b>{consumed.toLocaleString("fr-FR")} TND</b>
+                      {consumptionLabel} : <b>{consumed.toLocaleString("fr-FR")} TND</b>
                       {" · "}Solde : <b>{Math.max(0, c.monthly_limit-consumed).toLocaleString("fr-FR")} TND</b>
-                      {" · "}Cumul : {totalConsumed.toLocaleString("fr-FR")} TND
                     </small>
                     {(isLimitReached || isLimitWarning || isNajibLimitWarning) && (
                       <span className={styles.limitWarningBadge}>

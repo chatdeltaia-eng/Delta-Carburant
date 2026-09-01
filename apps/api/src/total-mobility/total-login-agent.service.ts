@@ -807,7 +807,18 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         String(card.paymentMethodNumber??'').replace(/\D/g,'')].join('|');
       const holderKey=String(card.holderName??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'')
         .toUpperCase().replace(/[^A-Z0-9]/g,'');
-      const checkpoint=this.cardLimitCheckpoint.get(checkpointKey);
+      let checkpoint=this.cardLimitCheckpoint.get(checkpointKey);
+      if(!checkpoint){
+        const [stored]=await this.db.query<{amount:string;holder_key:string}>(
+          `SELECT amount::text,holder_key FROM total_card_limit_extraction_checkpoint WHERE checkpoint_key=$1 LIMIT 1`,
+          [checkpointKey],
+        );
+        const storedAmount=Number(stored?.amount);
+        if(stored&&Number.isFinite(storedAmount)){
+          checkpoint={amount:storedAmount,holder:stored.holder_key};
+          this.cardLimitCheckpoint.set(checkpointKey,checkpoint);
+        }
+      }
       if(checkpoint&&checkpoint.holder===holderKey){
         limits.set(card.cardNumber,checkpoint.amount);
         this.setStatus('EXTRACTING',`Plafonds Total : carte ${cardIndex+1}/${cards.length} — ${card.cardNumber} déjà validée, reprise sans doublon`);
@@ -1185,6 +1196,14 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(amount!==undefined){
         limits.set(card.cardNumber,amount);this.logger.log(`Plafond Total ${card.cardNumber} : ${amount} TND`);
         this.cardLimitCheckpoint.set(checkpointKey,{amount,holder:holderKey});
+        await this.db.query(`INSERT INTO total_card_limit_extraction_checkpoint(
+          checkpoint_key,client_name,card_number,payment_method_number,holder_key,amount,updated_at)
+          VALUES($1,$2,$3,$4,$5,$6,now())
+          ON CONFLICT(checkpoint_key) DO UPDATE SET holder_key=excluded.holder_key,
+            amount=excluded.amount,updated_at=now()`,[
+          checkpointKey,this.activeClientName??'',card.cardNumber,
+          String(card.paymentMethodNumber??'').replace(/\D/g,''),holderKey,amount,
+        ]);
         this.setStatus('EXTRACTING',`Plafond ${card.cardNumber} — étape 5/6 : Limite de = ${amount} TND`);
       }
       else throw new Error(`Plafond Total ${card.cardNumber} : valeur introuvable dans Produit de la carte`);
@@ -1717,6 +1736,13 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(`Véhicules Total ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
     });
     const vehicles=vehicleRows.length?await this.total.importVehicles(vehicleRows,this.actor,clientName):{received:0};
+    // Le client entier est maintenant validé et importé. Les checkpoints ne
+    // sont plus nécessaires ; le prochain cycle relira volontairement Total.
+    await this.db.query(`DELETE FROM total_card_limit_extraction_checkpoint WHERE client_name=$1`,[
+      clientName.trim().toUpperCase(),
+    ]);
+    for(const key of this.cardLimitCheckpoint.keys())if(key.startsWith(`${clientName.trim().toUpperCase()}|`))
+      this.cardLimitCheckpoint.delete(key);
     return {client:clientName,transactions,cards,drivers,vehicles};
   }
 

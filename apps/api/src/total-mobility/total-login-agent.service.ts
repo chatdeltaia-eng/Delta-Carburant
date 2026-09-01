@@ -952,7 +952,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           const option=frame.locator('[role="option"], .q-menu .q-item, mat-option')
             .filter({hasText:/^\s*50\s*$/}).filter({visible:true}).last();
           if(!await option.isVisible({timeout:1_000}).catch(()=>false))continue;
-          await option.click({force:true,timeout:3_000});
+          // L'option Quasar est parfois détachée/recréée pendant son
+          // animation. Un locator.click attend alors indéfiniment son état
+          // stable. Le nœud est déjà visible et résolu : utiliser le clic DOM
+          // natif, exactement comme le gestionnaire q-item du portail.
+          await option.evaluate(element=>(element as HTMLElement).click());
         }
         await frame.waitForTimeout(900);
         if(await this.cardPaginatorShowsCompleteDcInventory())return true;
@@ -983,7 +987,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         await combo.click({force:true,timeout:3_000});await frame.waitForTimeout(300);
         const option=frame.locator('[role="option"], .q-item, mat-option').filter({hasText:/^\s*50\s*$/}).filter({visible:true}).first();
         if(!await option.isVisible({timeout:1_000}).catch(()=>false))continue;
-        await option.click({force:true,timeout:3_000});await frame.waitForTimeout(700);
+        await option.evaluate(element=>(element as HTMLElement).click());await frame.waitForTimeout(700);
         if(await this.cardPaginatorShowsCompleteDcInventory())return true;
       }
     }

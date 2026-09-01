@@ -775,7 +775,21 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // titulaire malgré le radio visuellement coché.
       await this.openManageCardsFromMenu();
       await page.waitForTimeout(600);
-      if(!await this.setCardRowsPerPage50())
+      let completeGrid=false;
+      for(let gridAttempt=0;gridAttempt<3&&!completeGrid;gridAttempt++){
+        // Après Annuler → Oui, Quasar peut conserver brièvement un backdrop
+        // aria-hidden au-dessus du nouveau paginateur. Le neutraliser, fermer
+        // un éventuel menu résiduel, puis refaire le geste 50 lignes.
+        for(const frame of page.frames())await frame.evaluate(()=>{
+          for(const dialog of document.querySelectorAll<HTMLElement>('.q-dialog[aria-hidden="true"]')){
+            dialog.style.pointerEvents='none';
+            for(const backdrop of dialog.querySelectorAll<HTMLElement>('.q-dialog__backdrop'))backdrop.style.pointerEvents='none';
+          }
+        }).catch(()=>undefined);
+        if(gridAttempt>0){await page.keyboard.press('Escape').catch(()=>undefined);await page.waitForTimeout(750);}
+        completeGrid=await this.setCardRowsPerPage50();
+      }
+      if(!completeGrid)
         throw new Error(`Plafond Total ${card.cardNumber} : impossible de confirmer la grille complète 1–40 sur 40`);
       await page.waitForTimeout(500);
       let row:Locator|undefined;
@@ -1145,7 +1159,18 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         if(!confirmedExit)await page.waitForTimeout(250);
       }
       if(!confirmedExit)throw new Error(`Plafond Total ${card.cardNumber} : confirmation Oui introuvable après Annuler`);
-      await page.waitForTimeout(1_000);
+      // Ne pas commencer la carte suivante tant que la confirmation reste
+      // affichée ou que Total n'a pas réellement quitté edit-card.
+      const returnDeadline=Date.now()+15_000;
+      while(Date.now()<returnDeadline){
+        const dialogVisible=(await Promise.all(page.frames().map(frame=>frame.locator('[role="dialog"],.q-dialog,.modal')
+          .filter({visible:true}).count().catch(()=>0)))).some(count=>count>0);
+        if(!dialogVisible&&!/\/cards\/edit-card/i.test(page.url()))break;
+        await page.waitForTimeout(250);
+      }
+      if(/\/cards\/edit-card/i.test(page.url()))
+        throw new Error(`Plafond Total ${card.cardNumber} : Oui n'a pas quitté la fiche Modifier`);
+      await page.waitForTimeout(750);
       this.setStatus('EXTRACTING',`Plafond ${card.cardNumber} — étape 6/6 : Annuler puis Oui confirmés`);
     }
     }finally{page.off('response',detailListener);}

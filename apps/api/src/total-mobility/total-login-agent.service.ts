@@ -891,14 +891,42 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       await page.waitForTimeout(200);
       let row:Locator|undefined;
       for(const frame of page.frames()){
-        const candidates=frame.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row');
-        for(let rowIndex=0;rowIndex<await candidates.count();rowIndex++){
-          const candidate=candidates.nth(rowIndex);
-          const cells=await candidate.locator('td, [role="cell"], mat-cell').allTextContents().catch(()=>[]);
-          const containsOfficialCard=cells.some(value=>value.replace(/\D/g,'').padStart(4,'0')===card.cardNumber);
-          if(!containsOfficialCard)continue;
-          await candidate.scrollIntoViewIfNeeded().catch(()=>undefined);
-          if(await candidate.isVisible({timeout:700}).catch(()=>false)){row=candidate;break;}
+        // La q-table recycle les lignes selon la position verticale. Revenir
+        // d'abord en haut, puis balayer progressivement tous les conteneurs
+        // scrollables jusqu'à rendre la carte cible dans le DOM.
+        await frame.evaluate(()=>{
+          window.scrollTo(0,0);
+          for(const element of document.querySelectorAll<HTMLElement>(
+            '.q-table__middle,.q-virtual-scroll,.q-virtual-scroll__content,[role="grid"],[role="table"],main',
+          ))element.scrollTop=0;
+        }).catch(()=>undefined);
+        for(let sweep=0;sweep<60&&!row;sweep++){
+          const candidates=frame.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row');
+          for(let rowIndex=0;rowIndex<await candidates.count();rowIndex++){
+            const candidate=candidates.nth(rowIndex);
+            const cells=await candidate.locator('td, [role="cell"], mat-cell').allTextContents().catch(()=>[]);
+            const containsOfficialCard=cells.some(value=>value.replace(/\D/g,'').padStart(4,'0')===card.cardNumber);
+            if(!containsOfficialCard)continue;
+            await candidate.scrollIntoViewIfNeeded().catch(()=>undefined);
+            if(await candidate.isVisible({timeout:300}).catch(()=>false)){row=candidate;break;}
+          }
+          if(row)break;
+          const advanced=await frame.evaluate(()=>{
+            const elements=Array.from(document.querySelectorAll<HTMLElement>(
+              '.q-table__middle,.q-virtual-scroll,[role="grid"],[role="table"],main',
+            )).filter(element=>element.scrollHeight>element.clientHeight+2);
+            let changed=false;
+            for(const element of elements){
+              const before=element.scrollTop;
+              element.scrollTop=Math.min(element.scrollHeight,element.scrollTop+Math.max(160,element.clientHeight*.7));
+              if(element.scrollTop!==before)changed=true;
+            }
+            const beforeWindow=window.scrollY;
+            window.scrollBy(0,Math.max(160,window.innerHeight*.6));
+            return changed||window.scrollY!==beforeWindow;
+          }).catch(()=>false);
+          if(!advanced)break;
+          await page.waitForTimeout(100);
         }
         if(row)break;
       }

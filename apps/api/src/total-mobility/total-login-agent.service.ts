@@ -367,21 +367,18 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async extractClientsWithSessionRecovery(companyId?:string){
-    let lastError:unknown;
-    for(let attempt=1;attempt<=3;attempt++){
+    for(let attempt=1;;attempt++){
       try{
         return companyId
           ?[await this.extractSelectedCompany(companyId)]
           :await this.extractAllClientCards();
       }catch(error){
-        lastError=error;
         const page=this.page;
         // Une session réellement fermée ou revenue à l'authentification exige
         // une reconnexion. Les erreurs de grille/navigation, elles, doivent
         // être reprises dans la session courante sans fermer Chromium.
         if(!page||page.isClosed()||/customer-selection|\/oauth2|gigya|login|access-?denied/i.test(page.url()))throw error;
-        if(attempt>=3)break;
-        this.setStatus('EXTRACTING',`Incident d'interface Total — reprise ${attempt}/2 dans la même session…`);
+        this.setStatus('EXTRACTING',`Incident d'interface Total — reprise ${attempt} dans la même session, aucune carte abandonnée…`);
         await page.keyboard.press('Escape').catch(()=>undefined);
         for(const frame of page.frames())await frame.evaluate(()=>{
           for(const dialog of document.querySelectorAll<HTMLElement>('.q-dialog[aria-hidden="true"]')){
@@ -389,10 +386,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
             for(const backdrop of dialog.querySelectorAll<HTMLElement>('.q-dialog__backdrop'))backdrop.style.pointerEvents='none';
           }
         }).catch(()=>undefined);
-        await page.waitForTimeout(750);
+        await page.waitForTimeout(Math.min(2_000,500+attempt*100));
       }
     }
-    throw lastError;
   }
 
   private summarizeClientResults(clients:unknown[]){
@@ -1306,15 +1302,21 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const text=await frame.locator('.q-table__bottom, .mat-paginator, [class*="paginator"], body')
         .allTextContents().catch(()=>[]);
       const normalized=text.join(' ').replace(/[\u00a0\u202f]/g,' ').replace(/\s+/g,' ').trim();
+      const paginatorTokens=normalized.match(/\d+|sur|of/gi)?.map(token=>token.toLowerCase())??[];
+      const hasRange=(end:number,total:number)=>paginatorTokens.some((token,index)=>token==='1'&&
+        Number(paginatorTokens[index+1])===end&&['sur','of'].includes(paginatorTokens[index+2])&&
+        Number(paginatorTokens[index+3])===total);
       // DC possède exactement 40 cartes VALIDES : preuve stricte 1–40/40.
-      if(this.activeClientName==='DELTA CUISINE'&&
-        /(?:^|\D)1\s*[-–—−]\s*40\s*(?:sur|of)\s*40(?:\D|$)/i.test(normalized))return true;
+      if(this.activeClientName==='DELTA CUISINE'&&hasRange(40,40))return true;
       // Pour les autres sociétés, le total varie. Confirmer que la plage
       // affichée commence à 1 et atteint bien le total propre à ce client
       // (ex. 1–8 sur 8), au lieu de valider immédiatement sans choisir 50.
       if(this.activeClientName!=='DELTA CUISINE'){
-        const range=normalized.match(/(?:^|\D)1\s*[-–—−]\s*(\d+)\s*(?:sur|of)\s*(\d+)(?:\D|$)/i);
-        if(range&&Number(range[1])>=Number(range[2])&&Number(range[2])>0)return true;
+        for(let index=0;index<paginatorTokens.length-3;index++){
+          if(paginatorTokens[index]!=='1'||!['sur','of'].includes(paginatorTokens[index+2]))continue;
+          const end=Number(paginatorTokens[index+1]),total=Number(paginatorTokens[index+3]);
+          if(end>=total&&total>0)return true;
+        }
       }
     }
     return false;

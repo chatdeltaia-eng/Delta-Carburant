@@ -822,12 +822,34 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
       if(!selected)throw new Error(`Plafond Total ${card.cardNumber} : contrôle de sélection de la carte introuvable`);
       await page.waitForTimeout(500);
-      const selectionConfirmed=await row.evaluate(element=>{
+      let selectionConfirmed=await row.evaluate(element=>{
         const input=element.querySelector<HTMLInputElement>('input[type="radio"]');
         const radio=element.querySelector<HTMLElement>('[role="radio"]');
         return Boolean(input?.checked||radio?.getAttribute('aria-checked')==='true'||
           element.querySelector('.q-radio__inner--truthy, .mat-radio-checked, .mat-mdc-radio-checked'));
       }).catch(()=>false);
+      // La q-table recycle ses nœuds lors du scroll. Confirmer également que
+      // l'unique ligne cochée dans la grille porte toujours le numéro attendu.
+      let checkedCard='';
+      for(const frame of page.frames()){
+        const checkedRows=frame.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row');
+        for(let index=0;index<await checkedRows.count();index++){
+          const candidate=checkedRows.nth(index);
+          const checked=await candidate.evaluate(element=>{
+            const input=element.querySelector<HTMLInputElement>('input[type="radio"]');
+            const radio=element.querySelector<HTMLElement>('[role="radio"]');
+            return Boolean(input?.checked||radio?.getAttribute('aria-checked')==='true'||
+              element.querySelector('.q-radio__inner--truthy,.mat-radio-checked,.mat-mdc-radio-checked'));
+          }).catch(()=>false);
+          if(!checked)continue;
+          const values=await candidate.locator('td, [role="cell"], mat-cell').allTextContents().catch(()=>[]);
+          checkedCard=values.map(value=>value.replace(/\D/g,'')).find(value=>/^\d{1,4}$/.test(value))?.padStart(4,'0')??'';
+          if(checkedCard===card.cardNumber)row=candidate;
+          break;
+        }
+        if(checkedCard)break;
+      }
+      selectionConfirmed=selectionConfirmed&&checkedCard===card.cardNumber;
       if(!selectionConfirmed)throw new Error(`Plafond Total ${card.cardNumber} : la carte n'a pas été sélectionnée`);
       // La grille Total utilise une colonne « Modifier » dont l'icône crayon
       // n'a parfois aucun texte/aria-label. Repérer l'index de l'en-tête puis
@@ -854,6 +876,13 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
             const currentRow=gridRows.nth(rowIndex);
             const values=await currentRow.locator('td, [role="cell"], mat-cell').allTextContents().catch(()=>[]);
             if(!values.some(value=>value.replace(/\D/g,'').padStart(4,'0')===card.cardNumber))continue;
+            const isChecked=await currentRow.evaluate(element=>{
+              const input=element.querySelector<HTMLInputElement>('input[type="radio"]');
+              const radio=element.querySelector<HTMLElement>('[role="radio"]');
+              return Boolean(input?.checked||radio?.getAttribute('aria-checked')==='true'||
+                element.querySelector('.q-radio__inner--truthy,.mat-radio-checked,.mat-mdc-radio-checked'));
+            }).catch(()=>false);
+            if(!isChecked)continue;
             const cells=currentRow.locator('td, [role="cell"], mat-cell');
             let editCell:Locator|undefined;let distance=Number.POSITIVE_INFINITY;
             const headerCenter=headerBox.x+headerBox.width/2;

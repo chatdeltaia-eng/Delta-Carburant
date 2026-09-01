@@ -773,40 +773,41 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     };
     page.on('response',detailListener);
     try{
+    // Préparer une seule fois la grille complète. Les itérations suivantes
+    // réutilisent directement les 40 lignes tant que le portail les conserve.
+    await this.openManageCardsFromMenu();
+    await page.waitForTimeout(600);
+    if(!await this.setCardRowsPerPage50())
+      throw new Error('Plafonds Total : impossible de confirmer la grille complète 1–40 sur 40');
+    await page.waitForTimeout(500);
     for(const [cardIndex,card] of cards.entries()){
       this.setStatus('EXTRACTING',`Plafonds Total : carte ${cardIndex+1}/${cards.length} — ${card.cardNumber}`);
       detailPayloads.length=0;
-      await this.openManageCardsFromMenu();
-      await page.waitForTimeout(600);
+      // Une fois « 50 lignes par page » sélectionné, les 40 cartes VALIDE de
+      // Delta Cuisine sont déjà présentes dans la grille. Ne jamais utiliser
+      // le formulaire Recherche ici : il filtre sur le moyen de paiement et
+      // peut masquer une carte (notamment 0001/0002) ou ne rien retourner.
+      if(!await this.cardPaginatorShowsCompleteDcInventory()){
+        await this.openManageCardsFromMenu();
+        await page.waitForTimeout(600);
+        if(!await this.setCardRowsPerPage50())
+          throw new Error(`Plafond Total ${card.cardNumber} : impossible de retrouver la grille complète 1–40 sur 40`);
+        await page.waitForTimeout(500);
+      }
       let row:Locator|undefined;
       for(const frame of page.frames()){
-        // Rechercher la carte afin de ne pas dépendre de la pagination du
-        // tableau. Le portail possède plusieurs filtres : ne remplir que le
-        // champ explicitement associé au numéro de carte/mode de paiement.
-        const inputs=frame.locator('input:visible');
-        let filterFilled=false;
-        for(let index=0;index<await inputs.count();index++){
-          const input=inputs.nth(index);
-          const token=await input.evaluate(element=>[
-            element.getAttribute('placeholder'),element.getAttribute('name'),element.getAttribute('aria-label'),
-            element.closest('label,mat-form-field,.q-field')?.textContent,
-          ].filter(Boolean).join(' ')).catch(()=>'');
-          if(!/num[ée]ro.*(?:carte|mode de paiement)|(?:carte|mode de paiement).*num[ée]ro/i.test(token))continue;
-          // Le filtre Total porte sur le numéro DU MODE DE PAIEMENT, pas sur
-          // le numéro de carte affiché dans la première colonne.
-          await input.fill(String(card.paymentMethodNumber??card.cardNumber).replace(/\s+/g,''));
-          filterFilled=true;break;
+        const candidates=frame.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row');
+        for(let rowIndex=0;rowIndex<await candidates.count();rowIndex++){
+          const candidate=candidates.nth(rowIndex);
+          const cells=await candidate.locator('td, [role="cell"], mat-cell').allTextContents().catch(()=>[]);
+          const containsOfficialCard=cells.some(value=>value.replace(/\D/g,'').padStart(4,'0')===card.cardNumber);
+          if(!containsOfficialCard)continue;
+          await candidate.scrollIntoViewIfNeeded().catch(()=>undefined);
+          if(await candidate.isVisible({timeout:700}).catch(()=>false)){row=candidate;break;}
         }
-        if(!filterFilled)continue;
-        const search=frame.getByRole('button',{name:/^\s*recherche\s*$/i}).first();
-        if(await search.isVisible({timeout:300}).catch(()=>false)){
-          await search.click({force:true}).catch(()=>undefined);await page.waitForTimeout(600);
-        }
-        const candidate=frame.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row')
-          .filter({hasText:new RegExp(`(?:^|\\D)${card.cardNumber}(?:\\D|$)`) }).first();
-        if(await candidate.isVisible({timeout:700}).catch(()=>false)){row=candidate;break;}
+        if(row)break;
       }
-      if(!row)throw new Error(`Plafond Total ${card.cardNumber} : ligne introuvable après recherche par moyen de paiement`);
+      if(!row)throw new Error(`Plafond Total ${card.cardNumber} : carte absente de la grille complète 1–40 sur 40`);
       const radio=row.locator('input[type="radio"], [role="radio"], mat-radio-button').first();
       if(await radio.isVisible({timeout:300}).catch(()=>false))await radio.click({force:true});
       // La grille Total utilise une colonne « Modifier » dont l'icône crayon

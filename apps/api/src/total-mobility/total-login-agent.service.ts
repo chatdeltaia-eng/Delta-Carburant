@@ -836,27 +836,41 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // Dans la q-table actuelle, « Action » peut couvrir plusieurs cellules :
       // l'index des <th> ne correspond donc pas toujours à celui des <td>.
       // Après sélection, aligner géométriquement la colonne Modifier avec la
-      // cellule de la ligne et attendre que son contrôle soit activé.
+      // cellule de la ligne et envoyer un vrai clic Playwright (événement
+      // utilisateur trusted), car Total ignore parfois HTMLElement.click().
       const editDeadline=Date.now()+8_000;
       while(!opened&&Date.now()<editDeadline){
-        opened=await row.evaluate(element=>{
-          const visible=(node:Element)=>{const rect=(node as HTMLElement).getBoundingClientRect();return rect.width>0&&rect.height>0;};
-          const header=Array.from(document.querySelectorAll<HTMLElement>('th, [role="columnheader"]'))
-            .find(node=>visible(node)&&/^\s*Modifier\s*$/i.test((node.textContent??'').replace(/\s+/g,' ')));
-          if(!header)return false;
-          const headerCenter=header.getBoundingClientRect().left+header.getBoundingClientRect().width/2;
-          const cells=Array.from(element.querySelectorAll<HTMLElement>('td, [role="cell"], mat-cell')).filter(visible);
-          const cell=cells.sort((left,right)=>{
-            const leftCenter=left.getBoundingClientRect().left+left.getBoundingClientRect().width/2;
-            const rightCenter=right.getBoundingClientRect().left+right.getBoundingClientRect().width/2;
-            return Math.abs(leftCenter-headerCenter)-Math.abs(rightCenter-headerCenter);
-          })[0];
-          if(!cell)return false;
-          const icon=cell.querySelector<HTMLElement>('button,a,[role="button"],[tabindex],.q-icon,mat-icon,svg,img,i,[class*="edit" i]');
-          const target=icon?.closest<HTMLElement>('button,a,[role="button"],[tabindex]')??icon??cell;
-          if(target.matches('[disabled], [aria-disabled="true"], .disabled, .q-btn--disable'))return false;
-          target.click();return true;
-        }).catch(()=>false);
+        for(const frame of page.frames()){
+          const headers=frame.locator('th, [role="columnheader"]').filter({visible:true});
+          let headerBox:Awaited<ReturnType<Locator['boundingBox']>>=null;
+          for(let headerIndex=0;headerIndex<await headers.count();headerIndex++){
+            const header=headers.nth(headerIndex);
+            if(!/^\s*Modifier\s*$/i.test((await header.innerText().catch(()=>'')).replace(/\s+/g,' ')))continue;
+            headerBox=await header.boundingBox();if(headerBox)break;
+          }
+          if(!headerBox)continue;
+          const gridRows=frame.locator('table tbody tr, mat-row, [role="row"], .mat-mdc-row, .mat-row');
+          for(let rowIndex=0;rowIndex<await gridRows.count();rowIndex++){
+            const currentRow=gridRows.nth(rowIndex);
+            const values=await currentRow.locator('td, [role="cell"], mat-cell').allTextContents().catch(()=>[]);
+            if(!values.some(value=>value.replace(/\D/g,'').padStart(4,'0')===card.cardNumber))continue;
+            const cells=currentRow.locator('td, [role="cell"], mat-cell');
+            let editCell:Locator|undefined;let distance=Number.POSITIVE_INFINITY;
+            const headerCenter=headerBox.x+headerBox.width/2;
+            for(let cellIndex=0;cellIndex<await cells.count();cellIndex++){
+              const candidate=cells.nth(cellIndex);const box=await candidate.boundingBox();if(!box)continue;
+              const nextDistance=Math.abs(box.x+box.width/2-headerCenter);
+              if(nextDistance<distance){distance=nextDistance;editCell=candidate;}
+            }
+            if(!editCell)continue;
+            const control=editCell.locator('button,a,[role="button"],[tabindex],.q-icon,mat-icon,svg,img,i,[class*="edit" i]')
+              .filter({visible:true}).first();
+            opened=await (await control.isVisible({timeout:300}).catch(()=>false)?control:editCell)
+              .click({force:true,timeout:3_000}).then(()=>true).catch(()=>false);
+            if(opened)break;
+          }
+          if(opened)break;
+        }
         if(!opened)await page.waitForTimeout(250);
       }
       let columnEdit:Locator|undefined;

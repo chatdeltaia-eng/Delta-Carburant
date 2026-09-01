@@ -940,6 +940,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         }
         if(row)break;
       }
+      if(!row)row=await this.findCardRowAcrossPages(card.cardNumber);
       if(!row)throw new Error(`Plafond Total ${card.cardNumber} : carte absente de la grille complète 1–40 sur 40`);
       // Total masque l'input radio natif dans un composant Quasar/Material.
       // Cliquer uniquement l'input lorsqu'il est visible laissait donc la
@@ -1398,6 +1399,58 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       }
     }
     return false;
+  }
+
+  private async findCardRowAcrossPages(cardNumber:string):Promise<Locator|undefined>{
+    const page=this.page;if(!page)return undefined;
+    for(const frame of page.frames()){
+      // Repli sans Recherche : réduire à 10 lignes afin que chaque ligne soit
+      // réellement matérialisée, puis parcourir les pages du paginateur.
+      const combos=frame.locator([
+        '.q-table__bottom [role="combobox"]','.q-table__bottom .q-select','.q-table__bottom select',
+        '.mat-paginator [role="combobox"]','.mat-paginator select','[class*="paginator"] [role="combobox"]',
+      ].join(',')).filter({visible:true});
+      for(let index=0;index<await combos.count();index++){
+        const combo=combos.nth(index);
+        if((await combo.evaluate(element=>element.tagName).catch(()=>''))==='SELECT'){
+          const option=combo.locator('option').filter({hasText:/^\s*10\s*$/}).first();
+          if(!await option.count().catch(()=>0))continue;
+          const value=await option.getAttribute('value');
+          await combo.selectOption(value!==null?{value}:{label:'10'});break;
+        }
+        await combo.click({force:true,timeout:3_000}).catch(()=>undefined);await frame.waitForTimeout(200);
+        const option=frame.locator('[role="option"],.q-menu .q-item,.q-item,mat-option')
+          .filter({hasText:/^\s*10\s*$/}).filter({visible:true}).last();
+        if(!await option.isVisible({timeout:700}).catch(()=>false))continue;
+        await option.evaluate(element=>(element as HTMLElement).click());break;
+      }
+      await frame.waitForTimeout(500);
+      for(let pageIndex=0;pageIndex<10;pageIndex++){
+        const rows=frame.locator('table tbody tr,mat-row,[role="row"],.mat-mdc-row,.mat-row');
+        for(let rowIndex=0;rowIndex<await rows.count();rowIndex++){
+          const candidate=rows.nth(rowIndex);
+          const cells=await candidate.locator('td,[role="cell"],mat-cell').allTextContents().catch(()=>[]);
+          if(!cells.some(value=>value.replace(/\D/g,'').padStart(4,'0')===cardNumber))continue;
+          await candidate.scrollIntoViewIfNeeded().catch(()=>undefined);
+          if(await candidate.isVisible({timeout:300}).catch(()=>false))return candidate;
+        }
+        const next=frame.locator('.q-table__bottom button,.mat-paginator button,[class*="paginator"] button')
+          .filter({visible:true});
+        const nextIndex=await next.evaluateAll(elements=>elements.findIndex(element=>{
+          const button=element as HTMLButtonElement;
+          const token=[button.textContent,button.getAttribute('aria-label'),button.getAttribute('title')]
+            .filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();
+          return !button.disabled&&button.getAttribute('aria-disabled')!=='true'&&(
+            /^(chevron_right|navigate_next|keyboard_arrow_right)$/.test((button.textContent??'').trim())||
+            /next page|page suivante|suivant/.test(token)
+          )&&!/last|derni[eè]re/.test(token);
+        })).catch(()=>-1);
+        if(nextIndex<0)break;
+        await next.nth(nextIndex).click({force:true,timeout:3_000}).catch(()=>undefined);
+        await frame.waitForTimeout(500);
+      }
+    }
+    return undefined;
   }
 
   private async cardPageSizeControlShows50(){

@@ -1268,7 +1268,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private async setCardRowsPerPage50(){
     const page=this.page;if(!page)return false;
     // Si une passe précédente a déjà choisi 50, ne pas rouvrir le menu.
-    if(await this.waitForCompleteCardPaginator(700))return true;
+    if(await this.waitForCompleteCardPaginator(700)||await this.cardPageSizeControlShows50())return true;
     for(const frame of page.frames()){
       const paginatorCombos=frame.locator([
         '.q-table__bottom [role="combobox"]','.q-table__bottom .q-select','.q-table__bottom select',
@@ -1293,7 +1293,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           // natif, exactement comme le gestionnaire q-item du portail.
           await option.evaluate(element=>(element as HTMLElement).click());
         }
-        if(await this.waitForCompleteCardPaginator())return true;
+        if(await this.cardPageSizeControlShows50()||await this.waitForCompleteCardPaginator())return true;
       }
       // Le portail observé utilise un select natif avec 5, 7, 10, 15, 20,
       // 25 et 50. selectOption déclenche les mêmes événements que le geste
@@ -1306,7 +1306,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         if(!await option.count().catch(()=>0))continue;
         const value=await option.getAttribute('value');
         await select.selectOption(value!==null?{value}:{label:'50'});
-        if(await this.waitForCompleteCardPaginator())return true;
+        if(await this.cardPageSizeControlShows50()||await this.waitForCompleteCardPaginator())return true;
       }
       // Repli Quasar/Material : retrouver le combobox situé dans le même
       // contrôle que « Lignes par page », puis choisir l'option 50.
@@ -1321,8 +1321,35 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         const option=frame.locator('[role="option"], .q-item, mat-option').filter({hasText:/^\s*50\s*$/}).filter({visible:true}).first();
         if(!await option.isVisible({timeout:1_000}).catch(()=>false))continue;
         await option.evaluate(element=>(element as HTMLElement).click());
-        if(await this.waitForCompleteCardPaginator())return true;
+        if(await this.cardPageSizeControlShows50()||await this.waitForCompleteCardPaginator())return true;
       }
+    }
+    return false;
+  }
+
+  private async cardPageSizeControlShows50(){
+    const page=this.page;if(!page)return false;
+    for(const frame of page.frames()){
+      const selected=await frame.evaluate(()=>{
+        const visible=(element:HTMLElement)=>{
+          const rect=element.getBoundingClientRect(),style=getComputedStyle(element);
+          return rect.width>0&&rect.height>0&&style.display!=='none'&&style.visibility!=='hidden';
+        };
+        const roots=Array.from(document.querySelectorAll<HTMLElement>(
+          '.q-table__bottom,.mat-paginator,[class*="paginator"],[class*="table__bottom"]',
+        )).filter(visible);
+        return roots.some(root=>{
+          const text=(root.innerText||root.textContent||'').replace(/[\u00a0\u202f]/g,' ').replace(/\s+/g,' ').trim();
+          const select=root.querySelector<HTMLSelectElement>('select');
+          if(select&&(select.value==='50'||select.selectedOptions[0]?.textContent?.trim()==='50'))return true;
+          const inputs=Array.from(root.querySelectorAll<HTMLInputElement>('input')).filter(visible);
+          if(inputs.some(input=>input.value.trim()==='50'))return true;
+          const combos=Array.from(root.querySelectorAll<HTMLElement>('[role="combobox"],.q-select,.mat-select')).filter(visible);
+          if(combos.some(combo=>/^50$/.test((combo.innerText||combo.textContent||'').replace(/\s+/g,' ').trim())))return true;
+          return /(?:Lignes par page|Rows per page)\s*:?\s*50\b/i.test(text);
+        });
+      }).catch(()=>false);
+      if(selected)return true;
     }
     return false;
   }

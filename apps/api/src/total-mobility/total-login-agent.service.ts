@@ -806,10 +806,16 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // carte non sélectionnée et le crayon Modifier désactivé. Actionner le
       // contrôle visuel, puis utiliser le clic natif du composant en repli.
       let selected=false;
+      const nativeRadio=row.locator('input[type="radio"]').first();
+      if(await nativeRadio.count().catch(()=>0)){
+        // check() ne se contente pas de peindre le radio : il modifie l'input
+        // natif et émet les événements utilisés par le modèle Vue de Total.
+        selected=await nativeRadio.check({force:true,timeout:3_000}).then(()=>true).catch(()=>false);
+      }
       const visibleRadio=row.locator('.q-radio, mat-radio-button, [role="radio"], label:has(input[type="radio"])')
         .filter({visible:true}).first();
-      if(await visibleRadio.isVisible({timeout:500}).catch(()=>false)){
-        selected=await visibleRadio.click({force:true,timeout:3_000}).then(()=>true).catch(()=>false);
+      if(!selected&&await visibleRadio.isVisible({timeout:500}).catch(()=>false)){
+        selected=await visibleRadio.click({timeout:3_000}).then(()=>true).catch(()=>false);
       }
       if(!selected){
         selected=await row.evaluate(element=>{
@@ -821,7 +827,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         }).catch(()=>false);
       }
       if(!selected)throw new Error(`Plafond Total ${card.cardNumber} : contrôle de sélection de la carte introuvable`);
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(1_000);
       let selectionConfirmed=await row.evaluate(element=>{
         const input=element.querySelector<HTMLInputElement>('input[type="radio"]');
         const radio=element.querySelector<HTMLElement>('[role="radio"]');

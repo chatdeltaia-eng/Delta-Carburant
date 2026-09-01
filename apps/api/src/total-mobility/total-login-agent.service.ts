@@ -1030,7 +1030,42 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private async openManageCardsFromMenu(){
     const page=this.page;if(!page)throw new Error('La session Total est indisponible');
-    if(/\/cards\/manage-card/i.test(page.url()))return;
+    const waitForManageCardsReady=async(timeout=20_000)=>{
+      const deadline=Date.now()+timeout;
+      while(Date.now()<deadline){
+        if(/\/cards\/manage-card/i.test(page.url()))return true;
+        for(const currentFrame of page.frames()){
+          // La version actuelle garde parfois l'URL /tn/cards après le clic
+          // sur Gérer. La grille et ses filtres sont alors la seule preuve
+          // fiable que le module de gestion est ouvert.
+          const manageUi=currentFrame.locator([
+            'button:has-text("Recherche")',
+            'table tbody tr',
+            '[role="table"] [role="row"]',
+            'input[placeholder*="carte" i]',
+            'input[placeholder*="paiement" i]',
+          ].join(',')).filter({visible:true}).first();
+          if(await manageUi.isVisible({timeout:250}).catch(()=>false))return true;
+          const activeManage=currentFrame.locator('.q-tab--active, [aria-selected="true"], .active')
+            .filter({hasText:/^\s*Gérer\s*$/i}).first();
+          if(await activeManage.isVisible({timeout:250}).catch(()=>false))return true;
+        }
+        await page.waitForTimeout(300);
+      }
+      return false;
+    };
+    if(await waitForManageCardsReady(500))return;
+    // Si le module Méthodes de paiement est déjà ouvert sur /tn/cards, ne pas
+    // repartir au dashboard. Cliquer directement sur la tuile Gérer.
+    if(/\/tn\/cards(?:[/?#]|$)/i.test(page.url())){
+      for(const frame of page.frames()){
+        const manage=frame.getByText(/^\s*G[\u00e9e]rer\s*$/i).filter({visible:true}).first();
+        if(!await manage.isVisible({timeout:700}).catch(()=>false))continue;
+        await manage.evaluate(element=>(element.closest<HTMLElement>('a,button,[role="button"],.q-item')??element as HTMLElement).click());
+        if(await waitForManageCardsReady())return;
+        throw new Error(`Délai dépassé pendant ouverture de Gérer les cartes. Dernière page Total : ${page.url()}`);
+      }
+    }
     // Parcours principal observé sur Mobility Business Tunisie : depuis le
     // tableau de bord, cliquer le libellé visible « Méthodes de paiement »,
     // puis la tuile « Gérer ». Ce chemin court évite les attentes du tiroir
@@ -1045,7 +1080,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         const manage=currentFrame.getByText(/^\s*G[\u00e9e]rer\s*$/i).filter({visible:true}).first();
         if(!await manage.isVisible({timeout:1_000}).catch(()=>false))continue;
         if(!await manage.click({force:true,timeout:3_000}).then(()=>true).catch(()=>false))continue;
-        await this.waitForTotalRoute(url=>/\/cards\/manage-card/i.test(url.pathname),'ouverture directe de Gérer les cartes',15_000);
+        if(!await waitForManageCardsReady(15_000))
+          throw new Error(`Délai dépassé pendant ouverture directe de Gérer les cartes. Dernière page Total : ${page.url()}`);
         await page.waitForTimeout(800);
         return;
       }
@@ -1222,30 +1258,6 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       );
     }
     await page.waitForTimeout(1_500);
-    const waitForManageCardsReady=async()=>{
-      const deadline=Date.now()+20_000;
-      while(Date.now()<deadline){
-        if(/\/cards\/manage-card/i.test(page.url()))return true;
-        for(const currentFrame of page.frames()){
-          // Sur la version actuelle du portail tunisien, « Gérer » charge le
-          // composant de recherche dans /tn/cards sans changer l'URL. La route
-          // /manage-card n'est donc plus un critère obligatoire.
-          const manageUi=currentFrame.locator([
-            'button:has-text("Recherche")',
-            'table tbody tr',
-            '[role="table"] [role="row"]',
-            'input[placeholder*="carte" i]',
-            'input[placeholder*="paiement" i]',
-          ].join(',')).filter({visible:true}).first();
-          if(await manageUi.isVisible({timeout:250}).catch(()=>false))return true;
-          const activeManage=currentFrame.locator('.q-tab--active, [aria-selected="true"], .active')
-            .filter({hasText:/^\s*Gérer\s*$/i}).first();
-          if(await activeManage.isVisible({timeout:250}).catch(()=>false))return true;
-        }
-        await page.waitForTimeout(300);
-      }
-      return false;
-    };
     for(const frame of page.frames()){
       const manageRoute=frame.locator('a[href*="manage-card" i], [routerlink*="manage-card" i]').filter({visible:true}).first();
       if(await manageRoute.isVisible({timeout:500}).catch(()=>false)){

@@ -1998,7 +1998,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     };
     const clientName=totalNames[company.code.trim().toUpperCase()];
     if(!clientName)throw new Error(`Aucun client Total associé à la société Delta ${company.code}`);
-    this.lockedReference={code:company.code.trim().toUpperCase(),clientName,expectedCards:Number(company.cards)};
+    const companyCode=company.code.trim().toUpperCase();
+    const canonicalExpected:Record<string,number>={IKIT:5};
+    this.lockedReference={code:companyCode,clientName,expectedCards:canonicalExpected[companyCode]??Number(company.cards)};
     if(this.lockedReference.expectedCards<1)throw new Error(`Aucune carte de référence connue pour ${this.lockedReference.code}`);
     this.setStatus('EXTRACTING',`Référentiel ${company.code} : sélection exclusive du client Total ${clientName}…`);
     if(this.activeClientName===clientName.toUpperCase()&&
@@ -2494,7 +2496,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const directRadio=scope.locator('.q-radio, [role="radio"], label').filter({hasText:exact}).first();
       if(await directRadio.isVisible({timeout:700}).catch(()=>false)){
         await directRadio.click({timeout:3_000});await frame.waitForTimeout(500);
-        return true;
+        if(await this.isTotalClientActuallySelected(name))return true;
       }
       const search=frame.locator('input[type="search"], input[placeholder*="recherche" i], input[placeholder*="client" i]').first();
       if(await search.isVisible({timeout:250}).catch(()=>false)){
@@ -2509,7 +2511,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           .filter({hasText:exact}).first();
         if(await option.isVisible({timeout:1_500}).catch(()=>false)){
           await option.click({timeout:3_000});await frame.waitForTimeout(500);
-          return true;
+          if(await this.isTotalClientActuallySelected(name))return true;
         }
       }
       const choices=[
@@ -2528,7 +2530,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           if(!checked)await radio.click({force:true,timeout:2_000}).catch(()=>undefined);
         }
         await frame.waitForTimeout(500);
-        return true;
+        if(await this.isTotalClientActuallySelected(name))return true;
       }
       // Repli DOM pour les nouvelles tuiles Total qui n'exposent plus de
       // role=radio/option exploitable. Choisir le plus petit élément visible
@@ -2549,7 +2551,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       },name).catch(()=>false);
       if(nativeSelected){
         await frame.waitForTimeout(500);
-        return true;
+        if(await this.isTotalClientActuallySelected(name))return true;
       }
       // Certains comptes demandent aussi un site après le client. Choisir le
       // site configuré, ou à défaut la première option disponible.
@@ -2567,6 +2569,32 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
           if(await ok.isEnabled({timeout:2_000}).catch(()=>false))return true;
         }
       }
+    }
+    return false;
+  }
+
+  private async isTotalClientActuallySelected(name:string){
+    const page=this.page;if(!page)return false;
+    for(const frame of page.frames()){
+      const selected=await frame.evaluate((candidate)=>{
+        const normalize=(value:string)=>value.toUpperCase().replace(/[^A-Z0-9]/g,'');
+        const wanted=normalize(candidate);
+        const visible=(element:Element)=>{
+          const node=element as HTMLElement,style=getComputedStyle(node);
+          return style.display!=='none'&&style.visibility!=='hidden'&&Boolean(node.offsetWidth||node.offsetHeight||node.getClientRects().length);
+        };
+        const rows=Array.from(document.querySelectorAll<HTMLElement>('label,.q-radio,[role="radio"],.q-item'))
+          .filter(element=>visible(element)&&normalize(element.textContent??'')===wanted);
+        for(const row of rows){
+          const input=row.matches('input[type="radio"]')?row as HTMLInputElement:row.querySelector<HTMLInputElement>('input[type="radio"]');
+          const role=row.matches('[role="radio"]')?row:row.querySelector<HTMLElement>('[role="radio"]');
+          if(input?.checked||role?.getAttribute('aria-checked')==='true'||row.getAttribute('aria-checked')==='true'||
+            Boolean(row.querySelector('.q-radio__inner--truthy,.q-radio__inner--checked,.q-icon[aria-checked="true"]')))return true;
+        }
+        return Array.from(document.querySelectorAll<HTMLElement>('[role="combobox"],.q-select'))
+          .some(element=>visible(element)&&normalize(element.textContent??'').includes(wanted));
+      },name).catch(()=>false);
+      if(selected)return true;
     }
     return false;
   }

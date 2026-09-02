@@ -81,6 +81,12 @@ export class TotalMobilityController {
   ) {
     return this.agent.triggerRealtime(req.user, dto.companyId);
   }
+  @Post('agent/realtime-selected') realtimeSelectedAgent(
+    @Body() dto: StartSelectedTotalAgentDto,
+    @Req() req: { user: { sub: string; email: string } },
+  ) {
+    return this.agent.triggerRealtime(req.user, dto.companyId);
+  }
   @Post('agent/reference') referenceAgent(
     @Body() dto: StartTotalAgentDto,
     @Req() req: { user: { sub: string; email: string } },

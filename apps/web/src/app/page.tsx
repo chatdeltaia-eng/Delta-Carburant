@@ -4293,7 +4293,9 @@ function Settings({ reset,token,user,companyId,companyCode,notify,onSynced }: { 
     setAgentKind(cardReference?"CARD_REFERENCE":"REALTIME");
     setBusy(true);
     try{
-      const endpoint=cardReference?(selectedOnly?"card-agent/start-selected":"card-agent/start"):"agent/realtime";
+      const endpoint=cardReference
+        ?(selectedOnly?"card-agent/start-selected":"card-agent/start")
+        :(selectedOnly?"agent/realtime-selected":"agent/realtime");
       const response=await fetch(`${API}/total-mobility/${endpoint}`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify(selectedOnly&&companyId?{companyId}:{})});
       const body=await response.json().catch(()=>({})) as TotalAgentStatus&{message?:string|string[]};
       if(!response.ok)throw new Error(Array.isArray(body.message)?body.message.join(" · "):body.message||"Impossible de lancer l’extraction Total");

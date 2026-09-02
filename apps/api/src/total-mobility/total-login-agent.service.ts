@@ -138,7 +138,23 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   }
 
   triggerCardReference(actor: Actor, companyId?: string) {
-    if (['STARTING', 'SIGNING_IN', 'CODE_REQUIRED', 'EXTRACTING'].includes(this.statusValue.state)) {
+    const connectionPhase=['STARTING','SIGNING_IN','CODE_REQUIRED'].includes(this.statusValue.state)||
+      (this.statusValue.state==='EXTRACTING'&&/connexion réussie|sélection du client|synchronisation successive/i.test(this.statusValue.message));
+    if(connectionPhase){
+      // La session Chromium n'a encore commencé aucune lecture métier. La
+      // demande manuelle devient donc immédiatement prioritaire : réutiliser
+      // la connexion en cours et passer directement aux cartes/plafonds au
+      // lieu d'attendre un cycle transactions complet.
+      this.actor=actor;
+      this.requestedMode='REFERENCE';
+      this.requestedCompanyId=companyId;
+      this.pendingReference=undefined;
+      this.referenceStatusValue=this.status('STARTING',companyId
+        ?'Connexion Total en cours — démarrage immédiat des cartes/plafonds de la société sélectionnée après authentification…'
+        :'Connexion Total en cours — démarrage immédiat des cartes/plafonds des sociétés après authentification…');
+      return this.getReferenceStatus();
+    }
+    if (this.statusValue.state==='EXTRACTING') {
       this.pendingReference={actor,companyId};
       this.referenceStatusValue=this.status('STARTING',`Agent Cartes & Plafonds en attente prioritaire — opération en cours : ${this.statusValue.message}`);
       return this.getReferenceStatus();

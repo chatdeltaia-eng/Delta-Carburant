@@ -750,7 +750,14 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       await page.waitForTimeout(1_500);
       this.setStatus('EXTRACTING','Total : affichage de 50 cartes par page…');
       const pageSize50=await this.setCardRowsPerPage50();
-      if(!pageSize50)throw new Error('Le sélecteur « Lignes par page » ne propose pas 50 cartes');
+      // DC expose 40 cartes et exige le mode 50 pour prouver l'inventaire
+      // complet. Les petits portefeuilles IKIT/DCD/TCM affichent parfois
+      // toutes leurs lignes sans rendre de sélecteur ni de paginateur : cela
+      // ne doit pas empêcher la lecture détaillée des plafonds.
+      if(!pageSize50&&this.activeClientName==='DELTA CUISINE')
+        throw new Error('Le sélecteur « Lignes par page » ne propose pas 50 cartes');
+      if(!pageSize50)
+        this.logger.log(`Total ${this.activeClientName??'client'} : petite grille sans option 50, lecture directe de toutes les lignes visibles`);
       await page.waitForTimeout(1_000);
       // Attendre la disparition du panneau « Récupération de vos
       // informations » avant de lire le tableau.
@@ -861,7 +868,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       // réellement ramené toutes les cartes du client sélectionné.
       const paginatorTotals=visibleTexts.flatMap(text=>[...text.matchAll(/\b(?:sur|of)\s+(\d{1,5})\b/gi)]
         .map(match=>Number(match[1])).filter(value=>Number.isInteger(value)&&value>0));
-      const expectedTotal=paginatorTotals.length?Math.max(...paginatorTotals):undefined;
+      const expectedTotal=paginatorTotals.length
+        ?Math.max(...paginatorTotals)
+        :this.activeClientName!=='DELTA CUISINE'&&result.length>0
+          ?result.length
+          :undefined;
       if(expectedTotal!==undefined)result=result.map(card=>({...card,raw:{...(card.raw??{}),expectedTotal}}));
       if(checkpointClient&&expectedTotal!==undefined&&result.length===expectedTotal){
         await this.db.query(`INSERT INTO total_card_inventory_extraction_checkpoint(

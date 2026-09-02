@@ -654,28 +654,28 @@ export default function Home() {
   useEffect(() => {
     if (!token || !user) return;
     let cancelled = false;
+    const controller=new AbortController();
     let activeAccessToken = token;
-    const loadRemote = (accessToken: string) => {
+    type RemoteResponses=[Response,Response,Response,Response,Response,Response|null,Response,Response,
+      Response,Response,Response,Response,Response|null,Response,Response,Response];
+    const loadRemote = async (accessToken: string) => {
       const headers = { Authorization: `Bearer ${accessToken}` };
       const scope=selectedClientId?`?companyId=${encodeURIComponent(selectedClientId)}`:"";
-      return Promise.all([
-      fetch(`${API}/cards${scope}`, { headers, cache: "no-store" }),
-      fetch(`${API}/requests${scope}`, { headers, cache: "no-store" }),
-      fetch(`${API}/notifications`, { headers, cache: "no-store" }),
-      fetch(`${API}/transactions${scope}`, { headers, cache: "no-store" }),
-      fetch(`${API}/dashboard/summary${scope}`, { headers, cache: "no-store" }),
-      canManage(user.role) ? fetch(`${API}/dashboard/anomalies${scope}`, { headers, cache: "no-store" }) : Promise.resolve(null),
-      fetch(`${API}/vehicles${scope}`, { headers, cache: "no-store" }),
-      fetch(`${API}/mileage${scope}`, { headers, cache: "no-store" }),
-      fetch(`${API}/drivers${scope}`, { headers, cache: "no-store" }),
-      fetch(`${API}/fuel-prices${scope}`, { headers, cache: "no-store" }),
-      fetch(`${API}/cards/responsibles${scope}`,{headers,cache:"no-store"}),
-      fetch(`${API}/cards/companies`,{headers,cache:"no-store"}),
-      user.role==="NAJIB_ASSIGNER"?fetch(`${API}/cards/safe-inventory`,{headers,cache:"no-store"}):Promise.resolve(null),
-      fetch(`${API}/complaints`,{headers,cache:"no-store"}),
-      fetch(`${API}/documents/receipts`,{headers,cache:"no-store"}),
-      fetch(`${API}/documents/return-receipts`,{headers,cache:"no-store"}),
-      ]);
+      const get=(path:string)=>fetch(`${API}${path}`,{headers,cache:"no-store",signal:controller.signal});
+      const tasks:(()=>Promise<Response|null>)[]=[
+        ()=>get(`/cards${scope}`),()=>get(`/requests${scope}`),()=>get('/notifications'),()=>get(`/transactions${scope}`),
+        ()=>get(`/dashboard/summary${scope}`),()=>canManage(user.role)?get(`/dashboard/anomalies${scope}`):Promise.resolve(null),
+        ()=>get(`/vehicles${scope}`),()=>get(`/mileage${scope}`),()=>get(`/drivers${scope}`),()=>get(`/fuel-prices${scope}`),
+        ()=>get(`/cards/responsibles${scope}`),()=>get('/cards/companies'),
+        ()=>user.role==="NAJIB_ASSIGNER"?get('/cards/safe-inventory'):Promise.resolve(null),
+        ()=>get('/complaints'),()=>get('/documents/receipts'),()=>get('/documents/return-receipts'),
+      ];
+      const responses:(Response|null)[]=[];
+      for(let index=0;index<tasks.length;index+=4){
+        responses.push(...await Promise.all(tasks.slice(index,index+4).map(task=>task())));
+        if(index+4<tasks.length)await new Promise(resolve=>window.setTimeout(resolve,180));
+      }
+      return responses as RemoteResponses;
     };
     const renewSession = async () => {
       const refreshToken = sessionStorage.getItem("delta_refresh");
@@ -759,8 +759,10 @@ export default function Home() {
         }
         setError(`Synchronisation API momentanément indisponible${reason instanceof Error ? ` : ${reason.message}` : ""}. Nouvelle tentative automatique en cours.`);
       });
-    const timer = window.setInterval(() => setRefreshTick((current) => current + 1), 30000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    const timer = window.setInterval(() => {
+      if(document.visibilityState==='visible')setRefreshTick((current) => current + 1);
+    }, 90000);
+    return () => { cancelled = true; controller.abort(); window.clearInterval(timer); };
   }, [token, user, refreshTick,selectedClientId]);
   useEffect(()=>{
     if(!token||!user||user.role==="NAJIB_ASSIGNER")return;
@@ -4293,7 +4295,7 @@ function Settings({ reset,token,user,companyId,companyCode,notify,onSynced }: { 
     }catch(error){notify(error instanceof Error?error.message:"Extraction Total impossible");setBusy(false);}
   }
   async function submitVerificationCode(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!token)return;setBusy(true);try{const response=await fetch(`${API}/total-mobility/agent/code`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({code:verificationCode})});const body=await response.json().catch(()=>({})) as TotalAgentStatus&{message?:string|string[]};if(!response.ok)throw new Error(Array.isArray(body.message)?body.message.join(" · "):body.message||"Code refusé");setAgent(body);setVerificationCode("");}catch(error){notify(error instanceof Error?error.message:"Code Total refusé");}finally{setBusy(false);}}
-  useEffect(()=>{if(!token||!agent||!["STARTING","SIGNING_IN","CODE_REQUIRED","EXTRACTING"].includes(agent.state))return;const poll=window.setInterval(()=>{const endpoint=agentKind==="CARD_REFERENCE"?"card-agent/status":"agent/status";void fetch(`${API}/total-mobility/${endpoint}`,{headers:{Authorization:`Bearer ${token}`}}).then(async response=>{if(!response.ok)return;const next=await response.json() as TotalAgentStatus;setAgent(next);if(next.state==="SUCCESS"){setBusy(false);notify(agentKind==="CARD_REFERENCE"?"Cartes et plafonds Total actualisés pour le périmètre demandé.":`Temps réel Total : ${next.result?.visible??next.result?.imported??0} transaction(s) disponible(s) (${next.result?.fetched??0} reçue(s)).`);await loadTotal();onSynced();}else if(next.state==="FAILED"){setBusy(false);notify(next.message);}}).catch(()=>undefined);},1200);return()=>window.clearInterval(poll);},[agent,token,agentKind]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(()=>{if(!token||!agent||!["STARTING","SIGNING_IN","CODE_REQUIRED","EXTRACTING"].includes(agent.state))return;let polling=false;const poll=window.setInterval(()=>{if(polling||document.visibilityState!=="visible")return;polling=true;const endpoint=agentKind==="CARD_REFERENCE"?"card-agent/status":"agent/status";void fetch(`${API}/total-mobility/${endpoint}`,{headers:{Authorization:`Bearer ${token}`}}).then(async response=>{if(!response.ok)return;const next=await response.json() as TotalAgentStatus;setAgent(next);if(next.state==="SUCCESS"){setBusy(false);notify(agentKind==="CARD_REFERENCE"?"Cartes et plafonds Total actualisés pour le périmètre demandé.":`Temps réel Total : ${next.result?.visible??next.result?.imported??0} transaction(s) disponible(s) (${next.result?.fetched??0} reçue(s)).`);await loadTotal();onSynced();}else if(next.state==="FAILED"){setBusy(false);notify(next.message);}}).catch(()=>undefined).finally(()=>{polling=false});},3000);return()=>window.clearInterval(poll);},[agent,token,agentKind]); // eslint-disable-line react-hooks/exhaustive-deps
   async function loadTotal(){if(!token||!direction)return;try{const headers={Authorization:`Bearer ${token}`};const [a,b,c]=await Promise.all([fetch(`${API}/total-mobility/status`,{headers}),fetch(`${API}/total-mobility/runs`,{headers}),fetch(`${API}/total-mobility/cards/reconciliation`,{headers})]);if(a.ok)setTotal(await a.json());if(b.ok)setRuns(await b.json());if(c.ok)setTotalCards(await c.json());}catch{/* Rechargement au prochain affichage. */}}
   useEffect(()=>{
     if(!token||!direction)return;

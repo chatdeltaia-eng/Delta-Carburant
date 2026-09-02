@@ -4251,7 +4251,7 @@ function Login({
 }
 type TotalMobilityStatus={customerNumber?:string;siteNumber?:string;enabled?:boolean;syncIntervalMinutes?:number;lastSuccessAt?:string;lastError?:string};
 type TotalMobilityRun={id:string;startedAt:string;status:string;fetchedRows:number;importedRows:number;duplicateRows:number;reviewRows?:number;errorMessage?:string;metadata?:{dateFrom?:string;dateTo?:string}};
-type TotalAgentStatus={state:"IDLE"|"STARTING"|"SIGNING_IN"|"CODE_REQUIRED"|"EXTRACTING"|"SUCCESS"|"FAILED";message:string;updatedAt:string;result?:{fetched?:number;imported?:number;pendingReview?:number;visible?:number}};
+type TotalAgentStatus={state:"IDLE"|"STARTING"|"SIGNING_IN"|"CODE_REQUIRED"|"EXTRACTING"|"SUCCESS"|"FAILED";message:string;updatedAt:string;result?:{fetched?:number;imported?:number;pendingReview?:number;visible?:number};automation?:{enabled:boolean;intervalMinutes:number;companies:string[];lastCardReferenceSync?:number|null}};
 type TotalCardReconciliation={id:string;cardNumber:string;applicationStatus:string;totalStatus?:string;checkedAt?:string;responsibleName?:string;conformity:"COMPLIANT"|"MISMATCH"|"NOT_EXTRACTED";pendingAction?:string};
 type TotalMobilityPayload={CustomerId?:string;CustomerNumber?:string;SiteNumber?:string;UserId?:string;usersname?:string};
 function readTotalMobilityPayload(raw:string):TotalMobilityPayload{
@@ -4282,17 +4282,29 @@ function Settings({ reset,token,user,companyId,notify,onSynced }: { reset:()=>vo
       setAgent(body);notify("L’agent se connecte à Total Mobility en arrière-plan.");
     }catch(error){notify(error instanceof Error?error.message:"Connexion automatique impossible");setBusy(false);}
   }
+  async function runAgentAction(path:"realtime"|"reference",selectedOnly=false){
+    if(!token)return;
+    setBusy(true);
+    try{
+      const response=await fetch(`${API}/total-mobility/agent/${path}`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify(selectedOnly&&companyId?{companyId}:{})});
+      const body=await response.json().catch(()=>({})) as TotalAgentStatus&{message?:string|string[]};
+      if(!response.ok)throw new Error(Array.isArray(body.message)?body.message.join(" · "):body.message||"Impossible de lancer l’extraction Total");
+      setAgent(body);
+      notify(path==="realtime"?(selectedOnly&&companyId?"Extraction temps réel lancée pour la société sélectionnée.":"Extraction temps réel lancée pour toutes les sociétés."):"Actualisation manuelle des cartes et plafonds lancée.");
+    }catch(error){notify(error instanceof Error?error.message:"Extraction Total impossible");setBusy(false);}
+  }
   async function submitVerificationCode(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!token)return;setBusy(true);try{const response=await fetch(`${API}/total-mobility/agent/code`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({code:verificationCode})});const body=await response.json().catch(()=>({})) as TotalAgentStatus&{message?:string|string[]};if(!response.ok)throw new Error(Array.isArray(body.message)?body.message.join(" · "):body.message||"Code refusé");setAgent(body);setVerificationCode("");}catch(error){notify(error instanceof Error?error.message:"Code Total refusé");}finally{setBusy(false);}}
   useEffect(()=>{if(!token||!agent||!["STARTING","SIGNING_IN","CODE_REQUIRED","EXTRACTING"].includes(agent.state))return;const poll=window.setInterval(()=>{void fetch(`${API}/total-mobility/agent/status`,{headers:{Authorization:`Bearer ${token}`}}).then(async response=>{if(!response.ok)return;const next=await response.json() as TotalAgentStatus;setAgent(next);if(next.state==="SUCCESS"){setBusy(false);notify(`Total connecté : ${next.result?.visible??next.result?.imported??0} transaction(s) disponible(s) (${next.result?.fetched??0} reçue(s)).`);await loadTotal();onSynced();}else if(next.state==="FAILED"){setBusy(false);notify(next.message);}}).catch(()=>undefined);},1200);return()=>window.clearInterval(poll);},[agent,token]); // eslint-disable-line react-hooks/exhaustive-deps
   async function loadTotal(){if(!token||!direction)return;try{const headers={Authorization:`Bearer ${token}`};const [a,b,c]=await Promise.all([fetch(`${API}/total-mobility/status`,{headers}),fetch(`${API}/total-mobility/runs`,{headers}),fetch(`${API}/total-mobility/cards/reconciliation`,{headers})]);if(a.ok)setTotal(await a.json());if(b.ok)setRuns(await b.json());if(c.ok)setTotalCards(await c.json());}catch{/* Rechargement au prochain affichage. */}}
   useEffect(()=>{
     if(!token||!direction)return;
     const headers={Authorization:`Bearer ${token}`};
-    void Promise.all([fetch(`${API}/total-mobility/status`,{headers}),fetch(`${API}/total-mobility/runs`,{headers}),fetch(`${API}/total-mobility/cards/reconciliation`,{headers})])
-      .then(async([statusResponse,runsResponse,cardsResponse])=>{
+    void Promise.all([fetch(`${API}/total-mobility/status`,{headers}),fetch(`${API}/total-mobility/runs`,{headers}),fetch(`${API}/total-mobility/cards/reconciliation`,{headers}),fetch(`${API}/total-mobility/agent/status`,{headers})])
+      .then(async([statusResponse,runsResponse,cardsResponse,agentResponse])=>{
         if(statusResponse.ok)setTotal(await statusResponse.json());
         if(runsResponse.ok)setRuns(await runsResponse.json());
         if(cardsResponse.ok)setTotalCards(await cardsResponse.json());
+        if(agentResponse.ok)setAgent(await agentResponse.json());
       }).catch(()=>undefined);
   },[token,direction]);
   async function connect(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!token)return;const formElement=event.currentTarget;setBusy(true);try{const form=new FormData(formElement);const simplePayload=String(form.get("totalPayload")??"").trim();const copied=simplePayload?readTotalMobilityPayload(simplePayload):{};const configuration={customerId:copied.CustomerId||String(form.get("customerId")??""),customerNumber:copied.CustomerNumber||String(form.get("customerNumber")??""),siteNumber:copied.SiteNumber||String(form.get("siteNumber")??""),userId:copied.UserId||String(form.get("totalUserId")??""),username:copied.usersname||String(form.get("totalUsername")??""),refreshToken:String(form.get("refreshToken")??""),syncIntervalMinutes:Number(form.get("syncIntervalMinutes")??60)};if(!configuration.customerId||!configuration.customerNumber||!configuration.siteNumber)throw new Error("La configuration copiée ne contient pas les informations client Total. Utilisez « Copy value » sur Request Payload.");const response=await fetch(`${API}/total-mobility/connect`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify(configuration)});if(!response.ok){const raw=await response.text();let message="";try{const body=JSON.parse(raw) as {message?:string|string[]};message=Array.isArray(body.message)?body.message.join(" · "):body.message??"";}catch{message=raw;}throw new Error(message||`Connexion Total refusée (${response.status})`);}formElement.reset();notify("Total Mobility est connecté. Les transactions seront désormais extraites automatiquement, sans fichier CSV ou Excel.");await loadTotal();}catch(error){notify(error instanceof Error?error.message:"Connexion Total impossible");}finally{setBusy(false);}}
@@ -4301,8 +4313,18 @@ function Settings({ reset,token,user,companyId,notify,onSynced }: { reset:()=>vo
       {direction&&<article className={styles.totalConnector}>
         <div className={styles.connectorHead}><div><small>EXTRACTION DIRECTE — SANS CSV / EXCEL</small><h2>TotalEnergies Mobility</h2><p>Chaque extraction remplace l’ancien état depuis le 01/08/2026 par le nouvel instantané officiel Total.</p></div><span className={total.customerNumber&&total.enabled?styles.connectorOnline:styles.connectorOffline}>{total.customerNumber&&total.enabled?"● Connecté":"○ Non connecté"}</span></div>
         {total.customerNumber&&<><div className={styles.connectorMetrics}><span><small>Client</small><b>{total.customerNumber}</b></span><span><small>Site</small><b>{total.siteNumber}</b></span><span><small>Fréquence</small><b>{total.syncIntervalMinutes} min</b></span><span><small>Dernier succès</small><b>{total.lastSuccessAt?new Date(total.lastSuccessAt).toLocaleString("fr-FR"):"Jamais"}</b></span></div>{total.lastError&&<div className={styles.connectorError}>⚠ {total.lastError}</div>}</>}
-        <button className={styles.connectorConnectButton} disabled={busy} onClick={reconnectWithAgent}>{busy?"Agent Total en cours…":"Se connecter et extraire automatiquement"}</button>
-        <p><small>L’agent serveur utilise les secrets Render, renouvelle la session puis extrait les transactions. Aucun portail, extension ou paramétrage manuel.</small></p>
+        <div className={styles.realtimeControl}>
+          <div><span className={styles.realtimeDot}/><strong>Temps réel automatique actif</strong><small>Toutes les {agent?.automation?.intervalMinutes??1} minute(s) · DC, IKIT, DCD et TCM · transactions, véhicules, KM et chauffeurs</small></div>
+          <div className={styles.realtimeActions}>
+            <button disabled={busy} onClick={()=>runAgentAction("realtime",true)}>Extraire maintenant · société sélectionnée</button>
+            <button disabled={busy} onClick={()=>runAgentAction("realtime")}>Extraire maintenant · toutes les sociétés</button>
+          </div>
+        </div>
+        <div className={styles.referenceActions}>
+          <button className={styles.connectorConnectButton} disabled={busy} onClick={reconnectWithAgent}>{busy?"Agent Total en cours…":"Reconnecter l’agent Total"}</button>
+          <button className={styles.connectorSecondaryButton} disabled={busy} onClick={()=>runAgentAction("reference")}>Actualiser cartes et plafonds</button>
+        </div>
+        <p><small>Le temps réel utilise les cartes déjà extraites. Le référentiel cartes/plafonds reste un agent séparé et s’actualise automatiquement toutes les 6 heures.</small></p>
         <details className={styles.connectorConfig}><summary>Mode de secours administrateur</summary><form onSubmit={connect} className={styles.connectorForm}>
           <div className={styles.connectorGuide}><b>1</b><span><strong>Copiez la configuration des transactions</strong><small>Total Mobility → F12 → Network → requête <code>report/list</code> → Payload → clic droit → Copy value.</small></span></div>
           <label className={styles.connectorSecret}>Configuration Total copiée<textarea name="totalPayload" rows={5} placeholder={'Collez ici tout le Request Payload. Les champs client, site et utilisateur seront détectés automatiquement.'} /></label>

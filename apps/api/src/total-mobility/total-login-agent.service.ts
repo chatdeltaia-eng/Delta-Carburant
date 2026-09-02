@@ -105,7 +105,35 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   }
 
   getStatus() {
-    return this.statusValue;
+    return {
+      ...this.statusValue,
+      automation: {
+        enabled: Boolean(this.liveTimer),
+        intervalMinutes: Math.max(1, Number(process.env.TOTAL_LIVE_SYNC_MINUTES ?? 1)),
+        companies: ['DC', 'IKIT', 'DCD', 'TCM'],
+        lastCardReferenceSync: this.lastCardReferenceSync || null,
+      },
+    };
+  }
+
+  triggerRealtime(actor: Actor, companyId?: string) {
+    if (['STARTING', 'SIGNING_IN', 'CODE_REQUIRED', 'EXTRACTING'].includes(this.statusValue.state))
+      throw new BadRequestException('Une extraction Total est déjà en cours. Le temps réel démarrera dès sa fin.');
+    this.actor = actor;
+    if (!this.browser || !this.page || this.page.isClosed()) {
+      return this.start(actor, companyId);
+    }
+    void this.liveRefresh(companyId).catch((error) => this.fail(error));
+    return this.getStatus();
+  }
+
+  triggerCardReference(actor: Actor) {
+    if (['STARTING', 'SIGNING_IN', 'CODE_REQUIRED', 'EXTRACTING'].includes(this.statusValue.state))
+      throw new BadRequestException('Une extraction Total est déjà en cours.');
+    this.actor = actor;
+    if (!this.browser || !this.page || this.page.isClosed()) return this.start(actor);
+    void this.cardReferenceRefresh().catch((error) => this.fail(error));
+    return this.getStatus();
   }
 
   start(actor: Actor, companyId?: string) {
@@ -383,7 +411,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       setTimeout(()=>void this.liveRefresh(),1_000).unref();
     }catch(error){this.fail(error);}
   }
-  private async liveRefresh(){
+  private async liveRefresh(companyId?: string){
     if(!this.actor||['STARTING','SIGNING_IN','CODE_REQUIRED','EXTRACTING'].includes(this.statusValue.state))return;
     if(!this.browser||!this.page||this.page.isClosed()){
       this.fail(new Error('Session Total interrompue; l’agent va se reconnecter automatiquement'));
@@ -391,11 +419,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     }
     try{
       this.setStatus('EXTRACTING','Agent Temps réel : transactions, KM et chauffeurs des 4 sociétés…');
-      const clients=await this.extractTransactionsLiveWithReference(this.requestedCompanyId);
+      const clients=await this.extractTransactionsLiveWithReference(companyId);
       const summary=this.summarizeClientResults(clients);
       if(summary.fetched<1)
         throw new Error('Total n’a renvoyé aucune transaction : données existantes conservées');
-      this.statusValue={...this.status('SUCCESS',`${summary.visible} transaction(s) Total actualisée(s) · véhicules/KM et chauffeurs synchronisés`),result:{clients,...summary,live:true,worker:'REALTIME',lastCardReferenceSync:this.lastCardReferenceSync||null}};
+      this.statusValue={...this.status('SUCCESS',`${summary.visible} transaction(s) Total actualisée(s) · véhicules/KM et chauffeurs synchronisés`),result:{clients,...summary,live:true,worker:'REALTIME',companyId:companyId||null,lastCardReferenceSync:this.lastCardReferenceSync||null}};
     }catch(error){this.fail(error);}
   }
 

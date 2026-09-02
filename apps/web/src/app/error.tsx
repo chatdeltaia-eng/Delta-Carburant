@@ -2,39 +2,34 @@
 
 import { useEffect } from "react";
 
-const recoveryKey = "delta_frontend_recovery";
+const recoveryKey = "delta_frontend_recovery_count";
 
 export default function ApplicationError({error,reset}:{error:Error & {digest?:string};reset:()=>void}) {
   useEffect(()=>{
     console.error("DeltaCarburant application error",error);
-    const message=String(error?.message??"").toLowerCase();
-    const staleBundle=["chunk","loading css","failed to fetch dynamically imported","module factory"].some(value=>message.includes(value));
-    const signature=`${location.pathname}:${error?.digest??message.slice(0,80)}`;
-    if(sessionStorage.getItem(recoveryKey)!==signature){
-      sessionStorage.setItem(recoveryKey,signature);
-      const url=new URL(location.href);
-      url.searchParams.set("actualisation",Date.now().toString());
-      location.replace(url.toString());
-      return;
-    }
-    // Une deuxième erreur identique provient généralement d'un état local de
-    // session incompatible avec la nouvelle version. Revenir à la connexion
-    // sans toucher aux données serveur évite de bloquer l'utilisateur.
-    if(!staleBundle&&sessionStorage.getItem(`${recoveryKey}_login`)!==signature){
-      sessionStorage.setItem(`${recoveryKey}_login`,signature);
-      sessionStorage.removeItem("delta_access");sessionStorage.removeItem("delta_refresh");sessionStorage.removeItem("delta_user");sessionStorage.removeItem("delta_client");
-      location.replace(`/?actualisation=${Date.now()}`);
-    }
-  },[error]);
-  return <main style={{minHeight:"100vh",display:"grid",placeItems:"center",fontFamily:"Arial,sans-serif",background:"#f4f8fb",color:"#17243a"}}>
-    <section style={{width:"min(430px,calc(100vw - 32px))",padding:"32px",border:"1px solid #d8e3ed",borderRadius:"20px",background:"white",boxShadow:"0 18px 50px rgba(31,52,73,.14)",textAlign:"center"}}>
-      <div style={{width:48,height:48,margin:"0 auto 18px",borderRadius:16,display:"grid",placeItems:"center",background:"#fff1e7",color:"#b45309",fontSize:24}}>↻</div>
-      <h1 style={{fontSize:20,margin:"0 0 10px"}}>Actualisation nécessaire</h1>
-      <p style={{fontSize:13,lineHeight:1.6,color:"#607187"}}>Une nouvelle version de DeltaCarburant vient d’être déployée. Vos données sont conservées.</p>
-      <div style={{display:"flex",justifyContent:"center",gap:10,marginTop:20}}>
-        <button onClick={()=>location.reload()} style={{padding:"11px 18px",border:0,borderRadius:10,color:"white",background:"#075fae",fontWeight:700,cursor:"pointer"}}>Actualiser la page</button>
-        <button onClick={reset} style={{padding:"11px 18px",border:"1px solid #cbd9e5",borderRadius:10,color:"#24405c",background:"white",fontWeight:700,cursor:"pointer"}}>Réessayer</button>
-      </div>
-    </section>
-  </main>;
+    void (async()=>{
+      const attempts=Number(sessionStorage.getItem(recoveryKey)??0);
+      sessionStorage.setItem(recoveryKey,String(attempts+1));
+      if("caches" in window){
+        const names=await caches.keys().catch(()=>[]);
+        await Promise.all(names.map(name=>caches.delete(name))).catch(()=>undefined);
+      }
+      const registrations=await navigator.serviceWorker?.getRegistrations().catch(()=>[]);
+      await Promise.all((registrations??[]).map(registration=>registration.unregister())).catch(()=>undefined);
+      if(attempts<2){
+        const url=new URL(location.href);
+        url.searchParams.set("version",Date.now().toString());
+        location.replace(url.toString());
+        return;
+      }
+      sessionStorage.removeItem(recoveryKey);
+      sessionStorage.removeItem("delta_access");
+      sessionStorage.removeItem("delta_refresh");
+      sessionStorage.removeItem("delta_user");
+      sessionStorage.removeItem("delta_client");
+      reset();
+      location.replace(`/?version=${Date.now()}`);
+    })();
+  },[error,reset]);
+  return <main style={{minHeight:"100vh",display:"grid",placeItems:"center",fontFamily:"Arial,sans-serif",background:"#f4f8fb",color:"#17243a"}}><p>Reconnexion automatique à DeltaCarburant…</p></main>;
 }

@@ -16,7 +16,7 @@ export class TotalCardReferenceAgentService {
   constructor(private readonly coordinator: TotalLoginAgentService) {}
 
   status() {
-    return { ...this.coordinator.getStatus(), agentType: 'CARD_REFERENCE' as const };
+    return { ...this.coordinator.getReferenceStatus(), agentType: 'CARD_REFERENCE' as const };
   }
 
   start(actor: Actor, companyId?: string) {

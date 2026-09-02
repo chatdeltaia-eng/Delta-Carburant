@@ -50,6 +50,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private lastCardDiagnostic='';
   private readonly cardLimitCheckpoint=new Map<string,{amount:number;holder:string}>();
   private statusValue: AgentStatus = this.status('IDLE', 'Agent Total prêt');
+  private referenceStatusValue: AgentStatus = this.status('IDLE', 'Agent Cartes & Plafonds prêt');
+  private pendingReference?: { actor: Actor; companyId?: string };
 
   constructor(
     private readonly total: TotalMobilityService,
@@ -115,6 +117,15 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  getReferenceStatus() {
+    return {
+      ...this.referenceStatusValue,
+      queued: Boolean(this.pendingReference),
+      lockedCompanyId: this.pendingReference?.companyId ?? this.requestedCompanyId ?? null,
+      coordinatorStep: this.statusValue.message,
+    };
+  }
+
   triggerRealtime(actor: Actor, companyId?: string) {
     if (['STARTING', 'SIGNING_IN', 'CODE_REQUIRED', 'EXTRACTING'].includes(this.statusValue.state))
       throw new BadRequestException('Une extraction Total est déjà en cours. Le temps réel démarrera dès sa fin.');
@@ -127,8 +138,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   }
 
   triggerCardReference(actor: Actor, companyId?: string) {
-    if (['STARTING', 'SIGNING_IN', 'CODE_REQUIRED', 'EXTRACTING'].includes(this.statusValue.state))
-      throw new BadRequestException('Une extraction Total est déjà en cours.');
+    if (['STARTING', 'SIGNING_IN', 'CODE_REQUIRED', 'EXTRACTING'].includes(this.statusValue.state)) {
+      this.pendingReference={actor,companyId};
+      this.referenceStatusValue=this.status('STARTING',`Agent Cartes & Plafonds en attente prioritaire — opération en cours : ${this.statusValue.message}`);
+      return this.getReferenceStatus();
+    }
     this.actor = actor;
     if (!this.browser || !this.page || this.page.isClosed()) return this.start(actor, companyId, 'REFERENCE');
     this.requestedMode = 'REFERENCE';
@@ -384,6 +398,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     this.requestedCompanyId=undefined;
     this.requestedMode='REALTIME';
     this.scheduleLiveRefresh();
+    this.runPendingReference();
   }
 
   private scheduleLiveRefresh(){
@@ -405,6 +420,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       this.lastCardReferenceSync=Date.now();
       const summary=this.summarizeClientResults(clients);
       this.statusValue={...this.status('SUCCESS',companyId?'Référentiel cartes/plafonds Total actualisé pour la société sélectionnée':'Référentiel cartes/plafonds Total actualisé pour toutes les sociétés'),result:{clients,...summary,worker:'CARD_REFERENCE',companyId:companyId??null,nextRealtime:true}};
+      this.referenceStatusValue=this.statusValue;
       this.requestedMode='REALTIME';
       this.requestedCompanyId=undefined;
       // Une actualisation du référentiel est immédiatement suivie d'un cycle
@@ -425,7 +441,14 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       if(summary.fetched<1)
         throw new Error('Total n’a renvoyé aucune transaction : données existantes conservées');
       this.statusValue={...this.status('SUCCESS',`${summary.visible} transaction(s) Total actualisée(s) · véhicules/KM et chauffeurs synchronisés`),result:{clients,...summary,live:true,worker:'REALTIME',companyId:companyId||null,lastCardReferenceSync:this.lastCardReferenceSync||null}};
-    }catch(error){this.fail(error);}
+      this.runPendingReference();
+    }catch(error){this.fail(error);this.runPendingReference();}
+  }
+
+  private runPendingReference(){
+    const pending=this.pendingReference;if(!pending)return;
+    this.pendingReference=undefined;
+    setTimeout(()=>this.triggerCardReference(pending.actor,pending.companyId),250).unref();
   }
 
   private async extractTransactionsLiveWithReference(companyId?:string){
@@ -2757,6 +2780,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private setStatus(state: AgentState, message: string) {
     this.statusValue = this.status(state, message);
+    if(this.requestedMode==='REFERENCE')this.referenceStatusValue=this.statusValue;
     this.logger.log(`État agent Total ${state} — ${message}`);
   }
 }

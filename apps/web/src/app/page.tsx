@@ -4275,17 +4275,6 @@ function Settings({ reset,token,user,companyId,companyCode,notify,onSynced }: { 
   const [verificationCode,setVerificationCode]=useState("");
   const [totalCards,setTotalCards]=useState<TotalCardReconciliation[]>([]);
   const direction=isDirection(user.role);
-  async function reconnectWithAgent(){
-    if(!token)return;
-    setAgentKind("REALTIME");
-    setBusy(true);
-    try{
-      const response=await fetch(`${API}/total-mobility/agent/start`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({companyId:companyId||undefined})});
-      const body=await response.json().catch(()=>({})) as TotalAgentStatus&{message?:string|string[]};
-      if(!response.ok)throw new Error(Array.isArray(body.message)?body.message.join(" · "):body.message||"Impossible de démarrer l’agent Total");
-      setAgent(body);notify("L’agent se connecte à Total Mobility en arrière-plan.");
-    }catch(error){notify(error instanceof Error?error.message:"Connexion automatique impossible");setBusy(false);}
-  }
   async function runAgentAction(path:"realtime"|"reference",selectedOnly=false){
     if(!token)return;
     if(selectedOnly&&!companyId){notify("Sélectionnez explicitement une société avant de lancer cet agent.");return;}
@@ -4325,17 +4314,14 @@ function Settings({ reset,token,user,companyId,companyCode,notify,onSynced }: { 
         <div className={styles.realtimeControl}>
           <div><span className={styles.realtimeDot}/><strong>Temps réel automatique actif</strong><small>Toutes les {agent?.automation?.intervalMinutes??1} minute(s) · DC, IKIT, DCD et TCM · transactions, véhicules, KM et chauffeurs</small></div>
           <div className={styles.realtimeActions}>
-            <button disabled={busy} onClick={()=>runAgentAction("realtime",true)}>Extraire maintenant · société sélectionnée</button>
-            <button disabled={busy} onClick={()=>runAgentAction("realtime")}>Extraire maintenant · toutes les sociétés</button>
+            <button disabled={busy||!companyId} onClick={()=>runAgentAction("realtime",true)}>Transactions · {companyCode||"sélectionnez une société"}</button>
           </div>
         </div>
         <div className={styles.referenceActions}>
-          <button className={styles.connectorConnectButton} disabled={busy} onClick={reconnectWithAgent}>{busy?"Agent Total en cours…":"Reconnecter l’agent Total"}</button>
-          <button className={styles.connectorSecondaryButton} disabled={busy} onClick={()=>runAgentAction("reference",true)}>Cartes/plafonds · société sélectionnée</button>
-          <button className={styles.connectorSecondaryButton} disabled={busy} onClick={()=>runAgentAction("reference")}>Cartes/plafonds · toutes les sociétés</button>
+          <button className={styles.connectorSecondaryButton} disabled={busy||!companyId} onClick={()=>runAgentAction("reference",true)}>Cartes & plafonds · {companyCode||"sélectionnez une société"}</button>
         </div>
-        {companyCode&&<p><strong>Société verrouillée pour le bouton ciblé : {companyCode}</strong></p>}
-        <p><small>Le temps réel utilise les cartes déjà extraites. L’extraction des cartes et plafonds reste strictement manuelle et ne démarre qu’avec le bouton ci-dessus.</small></p>
+        {companyCode&&<p><strong>Société active : {companyCode}. Les deux boutons imposent ce même client dans Total avant toute extraction.</strong></p>}
+        <p><small>Les transactions restent automatiques en arrière-plan. Les cartes et plafonds ne démarrent que manuellement pour la société active.</small></p>
         <details className={styles.connectorConfig}><summary>Mode de secours administrateur</summary><form onSubmit={connect} className={styles.connectorForm}>
           <div className={styles.connectorGuide}><b>1</b><span><strong>Copiez la configuration des transactions</strong><small>Total Mobility → F12 → Network → requête <code>report/list</code> → Payload → clic droit → Copy value.</small></span></div>
           <label className={styles.connectorSecret}>Configuration Total copiée<textarea name="totalPayload" rows={5} placeholder={'Collez ici tout le Request Payload. Les champs client, site et utilisateur seront détectés automatiquement.'} /></label>

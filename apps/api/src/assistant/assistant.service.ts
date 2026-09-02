@@ -12,11 +12,13 @@ export class AssistantService {
   constructor(private readonly db:DatabaseService,private readonly mail:MailingService) {}
 
   private async model(input:string,instructions:string,jsonSchema?:Record<string,unknown>) {
+    if(!process.env.OPENAI_API_KEY)throw new Error('OpenAI non configuré');
     const response=await fetch('https://api.openai.com/v1/responses',{
       method:'POST',
+      signal:AbortSignal.timeout(12_000),
       headers:{'Content-Type':'application/json',Authorization:`Bearer ${process.env.OPENAI_API_KEY}`},
       body:JSON.stringify({
-        model:process.env.OPENAI_ASSISTANT_MODEL??'gpt-5.4-mini',
+        model:process.env.OPENAI_ASSISTANT_MODEL??'gpt-5-mini',
         store:false,
         instructions,
         input,
@@ -37,8 +39,45 @@ export class AssistantService {
       navigation:{type:['string','null'],enum:['dashboard','reports','cards','beneficiaries','vehicles','drivers','fuelPrices','transactions','requests','mileage','anomalies','complaints','returns','documents','settings',null]},
       emailRequested:{type:'boolean'},emailRecipient:{type:['string','null'],enum:['DIRECTION','KHALED',null]},
     }};
-    const text=await this.model(question,`Nous sommes le ${today}. Extrais uniquement les filtres explicites ou implicites de la question française. Pour un mois, utilise son premier et dernier jour. Pour « ce mois », utilise le mois courant. Une demande d'ouverture/navigation renseigne navigation. Si l'utilisateur demande d'envoyer ou préparer un e-mail, emailRequested=true. Le destinataire autorisé est seulement DIRECTION ou KHALED.`,schema);
-    return JSON.parse(text) as Intent;
+    try{
+      const text=await this.model(question,`Nous sommes le ${today}. Extrais uniquement les filtres explicites ou implicites de la question française. Pour un mois, utilise son premier et dernier jour. Pour « ce mois », utilise le mois courant. Une demande d'ouverture/navigation renseigne navigation. Si l'utilisateur demande d'envoyer ou préparer un e-mail, emailRequested=true. Le destinataire autorisé est seulement DIRECTION ou KHALED.`,schema);
+      return JSON.parse(text) as Intent;
+    }catch{return this.localIntent(question);}
+  }
+
+  private localIntent(question:string):Intent {
+    const normalized=question.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    const destinations:Record<string,string[]>={dashboard:['accueil','tableau de bord','vue d ensemble'],reports:['rapport','analyse'],cards:['carte'],beneficiaries:['beneficiaire'],vehicles:['vehicule','voiture'],drivers:['chauffeur'],fuelPrices:['prix carburant'],transactions:['transaction','consommation'],requests:['demande'],mileage:['kilometrage','km'],anomalies:['anomalie','alerte'],complaints:['reclamation'],returns:['restitution'],documents:['facture','document'],settings:['parametre']};
+    const navigation=Object.entries(destinations).find(([,words])=>words.some(word=>normalized.includes(word)))?.[0]??null;
+    const months=['janvier','fevrier','mars','avril','mai','juin','juillet','aout','septembre','octobre','novembre','decembre'];
+    const monthIndex=months.findIndex(month=>normalized.includes(month));
+    const year=Number(normalized.match(/\b20\d{2}\b/)?.[0]??new Date().getFullYear());
+    let startDate:string|null=null,endDate:string|null=null;
+    if(monthIndex>=0){
+      startDate=`${year}-${String(monthIndex+1).padStart(2,'0')}-01`;
+      endDate=new Date(Date.UTC(year,monthIndex+1,0)).toISOString().slice(0,10);
+    }else if(/ce mois|mois actuel|mois courant/.test(normalized)){
+      const now=new Date();startDate=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;endDate=new Date(Date.UTC(now.getFullYear(),now.getMonth()+1,0)).toISOString().slice(0,10);
+    }
+    return {startDate,endDate,card:normalized.match(/(?:carte\s*)?(\d{4})\b/)?.[1]??null,vehicle:null,beneficiary:null,navigation,emailRequested:/\b(?:envoi|envoie|envoyer|mail|email|e-mail)\b/.test(normalized),emailRecipient:normalized.includes('khaled')?'KHALED':/\bdg\b|direction/.test(normalized)?'DIRECTION':null};
+  }
+
+  private localAnswer(question:string,data:Record<string,unknown>) {
+    const normalized=question.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    const summary=(data.summary??{}) as Record<string,unknown>;
+    const entities=(data.entities??{}) as Record<string,unknown>;
+    const filters=data.filters as Intent;
+    const period=filters.startDate&&filters.endDate?`du ${filters.startDate} au ${filters.endDate}`:'sur la période disponible';
+    const number=(value:unknown,digits=3)=>Number(value??0).toLocaleString('fr-FR',{maximumFractionDigits:digits});
+    if(normalized.includes('anomal'))return `${(data.anomalies as unknown[]).length} anomalie(s) récente(s) sont disponibles dans votre périmètre.`;
+    if(normalized.includes('chauffeur'))return `${number(entities.drivers,0)} chauffeur(s) sont enregistrés dans le périmètre sélectionné.`;
+    if(normalized.includes('vehicule')||normalized.includes('voiture'))return `${number(entities.vehicles,0)} véhicule(s) sont enregistrés dans le périmètre sélectionné.`;
+    if(normalized.includes('carte')&&!normalized.includes('consomm')){
+      const cards=data.cards as unknown[];return `${cards.length} carte(s) sont accessibles dans le périmètre sélectionné.`;
+    }
+    const cards=data.byCard as Record<string,unknown>[];
+    const exceeded=cards.filter(card=>Number(card.monthlyLimit??0)>0&&Number(card.amount??0)>=Number(card.monthlyLimit));
+    return `La consommation ${period} est de ${number(summary.amount)} TND pour ${number(summary.liters,2)} litres et ${number(summary.transactions,0)} transaction(s). ${exceeded.length} carte(s) ont atteint ou dépassé leur plafond.`;
   }
 
   private scope(actor:Actor,companyId?:string) {
@@ -115,8 +154,10 @@ export class AssistantService {
       return {answer:`Je vous dirige vers ${intent.navigation}.`,navigate:intent.navigation};
     const data=await this.businessData(intent,actor,dto.companyId);
     const recent=(dto.history??[]).slice(-8).map(item=>`${item.role}: ${item.text}`).join('\n');
-    const answer=await this.model(`Historique:\n${recent}\n\nQuestion: ${dto.question}\n\nDonnées autorisées et actualisées:\n${JSON.stringify(data)}`,
-      `Tu es l'assistant métier Delta Carburant, présent dans tous les modules. Réponds en français, clairement et brièvement, uniquement avec les données fournies. Tu peux aider sur cartes, consommations, transactions, plafonds, dépassements, véhicules, chauffeurs, bénéficiaires, kilométrage, anomalies, demandes, réclamations, reçus, documents, imports, qualité de données, audits et synchronisation Total. Calcule, compare et explique si nécessaire. Respecte les filtres et indique la période utilisée. Les montants sont en TND et les volumes en litres. Ne prétends jamais qu'une donnée absente vaut zéro. N'invente rien. Si la question demande une action sensible ou une modification, explique la procédure et demande confirmation sans effectuer l'action.`,undefined);
+    let answer:string;
+    try{answer=await this.model(`Historique:\n${recent}\n\nQuestion: ${dto.question}\n\nDonnées autorisées et actualisées:\n${JSON.stringify(data)}`,
+      `Tu es l'assistant métier Delta Carburant, présent dans tous les modules. Réponds en français, clairement et brièvement, uniquement avec les données fournies. Tu peux aider sur cartes, consommations, transactions, plafonds, dépassements, véhicules, chauffeurs, bénéficiaires, kilométrage, anomalies, demandes, réclamations, reçus, documents, imports, qualité de données, audits et synchronisation Total. Calcule, compare et explique si nécessaire. Respecte les filtres et indique la période utilisée. Les montants sont en TND et les volumes en litres. Ne prétends jamais qu'une donnée absente vaut zéro. N'invente rien. Si la question demande une action sensible ou une modification, explique la procédure et demande confirmation sans effectuer l'action.`,undefined);}
+    catch{answer=this.localAnswer(dto.question,data);}
     return {answer:intent.emailRequested?`${answer}\n\nL’e-mail est prêt. Confirmez-vous l’envoi ?`:answer,navigate:intent.navigation??null,filters:intent,
       action:intent.emailRequested?{type:'SEND_CONSUMPTION_EMAIL',recipient:intent.emailRecipient??'DIRECTION',requiresConfirmation:true}:null,
       requestId:createHash('sha256').update(`${actor.sub}:${Date.now()}`).digest('hex').slice(0,16)};
@@ -125,8 +166,10 @@ export class AssistantService {
   async sendConsumptionEmail(dto:{question:string;companyId?:string;history?:{role:'user'|'assistant';text:string}[]},actor:Actor){
     const intent=await this.understand(dto.question);
     const data=await this.businessData(intent,actor,dto.companyId);
-    const content=await this.model(`Demande confirmée: ${dto.question}\nDonnées autorisées: ${JSON.stringify(data)}`,
-      `Rédige un rapport e-mail professionnel en français sur la consommation demandée. Donne la période, les totaux, les sociétés/cartes utiles et les dépassements. Utilise uniquement les données fournies. Texte brut concis.`,undefined);
+    let content:string;
+    try{content=await this.model(`Demande confirmée: ${dto.question}\nDonnées autorisées: ${JSON.stringify(data)}`,
+      `Rédige un rapport e-mail professionnel en français sur la consommation demandée. Donne la période, les totaux, les sociétés/cartes utiles et les dépassements. Utilise uniquement les données fournies. Texte brut concis.`,undefined);}
+    catch{content=this.localAnswer(dto.question,data);}
     const configured=(process.env.DIRECTION_MAIL_TO||'khaled.sfaxi@deltacuisine.com').split(',').map(value=>value.trim()).filter(Boolean);
     const khaled=process.env.KHALED_MAIL_TO?.trim()||'khaled.sfaxi@deltacuisine.com';
     const recipients=intent.emailRecipient==='KHALED'?[khaled]:configured;

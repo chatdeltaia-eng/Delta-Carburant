@@ -2389,6 +2389,7 @@ function VoiceAssistant({token,companyId,cards,go}:{token:string;companyId:strin
     try{
       const response=await fetch(`${API}/assistant/ask`,{
         method:"POST",
+        signal:AbortSignal.timeout(25_000),
         headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
         body:JSON.stringify({question,companyId:companyId||undefined,history:messages.slice(-8).map(message=>({role:message.role,text:message.text}))}),
       });

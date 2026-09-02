@@ -53,6 +53,10 @@ services:
         value: khaled.sfaxi@deltacuisine.com
       - key: APPLICATION_URL
         sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_ASSISTANT_MODEL
+        value: gpt-5.4-mini
       - key: TOTAL_USERNAME
         sync: false
       - key: TOTAL_PASSWORD

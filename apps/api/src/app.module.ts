@@ -16,6 +16,7 @@ import { TotalMobilityModule } from './total-mobility/total-mobility.module';
 import { ComplaintsModule } from './complaints/complaints.module';
 import { DocumentsModule } from './documents/documents.module';
 import { MailingModule } from './mailing/mailing.module';
+import { AssistantModule } from './assistant/assistant.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { MailingModule } from './mailing/mailing.module';
     ComplaintsModule,
     DocumentsModule,
     MailingModule,
+    AssistantModule,
   ],
   controllers: [AppController],
   providers: [AppService],

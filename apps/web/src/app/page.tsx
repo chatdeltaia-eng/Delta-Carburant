@@ -2383,6 +2383,25 @@ function VoiceAssistant({token,companyId,cards,go}:{token:string;companyId:strin
     setInput("");
     setMessages(current=>[...current,{id:crypto.randomUUID(),role:"user",text:question}]);
     const normalized=normalizedKey(question);
+    setBusy(true);
+    try{
+      const response=await fetch(`${API}/assistant/ask`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
+        body:JSON.stringify({question,companyId:companyId||undefined,history:messages.slice(-8).map(message=>({role:message.role,text:message.text}))}),
+      });
+      if(response.ok){
+        const result=await response.json() as {answer:string;navigate?:View|null};
+        if(result.navigate)go(result.navigate);
+        reply(result.answer);
+        return;
+      }
+      if(response.status!==503)throw new Error();
+    }catch{
+      reply("L’assistant IA général est momentanément indisponible. Je vais essayer avec les commandes locales.",false);
+    }finally{
+      setBusy(false);
+    }
     const navigationRequested=["dirige","ouvre","affiche","aller","va a","emmene"].some(word=>normalized.includes(word));
     const destination=destinations.find(item=>item.words.some(word=>normalized.includes(word)));
     if(navigationRequested&&destination){

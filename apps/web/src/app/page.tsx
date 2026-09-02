@@ -2456,7 +2456,14 @@ function VoiceAssistant({token,companyId,cards,go}:{token:string;companyId:strin
       <form onSubmit={event=>{event.preventDefault();void submit()}}><input value={input} onChange={event=>setInput(event.target.value)} placeholder="Écrivez votre demande…" aria-label="Message à l’assistant"/><button type="button" className={listening?styles.aiListening:""} onClick={()=>listening?recognitionRef.current?.stop():listen()} aria-label="Parler">{listening?"■":"●"}</button><button type="submit" disabled={!input.trim()||busy} aria-label="Envoyer">➤</button></form>
       <div className={styles.aiExamples}><button onClick={()=>void submit("Dirige-moi vers la page consommation")}>Ouvrir consommations</button><button onClick={()=>void submit("Montant de consommation de ce mois")}>Consommation du mois</button></div>
     </section>}
-    <button type="button" className={styles.aiLauncher} onClick={()=>setOpen(value=>!value)} aria-expanded={open}><span>{open?"×":"✦"}</span><b>{open?"Fermer":"Assistant IA"}</b><small>Voix + texte</small></button>
+    <button type="button" className={`${styles.aiLauncher} ${listening?styles.aiLauncherListening:""} ${busy?styles.aiLauncherBusy:""}`} onClick={()=>setOpen(value=>!value)} aria-expanded={open}>
+      <span className={styles.aiRobot} aria-hidden="true">
+        <i className={styles.aiAntenna}/><i className={styles.aiEarLeft}/><i className={styles.aiEarRight}/>
+        <i className={styles.aiFace}><em/><em/><strong/></i>
+        <i className={styles.aiBody}/>
+      </span>
+      <b>{open?"Fermer":"Assistant IA"}</b><small>{listening?"J’écoute…":busy?"Analyse…":"Base + voix"}</small>
+    </button>
   </aside>;
 }
 

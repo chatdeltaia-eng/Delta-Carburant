@@ -52,7 +52,7 @@ export class AssistantService {
       AND ($6='' OR right(regexp_replace(fc.masked_card_number,'[^0-9]','','g'),4)=right(regexp_replace($6,'[^0-9]','','g'),4))
       AND ($7='' OR regexp_replace(lower(coalesce(v.registration_display,'')),'[^a-z0-9]','','g') LIKE '%'||regexp_replace(lower($7),'[^a-z0-9]','','g')||'%')
       AND ($8='' OR lower(coalesce(b.display_name,fc.holder_name,'')) LIKE '%'||lower($8)||'%')`;
-    const [summary,byCard,byMonth,byDay,byVehicle,byProduct,byStation,cards,requests,anomalies,entities]=await Promise.all([
+    const [summary,byCard,byMonth,byDay,byVehicle,byProduct,byStation,cards,requests,anomalies,entities,mileage,fuelPrices,complaints,receipts,imports,quality,totalSync,audit]=await Promise.all([
       this.db.query(`SELECT count(ft.id)::int transactions,coalesce(sum(ft.amount_incl_tax),0)::float amount,coalesce(sum(ft.quantity_liters),0)::float liters,
         coalesce(avg(ft.amount_incl_tax),0)::float "averageTransaction",min(ft.transaction_date) "firstDate",max(ft.transaction_date) "lastDate"
         FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id LEFT JOIN vehicle v ON v.id=ft.vehicle_id LEFT JOIN beneficiary b ON b.id=ft.beneficiary_id WHERE ${filter}`,args),
@@ -80,8 +80,31 @@ export class AssistantService {
       this.db.query(`SELECT (SELECT count(*) FROM vehicle v WHERE v.deleted_at IS NULL AND ($3::text='' OR v.company_id=$3::uuid))::int vehicles,
         (SELECT count(*) FROM driver d WHERE d.deleted_at IS NULL AND ($3::text='' OR d.company_id=$3::uuid))::int drivers,
         (SELECT count(*) FROM beneficiary b WHERE b.active AND ($3::text='' OR b.company_id=$3::uuid))::int beneficiaries`,args.slice(0,3)),
+      this.db.query(`SELECT coalesce(v.registration_display,'Non identifié') vehicle,max(mr.mileage)::float "lastMileage",max(mr.reading_date) "lastReading",
+        count(*)::int readings,count(*) FILTER (WHERE mr.status='PENDING')::int pending,count(*) FILTER (WHERE mr.status='REJECTED')::int rejected
+        FROM mileage_reading mr JOIN vehicle v ON v.id=mr.vehicle_id LEFT JOIN beneficiary b ON b.id=mr.beneficiary_id
+        WHERE ($1::boolean=false OR b.id=(SELECT beneficiary_id FROM app_user WHERE id=$2::uuid)) AND ($3::text='' OR v.company_id=$3::uuid)
+          AND ($4::text IS NULL OR mr.reading_date>=$4::date) AND ($5::text IS NULL OR mr.reading_date<$5::date+interval '1 day')
+        GROUP BY v.registration_display ORDER BY "lastReading" DESC LIMIT 120`,args.slice(0,5)),
+      this.db.query(`SELECT c.code company,fp.product,fp.old_price::float "oldPrice",fp.new_price::float "newPrice",fp.variation_percent::float "variationPercent",fp.effective_date "effectiveDate"
+        FROM fuel_price fp JOIN company c ON c.id=fp.company_id
+        WHERE ($3::text='' OR fp.company_id=$3::uuid) ORDER BY fp.effective_date DESC LIMIT 120`,args.slice(0,3)),
+      this.db.query(`SELECT complaint_number number,subject,priority,status,target_role "targetRole",created_at "createdAt",resolved_at "resolvedAt"
+        FROM complaint WHERE ($1::boolean=false OR created_by=$2::uuid) ORDER BY created_at DESC LIMIT 100`,args.slice(0,2)),
+      this.db.query(`SELECT cdr.receipt_number number,cdr.status,cdr.issued_at "issuedAt",fc.masked_card_number card,b.display_name beneficiary,v.registration_display vehicle
+        FROM card_distribution_receipt cdr JOIN fuel_card fc ON fc.id=cdr.fuel_card_id LEFT JOIN beneficiary b ON b.id=cdr.beneficiary_id LEFT JOIN vehicle v ON v.id=cdr.vehicle_id
+        WHERE fc.deleted_at IS NULL AND ($1::boolean=false OR fc.responsible_user_id=$2::uuid) AND ($3::text='' OR fc.company_id=$3::uuid)
+        ORDER BY cdr.created_at DESC LIMIT 100`,args.slice(0,3)),
+      this.db.query(`SELECT source_name source,status,total_rows "totalRows",accepted_rows "acceptedRows",warning_rows "warningRows",rejected_rows "rejectedRows",started_at "startedAt",completed_at "completedAt",error_message "errorMessage"
+        FROM import_batch ORDER BY started_at DESC LIMIT 80`),
+      this.db.query(`SELECT entity_type "entityType",issue_code "issueCode",severity,count(*)::int count
+        FROM data_quality_issue WHERE resolved_at IS NULL GROUP BY entity_type,issue_code,severity ORDER BY count DESC LIMIT 80`),
+      this.db.query(`SELECT status,started_at "startedAt",finished_at "finishedAt",fetched_rows "fetchedRows",imported_rows "importedRows",duplicate_rows "duplicateRows",review_rows "reviewRows",error_message "errorMessage",metadata
+        FROM total_mobility_sync_run ORDER BY started_at DESC LIMIT 20`).catch(()=>[]),
+      this.db.query(`SELECT action,entity_type "entityType",entity_id "entityId",created_at "createdAt"
+        FROM audit_log ORDER BY created_at DESC LIMIT 80`),
     ]);
-    return {filters:intent,summary:summary[0],byCard,byMonth,byDay,byVehicle,byProduct,byStation,cards,requests,anomalies,entities:entities[0]};
+    return {filters:intent,summary:summary[0],byCard,byMonth,byDay,byVehicle,byProduct,byStation,cards,requests,anomalies,entities:entities[0],mileage,fuelPrices,complaints,receipts,imports,quality,totalSync,audit};
   }
 
   async ask(dto:{question:string;companyId?:string;history?:{role:'user'|'assistant';text:string}[]},actor:Actor) {
@@ -91,7 +114,7 @@ export class AssistantService {
     const data=await this.businessData(intent,actor,dto.companyId);
     const recent=(dto.history??[]).slice(-8).map(item=>`${item.role}: ${item.text}`).join('\n');
     const answer=await this.model(`Historique:\n${recent}\n\nQuestion: ${dto.question}\n\nDonnées autorisées et actualisées:\n${JSON.stringify(data)}`,
-      `Tu es l'assistant métier Delta Carburant. Réponds en français, clairement et brièvement, uniquement avec les données fournies. Calcule, compare et explique si nécessaire. Respecte les filtres et indique la période utilisée. Les montants sont en TND et les volumes en litres. Ne prétends jamais qu'une donnée absente vaut zéro. N'invente rien. Si la question demande une action sensible ou une modification, explique la procédure et demande confirmation sans effectuer l'action.`,undefined);
+      `Tu es l'assistant métier Delta Carburant, présent dans tous les modules. Réponds en français, clairement et brièvement, uniquement avec les données fournies. Tu peux aider sur cartes, consommations, transactions, plafonds, dépassements, véhicules, chauffeurs, bénéficiaires, kilométrage, anomalies, demandes, réclamations, reçus, documents, imports, qualité de données, audits et synchronisation Total. Calcule, compare et explique si nécessaire. Respecte les filtres et indique la période utilisée. Les montants sont en TND et les volumes en litres. Ne prétends jamais qu'une donnée absente vaut zéro. N'invente rien. Si la question demande une action sensible ou une modification, explique la procédure et demande confirmation sans effectuer l'action.`,undefined);
     return {answer,navigate:intent.navigation??null,filters:intent,requestId:createHash('sha256').update(`${actor.sub}:${Date.now()}`).digest('hex').slice(0,16)};
   }
 }

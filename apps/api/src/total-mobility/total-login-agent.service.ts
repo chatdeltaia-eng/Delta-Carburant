@@ -131,6 +131,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('Une extraction Total est déjà en cours.');
     this.actor = actor;
     if (!this.browser || !this.page || this.page.isClosed()) return this.start(actor, companyId, 'REFERENCE');
+    this.requestedMode = 'REFERENCE';
+    this.requestedCompanyId = companyId;
     void this.cardReferenceRefresh(companyId).catch((error) => this.fail(error));
     return this.getStatus();
   }
@@ -402,7 +404,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       const clients=await this.extractClientsWithSessionRecovery(companyId);
       this.lastCardReferenceSync=Date.now();
       const summary=this.summarizeClientResults(clients);
-      this.statusValue={...this.status('SUCCESS','Référentiel cartes/plafonds Total actualisé pour toutes les sociétés'),result:{clients,...summary,worker:'CARD_REFERENCE',nextRealtime:true}};
+      this.statusValue={...this.status('SUCCESS',companyId?'Référentiel cartes/plafonds Total actualisé pour la société sélectionnée':'Référentiel cartes/plafonds Total actualisé pour toutes les sociétés'),result:{clients,...summary,worker:'CARD_REFERENCE',companyId:companyId??null,nextRealtime:true}};
+      this.requestedMode='REALTIME';
+      this.requestedCompanyId=undefined;
       // Une actualisation du référentiel est immédiatement suivie d'un cycle
       // temps réel, sans attendre la prochaine minute du scheduler.
       setTimeout(()=>void this.liveRefresh(),1_000).unref();

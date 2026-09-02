@@ -23,6 +23,7 @@ import { Roles } from '../common/roles';
 import { RolesGuard } from '../common/roles.guard';
 import { TotalMobilityService } from './total-mobility.service';
 import { TotalLoginAgentService } from './total-login-agent.service';
+import { TotalCardReferenceAgentService } from './total-card-reference-agent.service';
 
 class ConfigureTotalMobilityDto {
   @IsString() @MinLength(10) customerId!: string;
@@ -60,6 +61,7 @@ export class TotalMobilityController {
   constructor(
     private readonly total: TotalMobilityService,
     private readonly agent: TotalLoginAgentService,
+    private readonly cardAgent: TotalCardReferenceAgentService,
   ) {}
   @Get('agent/status') agentStatus() {
     return this.agent.getStatus();
@@ -81,6 +83,15 @@ export class TotalMobilityController {
     @Req() req: { user: { sub: string; email: string } },
   ) {
     return this.agent.triggerCardReference(req.user, dto.companyId);
+  }
+  @Get('card-agent/status') cardAgentStatus() {
+    return this.cardAgent.status();
+  }
+  @Post('card-agent/start') startCardAgent(
+    @Body() dto: StartTotalAgentDto,
+    @Req() req: { user: { sub: string; email: string } },
+  ) {
+    return this.cardAgent.start(req.user, dto.companyId);
   }
   @Post('agent/code') submitAgentCode(@Body() dto: TotalVerificationCodeDto) {
     return this.agent.submitCode(dto.code);

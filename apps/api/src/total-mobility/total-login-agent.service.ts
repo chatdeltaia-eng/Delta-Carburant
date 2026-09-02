@@ -44,7 +44,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private refreshToken?: string;
   private accessToken?: string;
   private liveTimer?: NodeJS.Timeout;
+  private cardReferenceTimer?: NodeJS.Timeout;
   private watchdogTimer?: NodeJS.Timeout;
+  private lastCardReferenceSync=0;
   private lastCardDiagnostic='';
   private readonly cardLimitCheckpoint=new Map<string,{amount:number;holder:string}>();
   private statusValue: AgentStatus = this.status('IDLE', 'Agent Total prêt');
@@ -65,6 +67,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy() {
     if(this.liveTimer)clearInterval(this.liveTimer);
+    if(this.cardReferenceTimer)clearInterval(this.cardReferenceTimer);
     if(this.watchdogTimer)clearInterval(this.watchdogTimer);
     void this.closeBrowser();
   }
@@ -333,6 +336,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       : 'Extraction complète des transactions de tous les clients…');
     const selectedCompanyId=this.requestedCompanyId;
     const clients=await this.extractClientsWithSessionRecovery(selectedCompanyId);
+    this.lastCardReferenceSync=Date.now();
     const summary=this.summarizeClientResults(clients);
     if(summary.fetched<1)
       throw new Error('Total n’a renvoyé aucune transaction : actualisation refusée');
@@ -345,12 +349,39 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     // clients Total sans intervention de l'utilisateur.
     this.requestedCompanyId=undefined;
     this.scheduleLiveRefresh();
+    this.scheduleCardReferenceRefresh();
   }
 
   private scheduleLiveRefresh(){
     if(this.liveTimer)clearInterval(this.liveTimer);
     const minutes=Math.max(1,Number(process.env.TOTAL_LIVE_SYNC_MINUTES??1));
     this.liveTimer=setInterval(()=>void this.liveRefresh(),minutes*60_000);this.liveTimer.unref();
+  }
+
+  private scheduleCardReferenceRefresh(){
+    if(this.cardReferenceTimer)clearInterval(this.cardReferenceTimer);
+    const minutes=Math.max(30,Number(process.env.TOTAL_CARD_REFERENCE_SYNC_MINUTES??360));
+    this.cardReferenceTimer=setInterval(()=>void this.cardReferenceRefresh(),minutes*60_000);
+    this.cardReferenceTimer.unref();
+  }
+
+  private async cardReferenceRefresh(){
+    if(!this.actor||['STARTING','SIGNING_IN','CODE_REQUIRED','EXTRACTING'].includes(this.statusValue.state))return;
+    if(!this.browser||!this.page||this.page.isClosed()){
+      this.fail(new Error('Session Total interrompue; le référentiel va reprendre après reconnexion'));
+      return;
+    }
+    try{
+      this.cardLimitCheckpoint.clear();
+      this.setStatus('EXTRACTING','Agent Référentiel Total : cartes et plafonds des 4 sociétés…');
+      const clients=await this.extractClientsWithSessionRecovery(undefined);
+      this.lastCardReferenceSync=Date.now();
+      const summary=this.summarizeClientResults(clients);
+      this.statusValue={...this.status('SUCCESS','Référentiel cartes/plafonds Total actualisé pour toutes les sociétés'),result:{clients,...summary,worker:'CARD_REFERENCE',nextRealtime:true}};
+      // Une actualisation du référentiel est immédiatement suivie d'un cycle
+      // temps réel, sans attendre la prochaine minute du scheduler.
+      setTimeout(()=>void this.liveRefresh(),1_000).unref();
+    }catch(error){this.fail(error);}
   }
   private async liveRefresh(){
     if(!this.actor||['STARTING','SIGNING_IN','CODE_REQUIRED','EXTRACTING'].includes(this.statusValue.state))return;
@@ -359,12 +390,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     try{
-      this.setStatus('EXTRACTING','Actualisation temps réel des transactions Total…');
+      this.setStatus('EXTRACTING','Agent Temps réel : transactions, KM et chauffeurs des 4 sociétés…');
       const clients=await this.extractTransactionsLiveWithReference(this.requestedCompanyId);
       const summary=this.summarizeClientResults(clients);
       if(summary.fetched<1)
         throw new Error('Total n’a renvoyé aucune transaction : données existantes conservées');
-      this.statusValue={...this.status('SUCCESS',`${summary.visible} transaction(s) Total actualisée(s) automatiquement`),result:{clients,...summary,live:true}};
+      this.statusValue={...this.status('SUCCESS',`${summary.visible} transaction(s) Total actualisée(s) · véhicules/KM et chauffeurs synchronisés`),result:{clients,...summary,live:true,worker:'REALTIME',lastCardReferenceSync:this.lastCardReferenceSync||null}};
     }catch(error){this.fail(error);}
   }
 
@@ -1947,9 +1978,19 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     if(!company)throw new Error(`Société Delta ${code??clientName} introuvable`);
     if(Number(company.cards)<1)throw new Error(`Référentiel cartes absent pour ${clientName} : extraction complète requise`);
     this.activeClientName=clientName.trim().toUpperCase();
-    this.setStatus('EXTRACTING',`Temps réel Total ${clientName} : extraction transactions uniquement…`);
+    this.setStatus('EXTRACTING',`Temps réel Total ${clientName} : transactions…`);
     const transactions=await this.extractCurrentClientTransactions(clientName,company.id);
-    return {client:clientName,transactions,cards:{received:Number(company.cards),skipped:true,mode:'reference-cache'}};
+    this.setStatus('EXTRACTING',`Temps réel Total ${clientName} : chauffeurs…`);
+    const driverRows=await this.extractDrivers().catch(error=>{
+      this.logger.warn(`Temps réel chauffeurs ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
+    });
+    const drivers=driverRows.length?await this.total.importDrivers(driverRows,this.actor!,clientName):{received:0};
+    this.setStatus('EXTRACTING',`Temps réel Total ${clientName} : véhicules et kilométrages…`);
+    const vehicleRows=await this.extractVehicles().catch(error=>{
+      this.logger.warn(`Temps réel véhicules/KM ${clientName} : ${error instanceof Error?error.message:String(error)}`);return [];
+    });
+    const vehicles=vehicleRows.length?await this.total.importVehicles(vehicleRows,this.actor!,clientName):{received:0};
+    return {client:clientName,transactions,drivers,vehicles,cards:{received:Number(company.cards),skipped:true,mode:'reference-cache'}};
   }
 
   private async extractCurrentClientData(clientName:string){

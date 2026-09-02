@@ -704,6 +704,16 @@ export default function Home() {
     refreshRemote()
       .then(async ([cardResponse, requestResponse, notificationResponse,transactionResponse,summaryResponse,reviewsResponse,vehiclesResponse,mileageResponse,driversResponse,fuelPricesResponse,responsiblesResponse,companiesResponse,safeResponse,complaintsResponse,receiptsResponse,returnReceiptsResponse]) => {
         if (cancelled) return;
+        // Une limitation Render est transitoire et ne signifie ni perte de
+        // données ni arrêt de l'extraction Total. Conserver l'état présent à
+        // l'écran et attendre le prochain cycle sans afficher une panne rouge.
+        if([cardResponse,requestResponse,notificationResponse,transactionResponse,summaryResponse,reviewsResponse,
+          vehiclesResponse,mileageResponse,driversResponse,fuelPricesResponse,responsiblesResponse,companiesResponse,
+          safeResponse,complaintsResponse,receiptsResponse,returnReceiptsResponse]
+          .some(response=>response?.status===429)){
+          setError("");
+          return;
+        }
         // Management reference data must remain usable even if an unrelated
         // dashboard endpoint is temporarily unavailable.
         if(responsiblesResponse?.ok)setResponsibles(await responsiblesResponse.json());
@@ -761,7 +771,7 @@ export default function Home() {
       });
     const timer = window.setInterval(() => {
       if(document.visibilityState==='visible')setRefreshTick((current) => current + 1);
-    }, 90000);
+    }, 300000);
     return () => { cancelled = true; controller.abort(); window.clearInterval(timer); };
   }, [token, user, refreshTick,selectedClientId]);
   useEffect(()=>{
@@ -4295,7 +4305,7 @@ function Settings({ reset,token,user,companyId,companyCode,notify,onSynced }: { 
     }catch(error){notify(error instanceof Error?error.message:"Extraction Total impossible");setBusy(false);}
   }
   async function submitVerificationCode(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!token)return;setBusy(true);try{const response=await fetch(`${API}/total-mobility/agent/code`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({code:verificationCode})});const body=await response.json().catch(()=>({})) as TotalAgentStatus&{message?:string|string[]};if(!response.ok)throw new Error(Array.isArray(body.message)?body.message.join(" · "):body.message||"Code refusé");setAgent(body);setVerificationCode("");}catch(error){notify(error instanceof Error?error.message:"Code Total refusé");}finally{setBusy(false);}}
-  useEffect(()=>{if(!token||!agent||!["STARTING","SIGNING_IN","CODE_REQUIRED","EXTRACTING"].includes(agent.state))return;let polling=false;const poll=window.setInterval(()=>{if(polling||document.visibilityState!=="visible")return;polling=true;const endpoint=agentKind==="CARD_REFERENCE"?"card-agent/status":"agent/status";void fetch(`${API}/total-mobility/${endpoint}`,{headers:{Authorization:`Bearer ${token}`}}).then(async response=>{if(!response.ok)return;const next=await response.json() as TotalAgentStatus;setAgent(next);if(next.state==="SUCCESS"){setBusy(false);notify(agentKind==="CARD_REFERENCE"?"Cartes et plafonds Total actualisés pour le périmètre demandé.":`Temps réel Total : ${next.result?.visible??next.result?.imported??0} transaction(s) disponible(s) (${next.result?.fetched??0} reçue(s)).`);await loadTotal();onSynced();}else if(next.state==="FAILED"){setBusy(false);notify(next.message);}}).catch(()=>undefined).finally(()=>{polling=false});},3000);return()=>window.clearInterval(poll);},[agent,token,agentKind]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(()=>{if(!token||!agent||!["STARTING","SIGNING_IN","CODE_REQUIRED","EXTRACTING"].includes(agent.state))return;let polling=false;const poll=window.setInterval(()=>{if(polling||document.visibilityState!=="visible")return;polling=true;const endpoint=agentKind==="CARD_REFERENCE"?"card-agent/status":"agent/status";void fetch(`${API}/total-mobility/${endpoint}`,{headers:{Authorization:`Bearer ${token}`}}).then(async response=>{if(!response.ok)return;const next=await response.json() as TotalAgentStatus;setAgent(next);if(next.state==="SUCCESS"){setBusy(false);notify(agentKind==="CARD_REFERENCE"?"Cartes et plafonds Total actualisés pour le périmètre demandé.":`Temps réel Total : ${next.result?.visible??next.result?.imported??0} transaction(s) disponible(s) (${next.result?.fetched??0} reçue(s)).`);await loadTotal();onSynced();}else if(next.state==="FAILED"){setBusy(false);notify(next.message);}}).catch(()=>undefined).finally(()=>{polling=false});},7000);return()=>window.clearInterval(poll);},[agent,token,agentKind]); // eslint-disable-line react-hooks/exhaustive-deps
   async function loadTotal(){if(!token||!direction)return;try{const headers={Authorization:`Bearer ${token}`};const [a,b,c]=await Promise.all([fetch(`${API}/total-mobility/status`,{headers}),fetch(`${API}/total-mobility/runs`,{headers}),fetch(`${API}/total-mobility/cards/reconciliation`,{headers})]);if(a.ok)setTotal(await a.json());if(b.ok)setRuns(await b.json());if(c.ok)setTotalCards(await c.json());}catch{/* Rechargement au prochain affichage. */}}
   useEffect(()=>{
     if(!token||!direction)return;

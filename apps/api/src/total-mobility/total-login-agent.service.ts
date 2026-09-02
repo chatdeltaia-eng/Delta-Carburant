@@ -42,6 +42,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private requestedCompanyId?: string;
   private requestedMode: 'REALTIME' | 'REFERENCE' = 'REALTIME';
   private activeClientName?: string;
+  private lockedReference?: { code: string; clientName: string; expectedCards: number };
   private refreshToken?: string;
   private accessToken?: string;
   private liveTimer?: NodeJS.Timeout;
@@ -435,10 +436,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     }
     try{
       this.cardLimitCheckpoint.clear();
+      if(!companyId)this.lockedReference=undefined;
       this.setStatus('EXTRACTING',companyId?'Agent Référentiel Total : cartes et plafonds de la société sélectionnée…':'Agent Référentiel Total : cartes et plafonds des 4 sociétés…');
       const clients=await this.extractClientsWithSessionRecovery(companyId);
       this.lastCardReferenceSync=Date.now();
       const summary=this.summarizeClientResults(clients);
+      this.lockedReference=undefined;
       this.statusValue={...this.status('SUCCESS',companyId?'Référentiel cartes/plafonds Total actualisé pour la société sélectionnée':'Référentiel cartes/plafonds Total actualisé pour toutes les sociétés'),result:{clients,...summary,worker:'CARD_REFERENCE',companyId:companyId??null,nextRealtime:true}};
       this.referenceStatusValue=this.statusValue;
       this.requestedMode='REALTIME';
@@ -752,10 +755,15 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     const page=this.page;
     if(!page)throw new Error('Le navigateur Total a été fermé avant l’extraction des cartes');
     const checkpointClient=(this.activeClientName??'').trim().toUpperCase();
-    const storedInventory=checkpointClient?await this.db.query<{card_data:RemoteCardStatus;expected_total:number}>(
+    let storedInventory=checkpointClient?await this.db.query<{card_data:RemoteCardStatus;expected_total:number}>(
       `SELECT card_data,expected_total FROM total_card_inventory_extraction_checkpoint
        WHERE client_name=$1 ORDER BY card_number,payment_method_number`,[checkpointClient],
     ).catch(()=>[]):[];
+    if(this.lockedReference&&storedInventory.length&&storedInventory.length!==this.lockedReference.expectedCards){
+      this.logger.warn(`Checkpoint ${checkpointClient} rejeté : ${storedInventory.length} cartes, ${this.lockedReference.expectedCards} attendues pour ${this.lockedReference.code}`);
+      await this.db.query(`DELETE FROM total_card_inventory_extraction_checkpoint WHERE client_name=$1`,[checkpointClient]);
+      storedInventory=[];
+    }
     const storedExpected=storedInventory.length?Math.max(...storedInventory.map(row=>Number(row.expected_total)||0)):0;
     if(storedExpected>0&&storedInventory.length===storedExpected){
       const cachedCards=storedInventory.map(row=>({
@@ -919,6 +927,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         :this.activeClientName!=='DELTA CUISINE'&&result.length>0
           ?result.length
           :undefined;
+      if(this.lockedReference&&result.length!==this.lockedReference.expectedCards){
+        await this.db.query(`DELETE FROM total_card_inventory_extraction_checkpoint WHERE client_name=$1`,[checkpointClient]);
+        this.activeClientName=undefined;
+        throw new Error(`Client Total incorrect pour ${this.lockedReference.code} : ${result.length} cartes affichées, ${this.lockedReference.expectedCards} attendues. Sélection ${this.lockedReference.clientName} relancée sans import.`);
+      }
       if(expectedTotal!==undefined)result=result.map(card=>({...card,raw:{...(card.raw??{}),expectedTotal}}));
       if(checkpointClient&&expectedTotal!==undefined&&result.length===expectedTotal){
         await this.db.query(`INSERT INTO total_card_inventory_extraction_checkpoint(
@@ -1974,8 +1987,10 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async extractSelectedCompany(companyId:string){
-    const [company]=await this.db.query<{code:string;name:string}>(
-      `SELECT code,name FROM company WHERE id=$1 AND active LIMIT 1`,[companyId],
+    const [company]=await this.db.query<{code:string;name:string;cards:number}>(
+      `SELECT c.code,c.name,count(fc.id)::int cards FROM company c
+       LEFT JOIN fuel_card fc ON fc.company_id=c.id AND fc.deleted_at IS NULL
+       WHERE c.id=$1 AND c.active GROUP BY c.id LIMIT 1`,[companyId],
     );
     if(!company)throw new Error('La société sélectionnée dans Delta est introuvable ou inactive');
     const totalNames:Record<string,string>={
@@ -1983,6 +1998,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     };
     const clientName=totalNames[company.code.trim().toUpperCase()];
     if(!clientName)throw new Error(`Aucun client Total associé à la société Delta ${company.code}`);
+    this.lockedReference={code:company.code.trim().toUpperCase(),clientName,expectedCards:Number(company.cards)};
+    if(this.lockedReference.expectedCards<1)throw new Error(`Aucune carte de référence connue pour ${this.lockedReference.code}`);
     this.setStatus('EXTRACTING',`Référentiel ${company.code} : sélection exclusive du client Total ${clientName}…`);
     if(this.activeClientName===clientName.toUpperCase()&&
       this.page&&!/customer-selection|\/oauth2|access-?denied/i.test(this.page.url()))

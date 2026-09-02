@@ -77,9 +77,10 @@ export class TotalMobilityController {
     return this.agent.triggerRealtime(req.user, dto.companyId);
   }
   @Post('agent/reference') referenceAgent(
+    @Body() dto: StartTotalAgentDto,
     @Req() req: { user: { sub: string; email: string } },
   ) {
-    return this.agent.triggerCardReference(req.user);
+    return this.agent.triggerCardReference(req.user, dto.companyId);
   }
   @Post('agent/code') submitAgentCode(@Body() dto: TotalVerificationCodeDto) {
     return this.agent.submitCode(dto.code);

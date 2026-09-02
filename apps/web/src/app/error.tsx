@@ -23,12 +23,10 @@ export default function ApplicationError({error,reset}:{error:Error & {digest?:s
         return;
       }
       sessionStorage.removeItem(recoveryKey);
-      sessionStorage.removeItem("delta_access");
-      sessionStorage.removeItem("delta_refresh");
-      sessionStorage.removeItem("delta_user");
-      sessionStorage.removeItem("delta_client");
       reset();
-      location.replace(`/?version=${Date.now()}`);
+      const url=new URL(location.href);
+      url.searchParams.set("version",Date.now().toString());
+      location.replace(url.toString());
     })();
   },[error,reset]);
   return <main style={{minHeight:"100vh",display:"grid",placeItems:"center",fontFamily:"Arial,sans-serif",background:"#f4f8fb",color:"#17243a"}}><p>Reconnexion automatique à DeltaCarburant…</p></main>;

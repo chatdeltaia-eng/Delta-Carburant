@@ -63,7 +63,7 @@ export class AssistantService {
         CASE WHEN fc.monthly_limit>0 THEN round(100*sum(ft.amount_incl_tax)/fc.monthly_limit,1)::float ELSE 0 END rate
         FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id LEFT JOIN vehicle v ON v.id=ft.vehicle_id LEFT JOIN beneficiary b ON b.id=ft.beneficiary_id WHERE ${filter}
         GROUP BY fc.id,b.display_name,v.registration_display ORDER BY amount DESC LIMIT 200`,args),
-      this.db.query(`SELECT to_char(date_trunc('month',ft.transaction_date),'YYYY-MM') month,sum(ft.amount_incl_tax)::float amount,sum(ft.quantity_liters)::float liters,count(*)::int transactions
+      this.db.query(`SELECT to_char(date_trunc('month',ft.transaction_date),'YYYY-MM') AS "month",sum(ft.amount_incl_tax)::float amount,sum(ft.quantity_liters)::float liters,count(*)::int transactions
         FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id LEFT JOIN vehicle v ON v.id=ft.vehicle_id LEFT JOIN beneficiary b ON b.id=ft.beneficiary_id WHERE ${filter} GROUP BY 1 ORDER BY 1`,args),
       this.db.query(`SELECT to_char(ft.transaction_date,'YYYY-MM-DD') day,sum(ft.amount_incl_tax)::float amount,sum(ft.quantity_liters)::float liters,count(*)::int transactions
         FROM fuel_transaction ft JOIN fuel_card fc ON fc.id=ft.fuel_card_id LEFT JOIN vehicle v ON v.id=ft.vehicle_id LEFT JOIN beneficiary b ON b.id=ft.beneficiary_id WHERE ${filter} GROUP BY 1 ORDER BY 1 DESC LIMIT 370`,args),

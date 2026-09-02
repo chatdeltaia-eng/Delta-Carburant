@@ -40,11 +40,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
   private page?: Page;
   private actor?: Actor;
   private requestedCompanyId?: string;
+  private requestedMode: 'REALTIME' | 'REFERENCE' = 'REALTIME';
   private activeClientName?: string;
   private refreshToken?: string;
   private accessToken?: string;
   private liveTimer?: NodeJS.Timeout;
-  private cardReferenceTimer?: NodeJS.Timeout;
   private watchdogTimer?: NodeJS.Timeout;
   private lastCardReferenceSync=0;
   private lastCardDiagnostic='';
@@ -67,7 +67,6 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy() {
     if(this.liveTimer)clearInterval(this.liveTimer);
-    if(this.cardReferenceTimer)clearInterval(this.cardReferenceTimer);
     if(this.watchdogTimer)clearInterval(this.watchdogTimer);
     void this.closeBrowser();
   }
@@ -121,22 +120,22 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('Une extraction Total est déjà en cours. Le temps réel démarrera dès sa fin.');
     this.actor = actor;
     if (!this.browser || !this.page || this.page.isClosed()) {
-      return this.start(actor, companyId);
+      return this.start(actor, companyId, 'REALTIME');
     }
     void this.liveRefresh(companyId).catch((error) => this.fail(error));
     return this.getStatus();
   }
 
-  triggerCardReference(actor: Actor) {
+  triggerCardReference(actor: Actor, companyId?: string) {
     if (['STARTING', 'SIGNING_IN', 'CODE_REQUIRED', 'EXTRACTING'].includes(this.statusValue.state))
       throw new BadRequestException('Une extraction Total est déjà en cours.');
     this.actor = actor;
-    if (!this.browser || !this.page || this.page.isClosed()) return this.start(actor);
-    void this.cardReferenceRefresh().catch((error) => this.fail(error));
+    if (!this.browser || !this.page || this.page.isClosed()) return this.start(actor, companyId, 'REFERENCE');
+    void this.cardReferenceRefresh(companyId).catch((error) => this.fail(error));
     return this.getStatus();
   }
 
-  start(actor: Actor, companyId?: string) {
+  start(actor: Actor, companyId?: string, mode: 'REALTIME' | 'REFERENCE' = 'REALTIME') {
     // Une sélection effectuée dans Delta doit prendre effet même si le
     // watchdog avait déjà démarré un cycle. L'ancien code retournait avant
     // d'enregistrer companyId et poursuivait les quatre clients.
@@ -159,6 +158,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     if(this.statusValue.state!=='FAILED')this.cardLimitCheckpoint.clear();
     this.actor = actor;
     this.requestedCompanyId = companyId;
+    this.requestedMode = mode;
     this.activeClientName = undefined;
     this.refreshToken = undefined;
     this.accessToken = undefined;
@@ -363,8 +363,11 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       ? 'Extraction des transactions du client sélectionné…'
       : 'Extraction complète des transactions de tous les clients…');
     const selectedCompanyId=this.requestedCompanyId;
-    const clients=await this.extractClientsWithSessionRecovery(selectedCompanyId);
-    this.lastCardReferenceSync=Date.now();
+    const referenceRequested=this.requestedMode==='REFERENCE';
+    const clients=referenceRequested
+      ?await this.extractClientsWithSessionRecovery(selectedCompanyId)
+      :await this.extractTransactionsLiveWithReference(selectedCompanyId);
+    if(referenceRequested)this.lastCardReferenceSync=Date.now();
     const summary=this.summarizeClientResults(clients);
     if(summary.fetched<1)
       throw new Error('Total n’a renvoyé aucune transaction : actualisation refusée');
@@ -376,8 +379,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     // Les cycles suivants redeviennent globaux afin d'actualiser les quatre
     // clients Total sans intervention de l'utilisateur.
     this.requestedCompanyId=undefined;
+    this.requestedMode='REALTIME';
     this.scheduleLiveRefresh();
-    this.scheduleCardReferenceRefresh();
   }
 
   private scheduleLiveRefresh(){
@@ -386,14 +389,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     this.liveTimer=setInterval(()=>void this.liveRefresh(),minutes*60_000);this.liveTimer.unref();
   }
 
-  private scheduleCardReferenceRefresh(){
-    if(this.cardReferenceTimer)clearInterval(this.cardReferenceTimer);
-    const minutes=Math.max(30,Number(process.env.TOTAL_CARD_REFERENCE_SYNC_MINUTES??360));
-    this.cardReferenceTimer=setInterval(()=>void this.cardReferenceRefresh(),minutes*60_000);
-    this.cardReferenceTimer.unref();
-  }
-
-  private async cardReferenceRefresh(){
+  private async cardReferenceRefresh(companyId?: string){
     if(!this.actor||['STARTING','SIGNING_IN','CODE_REQUIRED','EXTRACTING'].includes(this.statusValue.state))return;
     if(!this.browser||!this.page||this.page.isClosed()){
       this.fail(new Error('Session Total interrompue; le référentiel va reprendre après reconnexion'));
@@ -401,8 +397,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     }
     try{
       this.cardLimitCheckpoint.clear();
-      this.setStatus('EXTRACTING','Agent Référentiel Total : cartes et plafonds des 4 sociétés…');
-      const clients=await this.extractClientsWithSessionRecovery(undefined);
+      this.setStatus('EXTRACTING',companyId?'Agent Référentiel Total : cartes et plafonds de la société sélectionnée…':'Agent Référentiel Total : cartes et plafonds des 4 sociétés…');
+      const clients=await this.extractClientsWithSessionRecovery(companyId);
       this.lastCardReferenceSync=Date.now();
       const summary=this.summarizeClientResults(clients);
       this.statusValue={...this.status('SUCCESS','Référentiel cartes/plafonds Total actualisé pour toutes les sociétés'),result:{clients,...summary,worker:'CARD_REFERENCE',nextRealtime:true}};
@@ -429,20 +425,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
 
   private async extractTransactionsLiveWithReference(companyId?:string){
     if(companyId)return [await this.extractSelectedCompanyTransactionsOnly(companyId)];
-    if(!await this.allActiveCompaniesHaveCardReference()){
-      this.cardLimitCheckpoint.clear();
-      this.setStatus('EXTRACTING','Référentiel cartes incomplet — extraction complète avant le temps réel…');
-      return this.extractClientsWithSessionRecovery(undefined);
-    }
     return this.extractAllClientTransactionsOnly();
-  }
-
-  private async allActiveCompaniesHaveCardReference(){
-    const rows=await this.db.query<{code:string;cards:number}>(`SELECT c.code,count(fc.id)::int cards
-      FROM company c LEFT JOIN fuel_card fc ON fc.company_id=c.id AND fc.deleted_at IS NULL
-      WHERE c.active AND upper(c.code) IN ('DC','IKIT','DCD','TCM')
-      GROUP BY c.code ORDER BY c.code`);
-    return rows.length>=4&&rows.every(row=>row.cards>0);
   }
 
   private async extractClientsWithSessionRecovery(companyId?:string){

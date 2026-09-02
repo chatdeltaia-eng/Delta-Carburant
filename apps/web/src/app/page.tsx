@@ -4322,9 +4322,10 @@ function Settings({ reset,token,user,companyId,notify,onSynced }: { reset:()=>vo
         </div>
         <div className={styles.referenceActions}>
           <button className={styles.connectorConnectButton} disabled={busy} onClick={reconnectWithAgent}>{busy?"Agent Total en cours…":"Reconnecter l’agent Total"}</button>
-          <button className={styles.connectorSecondaryButton} disabled={busy} onClick={()=>runAgentAction("reference")}>Actualiser cartes et plafonds</button>
+          <button className={styles.connectorSecondaryButton} disabled={busy} onClick={()=>runAgentAction("reference",true)}>Cartes/plafonds · société sélectionnée</button>
+          <button className={styles.connectorSecondaryButton} disabled={busy} onClick={()=>runAgentAction("reference")}>Cartes/plafonds · toutes les sociétés</button>
         </div>
-        <p><small>Le temps réel utilise les cartes déjà extraites. Le référentiel cartes/plafonds reste un agent séparé et s’actualise automatiquement toutes les 6 heures.</small></p>
+        <p><small>Le temps réel utilise les cartes déjà extraites. L’extraction des cartes et plafonds reste strictement manuelle et ne démarre qu’avec le bouton ci-dessus.</small></p>
         <details className={styles.connectorConfig}><summary>Mode de secours administrateur</summary><form onSubmit={connect} className={styles.connectorForm}>
           <div className={styles.connectorGuide}><b>1</b><span><strong>Copiez la configuration des transactions</strong><small>Total Mobility → F12 → Network → requête <code>report/list</code> → Payload → clic droit → Copy value.</small></span></div>
           <label className={styles.connectorSecret}>Configuration Total copiée<textarea name="totalPayload" rows={5} placeholder={'Collez ici tout le Request Payload. Les champs client, site et utilisateur seront détectés automatiquement.'} /></label>

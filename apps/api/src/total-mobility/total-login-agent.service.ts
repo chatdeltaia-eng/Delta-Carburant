@@ -413,8 +413,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     // clients Total sans intervention de l'utilisateur.
     this.requestedCompanyId=undefined;
     this.requestedMode='REALTIME';
-    this.scheduleLiveRefresh();
-    this.runPendingReference();
+    // L'instance spécialisée Cartes & Plafonds doit rester strictement
+    // manuelle. Seule l'instance Transactions programme le cycle temps réel.
+    if(!referenceRequested){
+      this.scheduleLiveRefresh();
+      this.runPendingReference();
+    }
   }
 
   private scheduleLiveRefresh(){
@@ -439,9 +443,8 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       this.referenceStatusValue=this.statusValue;
       this.requestedMode='REALTIME';
       this.requestedCompanyId=undefined;
-      // Une actualisation du référentiel est immédiatement suivie d'un cycle
-      // temps réel, sans attendre la prochaine minute du scheduler.
-      setTimeout(()=>void this.liveRefresh(),1_000).unref();
+      // Aucun cycle transactions ici : l'agent Cartes & Plafonds est une
+      // session indépendante et strictement manuelle.
     }catch(error){this.fail(error);}
   }
   private async liveRefresh(companyId?: string){

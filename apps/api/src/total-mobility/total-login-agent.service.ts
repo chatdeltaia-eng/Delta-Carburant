@@ -359,17 +359,31 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     try{
-      this.cardLimitCheckpoint.clear();
-      this.setStatus('EXTRACTING','Actualisation des transactions Total…');
-      // La passe précédente se termine sur le dernier client. Revenir au
-      // client configuré avant chaque cycle empêche d'attribuer les données du
-      // dernier client à DELTA CUISINE lors de la prochaine extraction.
-      const clients=await this.extractClientsWithSessionRecovery(this.requestedCompanyId);
+      this.setStatus('EXTRACTING','Actualisation temps réel des transactions Total…');
+      const clients=await this.extractTransactionsLiveWithReference(this.requestedCompanyId);
       const summary=this.summarizeClientResults(clients);
       if(summary.fetched<1)
         throw new Error('Total n’a renvoyé aucune transaction : données existantes conservées');
       this.statusValue={...this.status('SUCCESS',`${summary.visible} transaction(s) Total actualisée(s) automatiquement`),result:{clients,...summary,live:true}};
     }catch(error){this.fail(error);}
+  }
+
+  private async extractTransactionsLiveWithReference(companyId?:string){
+    if(companyId)return [await this.extractSelectedCompanyTransactionsOnly(companyId)];
+    if(!await this.allActiveCompaniesHaveCardReference()){
+      this.cardLimitCheckpoint.clear();
+      this.setStatus('EXTRACTING','Référentiel cartes incomplet — extraction complète avant le temps réel…');
+      return this.extractClientsWithSessionRecovery(undefined);
+    }
+    return this.extractAllClientTransactionsOnly();
+  }
+
+  private async allActiveCompaniesHaveCardReference(){
+    const rows=await this.db.query<{code:string;cards:number}>(`SELECT c.code,count(fc.id)::int cards
+      FROM company c LEFT JOIN fuel_card fc ON fc.company_id=c.id AND fc.deleted_at IS NULL
+      WHERE c.active AND upper(c.code) IN ('DC','IKIT','DCD','TCM')
+      GROUP BY c.code ORDER BY c.code`);
+    return rows.length>=4&&rows.every(row=>row.cards>0);
   }
 
   private async extractClientsWithSessionRecovery(companyId?:string){
@@ -1846,6 +1860,34 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     return results;
   }
 
+  private async extractAllClientTransactionsOnly(){
+    const page=this.page;if(!page||!this.actor)throw new Error('La session Total est indisponible pour le temps réel');
+    const knownClients=['DELTA CUISINE','IKIT TN','DELTA CUISINE DISTRIBUTION','STE LES TECHNIQUES DE MARBRE'];
+    const results:unknown[]=[];
+    await this.selectConfiguredClient();
+    results.push(await this.extractCurrentClientTransactionsOnly('DELTA CUISINE'));
+    for(const name of knownClients.filter(name=>name!=='DELTA CUISINE')){
+      await this.openTotalCustomerSelection();
+      const selected=await this.selectTotalClientByName(name);
+      if(!selected){results.push({client:name,error:'Client non sélectionnable'});continue;}
+      const confirmed=await this.confirmTotalCustomerSelection();
+      if(!confirmed){results.push({client:name,error:'Client non coché : bouton Ok désactivé'});continue;}
+      await this.waitForTotalRoute(
+        url=>!url.pathname.includes('customer-selection')&&!url.pathname.includes('/oauth2'),
+        `validation du client ${name}`,
+      );
+      await page.waitForTimeout(700);
+      this.activeClientName=name.trim().toUpperCase();
+      try{results.push(await this.extractCurrentClientTransactionsOnly(name));}
+      catch(error){
+        const message=error instanceof Error?error.message:String(error);
+        this.logger.warn(`Temps réel transactions Total ${name} : ${message}`);
+        results.push({client:name,error:message});
+      }
+    }
+    return results;
+  }
+
   private async extractSelectedCompany(companyId:string){
     const [company]=await this.db.query<{code:string;name:string}>(
       `SELECT code,name FROM company WHERE id=$1 AND active LIMIT 1`,[companyId],
@@ -1871,6 +1913,43 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     await this.page?.waitForTimeout(1_500);
     this.activeClientName=clientName.toUpperCase();
     return this.extractCurrentClientData(clientName);
+  }
+
+  private async extractSelectedCompanyTransactionsOnly(companyId:string){
+    const [company]=await this.db.query<{code:string;name:string}>(
+      `SELECT code,name FROM company WHERE id=$1 AND active LIMIT 1`,[companyId],
+    );
+    if(!company)throw new Error('La société sélectionnée dans Delta est introuvable ou inactive');
+    const totalNames:Record<string,string>={
+      DC:'DELTA CUISINE',IKIT:'IKIT TN',DCD:'DELTA CUISINE DISTRIBUTION',TCM:'STE LES TECHNIQUES DE MARBRE',
+    };
+    const clientName=totalNames[company.code.trim().toUpperCase()];
+    if(!clientName)throw new Error(`Aucun client Total associé à la société Delta ${company.code}`);
+    if(this.activeClientName!==clientName.toUpperCase()||!this.page||/customer-selection|\/oauth2|access-?denied/i.test(this.page.url())){
+      await this.openTotalCustomerSelection();
+      if(!await this.selectTotalClientByName(clientName))throw new Error(`Le client Total ${clientName} n'est pas sélectionnable`);
+      if(!await this.confirmTotalCustomerSelection())throw new Error(`Le client Total ${clientName} n'a pas été confirmé`);
+      await this.waitForTotalRoute(url=>!url.pathname.includes('customer-selection')&&!url.pathname.includes('/oauth2'),`validation du client ${clientName}`);
+      await this.page?.waitForTimeout(700);
+      this.activeClientName=clientName.toUpperCase();
+    }
+    return this.extractCurrentClientTransactionsOnly(clientName);
+  }
+
+  private async extractCurrentClientTransactionsOnly(clientName:string){
+    const companyCodes:Record<string,string>={
+      'DELTA CUISINE':'DC','IKIT TN':'IKIT','DELTA CUISINE DISTRIBUTION':'DCD','STE LES TECHNIQUES DE MARBRE':'TCM',
+    };
+    const code=companyCodes[clientName.trim().toUpperCase()];
+    const [company]=await this.db.query<{id:string;cards:number}>(`SELECT c.id,count(fc.id)::int cards
+      FROM company c LEFT JOIN fuel_card fc ON fc.company_id=c.id AND fc.deleted_at IS NULL
+      WHERE c.active AND upper(c.code)=$1 GROUP BY c.id LIMIT 1`,[code]);
+    if(!company)throw new Error(`Société Delta ${code??clientName} introuvable`);
+    if(Number(company.cards)<1)throw new Error(`Référentiel cartes absent pour ${clientName} : extraction complète requise`);
+    this.activeClientName=clientName.trim().toUpperCase();
+    this.setStatus('EXTRACTING',`Temps réel Total ${clientName} : extraction transactions uniquement…`);
+    const transactions=await this.extractCurrentClientTransactions(clientName,company.id);
+    return {client:clientName,transactions,cards:{received:Number(company.cards),skipped:true,mode:'reference-cache'}};
   }
 
   private async extractCurrentClientData(clientName:string){

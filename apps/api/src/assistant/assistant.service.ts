@@ -1,14 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { DatabaseService } from '../database/database.service';
+import { MailingService } from '../mailing/mailing.service';
 
 type Actor={sub:string;role:string;email:string};
-type Intent={startDate:string|null;endDate:string|null;card:string|null;vehicle:string|null;beneficiary:string|null;navigation:string|null};
+type Intent={startDate:string|null;endDate:string|null;card:string|null;vehicle:string|null;beneficiary:string|null;navigation:string|null;emailRequested:boolean;emailRecipient:'DIRECTION'|'KHALED'|null};
 type OpenAIResponse={output_text?:string;output?:{type?:string;content?:{type?:string;text?:string}[]}[]};
 
 @Injectable()
 export class AssistantService {
-  constructor(private readonly db:DatabaseService) {}
+  constructor(private readonly db:DatabaseService,private readonly mail:MailingService) {}
 
   private async model(input:string,instructions:string,jsonSchema?:Record<string,unknown>) {
     const response=await fetch('https://api.openai.com/v1/responses',{
@@ -30,12 +31,13 @@ export class AssistantService {
 
   private async understand(question:string) {
     const today=new Date().toISOString().slice(0,10);
-    const schema={type:'object',additionalProperties:false,required:['startDate','endDate','card','vehicle','beneficiary','navigation'],properties:{
+    const schema={type:'object',additionalProperties:false,required:['startDate','endDate','card','vehicle','beneficiary','navigation','emailRequested','emailRecipient'],properties:{
       startDate:{type:['string','null'],description:'YYYY-MM-DD inclus'},endDate:{type:['string','null'],description:'YYYY-MM-DD inclus'},
       card:{type:['string','null']},vehicle:{type:['string','null']},beneficiary:{type:['string','null']},
       navigation:{type:['string','null'],enum:['dashboard','reports','cards','beneficiaries','vehicles','drivers','fuelPrices','transactions','requests','mileage','anomalies','complaints','returns','documents','settings',null]},
+      emailRequested:{type:'boolean'},emailRecipient:{type:['string','null'],enum:['DIRECTION','KHALED',null]},
     }};
-    const text=await this.model(question,`Nous sommes le ${today}. Extrais uniquement les filtres explicites ou implicites de la question française. Pour un mois, utilise son premier et dernier jour. Pour « ce mois », utilise le mois courant. Une demande d'ouverture/navigation renseigne navigation.`,schema);
+    const text=await this.model(question,`Nous sommes le ${today}. Extrais uniquement les filtres explicites ou implicites de la question française. Pour un mois, utilise son premier et dernier jour. Pour « ce mois », utilise le mois courant. Une demande d'ouverture/navigation renseigne navigation. Si l'utilisateur demande d'envoyer ou préparer un e-mail, emailRequested=true. Le destinataire autorisé est seulement DIRECTION ou KHALED.`,schema);
     return JSON.parse(text) as Intent;
   }
 
@@ -115,6 +117,23 @@ export class AssistantService {
     const recent=(dto.history??[]).slice(-8).map(item=>`${item.role}: ${item.text}`).join('\n');
     const answer=await this.model(`Historique:\n${recent}\n\nQuestion: ${dto.question}\n\nDonnées autorisées et actualisées:\n${JSON.stringify(data)}`,
       `Tu es l'assistant métier Delta Carburant, présent dans tous les modules. Réponds en français, clairement et brièvement, uniquement avec les données fournies. Tu peux aider sur cartes, consommations, transactions, plafonds, dépassements, véhicules, chauffeurs, bénéficiaires, kilométrage, anomalies, demandes, réclamations, reçus, documents, imports, qualité de données, audits et synchronisation Total. Calcule, compare et explique si nécessaire. Respecte les filtres et indique la période utilisée. Les montants sont en TND et les volumes en litres. Ne prétends jamais qu'une donnée absente vaut zéro. N'invente rien. Si la question demande une action sensible ou une modification, explique la procédure et demande confirmation sans effectuer l'action.`,undefined);
-    return {answer,navigate:intent.navigation??null,filters:intent,requestId:createHash('sha256').update(`${actor.sub}:${Date.now()}`).digest('hex').slice(0,16)};
+    return {answer:intent.emailRequested?`${answer}\n\nL’e-mail est prêt. Confirmez-vous l’envoi ?`:answer,navigate:intent.navigation??null,filters:intent,
+      action:intent.emailRequested?{type:'SEND_CONSUMPTION_EMAIL',recipient:intent.emailRecipient??'DIRECTION',requiresConfirmation:true}:null,
+      requestId:createHash('sha256').update(`${actor.sub}:${Date.now()}`).digest('hex').slice(0,16)};
+  }
+
+  async sendConsumptionEmail(dto:{question:string;companyId?:string;history?:{role:'user'|'assistant';text:string}[]},actor:Actor){
+    const intent=await this.understand(dto.question);
+    const data=await this.businessData(intent,actor,dto.companyId);
+    const content=await this.model(`Demande confirmée: ${dto.question}\nDonnées autorisées: ${JSON.stringify(data)}`,
+      `Rédige un rapport e-mail professionnel en français sur la consommation demandée. Donne la période, les totaux, les sociétés/cartes utiles et les dépassements. Utilise uniquement les données fournies. Texte brut concis.`,undefined);
+    const configured=(process.env.DIRECTION_MAIL_TO||'khaled.sfaxi@deltacuisine.com').split(',').map(value=>value.trim()).filter(Boolean);
+    const khaled=process.env.KHALED_MAIL_TO?.trim()||'khaled.sfaxi@deltacuisine.com';
+    const recipients=intent.emailRecipient==='KHALED'?[khaled]:configured;
+    const escape=(value:string)=>value.replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]!));
+    const result=await this.mail.send(recipients,`Rapport consommation Delta Carburant — ${new Date().toLocaleDateString('fr-TN')}`,
+      `<div style="font-family:Arial,sans-serif;max-width:820px;color:#18344a"><h2>Rapport demandé depuis l’assistant Delta IA</h2><p style="white-space:pre-line;line-height:1.65">${escape(content)}</p><hr><small>Demande confirmée par ${escape(actor.email)}.</small></div>`);
+    await this.db.query(`INSERT INTO management_mail_log(report_type,recipients,status,details) VALUES('ASSISTANT_CONSUMPTION',$1,$2,$3)`,[recipients,result.sent?'SENT':'SKIPPED',{actor:actor.email,question:dto.question,...result}]);
+    return {...result,recipients,answer:result.sent?`E-mail envoyé à ${recipients.join(', ')}.`:'E-mail non envoyé : vérifiez la configuration SMTP Render.'};
   }
 }

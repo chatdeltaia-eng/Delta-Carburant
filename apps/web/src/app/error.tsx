@@ -9,11 +9,21 @@ export default function ApplicationError({error,reset}:{error:Error & {digest?:s
     console.error("DeltaCarburant application error",error);
     const message=String(error?.message??"").toLowerCase();
     const staleBundle=["chunk","loading css","failed to fetch dynamically imported","module factory"].some(value=>message.includes(value));
-    if(staleBundle&&sessionStorage.getItem(recoveryKey)!==location.pathname){
-      sessionStorage.setItem(recoveryKey,location.pathname);
+    const signature=`${location.pathname}:${error?.digest??message.slice(0,80)}`;
+    if(sessionStorage.getItem(recoveryKey)!==signature){
+      sessionStorage.setItem(recoveryKey,signature);
       const url=new URL(location.href);
       url.searchParams.set("actualisation",Date.now().toString());
       location.replace(url.toString());
+      return;
+    }
+    // Une deuxième erreur identique provient généralement d'un état local de
+    // session incompatible avec la nouvelle version. Revenir à la connexion
+    // sans toucher aux données serveur évite de bloquer l'utilisateur.
+    if(!staleBundle&&sessionStorage.getItem(`${recoveryKey}_login`)!==signature){
+      sessionStorage.setItem(`${recoveryKey}_login`,signature);
+      sessionStorage.removeItem("delta_access");sessionStorage.removeItem("delta_refresh");sessionStorage.removeItem("delta_user");sessionStorage.removeItem("delta_client");
+      location.replace(`/?actualisation=${Date.now()}`);
     }
   },[error]);
   return <main style={{minHeight:"100vh",display:"grid",placeItems:"center",fontFamily:"Arial,sans-serif",background:"#f4f8fb",color:"#17243a"}}>

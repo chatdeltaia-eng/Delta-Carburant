@@ -45,6 +45,10 @@ services:
         sync: false
       - key: DIRECTION_MAIL_TO
         value: khaled.sfaxi@deltacuisine.com
+      - key: KHALED_MAIL_TO
+        value: khaled.sfaxi@deltacuisine.com
+      - key: DIRECTION_MAIL_HOUR
+        value: 8
       - key: ANOMALY_MAIL_TO
         value: khaled.sfaxi@deltacuisine.com
       - key: ANOMALY_MAIL_INTERVAL_SECONDS

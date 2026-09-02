@@ -17,6 +17,10 @@ export const metadata: Metadata = {
   description: "Gestion sécurisée des cartes et dépenses carburant",
 };
 
+// La page contient une session métier longue durée. La rendre dynamiquement
+// empêche un ancien HTML Render de référencer les chunks du déploiement précédent.
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="fr" className={`${geistSans.variable} ${geistMono.variable}`}>

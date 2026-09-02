@@ -8,6 +8,6 @@ import { AnomalyMailService } from './anomaly-mail.service';
 @Module({
   controllers:[MailingController],
   providers:[MailingService,CardFollowupService,AnomalyMailService,{provide:APP_INTERCEPTOR,useClass:OperationMailInterceptor}],
-  exports:[MailingService],
+  exports:[MailingService,CardFollowupService],
 })
 export class MailingModule {}

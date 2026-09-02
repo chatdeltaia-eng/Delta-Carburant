@@ -118,6 +118,7 @@ type Notification = {
 };
 
 type AssistantMessage = { id: string; role: "user" | "assistant"; text: string };
+type AssistantEmailAction = { question:string; recipient:"DIRECTION"|"KHALED" };
 
 const toNotification = (row: Record<string, unknown>, role: Role): Notification => ({
   id: String(row.id),
@@ -2338,6 +2339,7 @@ function VoiceAssistant({token,companyId,cards,go}:{token:string;companyId:strin
   const [input,setInput]=useState("");
   const [listening,setListening]=useState(false);
   const [busy,setBusy]=useState(false);
+  const [pendingEmail,setPendingEmail]=useState<AssistantEmailAction|null>(null);
   const [messages,setMessages]=useState<AssistantMessage[]>([
     {id:"welcome",role:"assistant",text:"Bonjour, je peux vous guider dans l’application et répondre aux questions de consommation mensuelle."},
   ]);
@@ -2391,8 +2393,9 @@ function VoiceAssistant({token,companyId,cards,go}:{token:string;companyId:strin
         body:JSON.stringify({question,companyId:companyId||undefined,history:messages.slice(-8).map(message=>({role:message.role,text:message.text}))}),
       });
       if(response.ok){
-        const result=await response.json() as {answer:string;navigate?:View|null};
+        const result=await response.json() as {answer:string;navigate?:View|null;action?:{type:string;recipient:"DIRECTION"|"KHALED";requiresConfirmation:boolean}|null};
         if(result.navigate)go(result.navigate);
+        if(result.action?.type==="SEND_CONSUMPTION_EMAIL")setPendingEmail({question,recipient:result.action.recipient});
         reply(result.answer);
         return;
       }
@@ -2433,6 +2436,17 @@ function VoiceAssistant({token,companyId,cards,go}:{token:string;companyId:strin
     }
     reply("Je peux ouvrir une page ou répondre sur une consommation mensuelle. Exemple : « consommation d’août » ou « dirige-moi vers les transactions ». ");
   };
+  const confirmEmail=async()=>{
+    if(!pendingEmail||busy)return;
+    setBusy(true);
+    try{
+      const response=await fetch(`${API}/assistant/send-email`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({question:pendingEmail.question,companyId:companyId||undefined,history:messages.slice(-8).map(message=>({role:message.role,text:message.text}))})});
+      if(!response.ok)throw new Error();
+      const result=await response.json() as {answer:string};
+      setPendingEmail(null);reply(result.answer);
+    }catch{reply("L’e-mail n’a pas pu être envoyé. Vérifiez la configuration SMTP de l’API Render.",false)}
+    finally{setBusy(false)}
+  };
   const listen=()=>{
     if(typeof window==="undefined")return;
     type RecognitionEvent={results:{[index:number]:{[index:number]:{transcript:string}}}};
@@ -2452,7 +2466,7 @@ function VoiceAssistant({token,companyId,cards,go}:{token:string;companyId:strin
   return <aside className={`${styles.aiAssistant} ${open?styles.aiAssistantOpen:""}`} aria-label="Assistant vocal et écrit">
     {open&&<section className={styles.aiPanel}>
       <header><div><span>✦</span><div><b>Assistant Delta IA</b><small>Vocal et écrit · données du client actif</small></div></div><button type="button" onClick={()=>setOpen(false)} aria-label="Fermer">×</button></header>
-      <div className={styles.aiMessages}>{messages.map(message=><p key={message.id} className={message.role==="user"?styles.aiUser:styles.aiBot}>{message.text}</p>)}{busy&&<p className={styles.aiBot}>Analyse des données…</p>}<div ref={bottomRef}/></div>
+      <div className={styles.aiMessages}>{messages.map(message=><p key={message.id} className={message.role==="user"?styles.aiUser:styles.aiBot}>{message.text}</p>)}{pendingEmail&&<div className={styles.aiConfirmation}><b>Envoyer à {pendingEmail.recipient==="KHALED"?"Khaled Sfaxi":"la Direction Générale"} ?</b><span><button type="button" onClick={()=>void confirmEmail()} disabled={busy}>Confirmer l’envoi</button><button type="button" onClick={()=>{setPendingEmail(null);reply("Envoi annulé.",false)}}>Annuler</button></span></div>}{busy&&<p className={styles.aiBot}>Analyse des données…</p>}<div ref={bottomRef}/></div>
       <form onSubmit={event=>{event.preventDefault();void submit()}}><input value={input} onChange={event=>setInput(event.target.value)} placeholder="Écrivez votre demande…" aria-label="Message à l’assistant"/><button type="button" className={listening?styles.aiListening:""} onClick={()=>listening?recognitionRef.current?.stop():listen()} aria-label="Parler">{listening?"■":"●"}</button><button type="submit" disabled={!input.trim()||busy} aria-label="Envoyer">➤</button></form>
       <div className={styles.aiExamples}><button onClick={()=>void submit("Dirige-moi vers la page consommation")}>Ouvrir consommations</button><button onClick={()=>void submit("Montant de consommation de ce mois")}>Consommation du mois</button></div>
     </section>}

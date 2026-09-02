@@ -442,11 +442,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
         // être reprises dans la session courante sans fermer Chromium.
         if(!page||page.isClosed()||/customer-selection|\/oauth2|gigya|login|access-?denied/i.test(page.url()))throw error;
         const message=error instanceof Error?error.message:String(error);
+        const checkpointClient=(this.activeClientName??'DELTA CUISINE').trim().toUpperCase();
         const [progress]=await this.db.query<{count:number}>(`SELECT count(*)::int count
-          FROM total_card_limit_extraction_checkpoint WHERE client_name='DELTA CUISINE'`).catch(()=>[]);
+          FROM total_card_limit_extraction_checkpoint WHERE client_name=$1`,[checkpointClient]).catch(()=>[]);
         const completed=Number(progress?.count??0);
-        this.setStatus('EXTRACTING',`Reprise ${attempt} dans la même session — ${completed}/40 plafonds DC conservés — blocage : ${message}`);
-        this.logger.warn(`Reprise Total ${attempt}, checkpoints DC ${completed}/40 : ${message}`);
+        this.setStatus('EXTRACTING',`Reprise ${attempt} dans la même session — ${completed} plafond(s) ${checkpointClient} conservé(s) — blocage : ${message}`);
+        this.logger.warn(`Reprise Total ${attempt}, checkpoints ${checkpointClient} ${completed} : ${message}`);
         await page.keyboard.press('Escape').catch(()=>undefined);
         for(const frame of page.frames())await frame.evaluate(()=>{
           for(const dialog of document.querySelectorAll<HTMLElement>('.q-dialog[aria-hidden="true"]')){
@@ -1854,23 +1855,9 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     const page=this.page;if(!page||!this.actor)throw new Error('La session Total est indisponible pour les cartes');
     const knownClients=['DELTA CUISINE','IKIT TN','DELTA CUISINE DISTRIBUTION','STE LES TECHNIQUES DE MARBRE'];
     const results:unknown[]=[];
-    // Toujours repartir du client configuré : une passe précédente se termine
-    // sur STE LES TECHNIQUES DE MARBRE et le navigateur reste sur ce client.
-    await this.selectConfiguredClient();
-    // DELTA CUISINE est prioritaire : ses 40 cartes et 40 plafonds doivent
-    // être complètement validés avant même d'ouvrir la sélection d'un autre
-    // client. Ne jamais avaler une erreur DC puis perdre du temps sur IKIT,
-    // DCD ou TCM avec un référentiel principal incomplet.
-    results.push(await this.extractCurrentClientData('DELTA CUISINE'));
-    // Si l'utilisateur a choisi une société pendant ce cycle automatique,
-    // arrêter immédiatement le parcours groupe et honorer ce périmètre seul.
-    if(this.requestedCompanyId)
-      return [await this.extractSelectedCompany(this.requestedCompanyId)];
-    // Ne pas déduire les noms depuis tous les labels Quasar : leurs icônes
-    // Material (« arrow_drop_down », etc.) sont aussi exposées comme du texte
-    // et seraient prises à tort pour des clients.
-    const names=knownClients.filter(name=>name!=='DELTA CUISINE');
-    for(const name of names){
+    // Chaque société est un lot indépendant. Une erreur DC ne doit jamais
+    // empêcher l'extraction des plafonds IKIT, DCD ou TCM.
+    for(const name of knownClients){
       if(this.requestedCompanyId)
         return [await this.extractSelectedCompany(this.requestedCompanyId)];
       await this.openTotalCustomerSelection();
@@ -1884,9 +1871,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
       );
       await page.waitForTimeout(1_500);
       this.activeClientName=name.trim().toUpperCase();
-      try{
-        results.push(await this.extractCurrentClientData(name));
-      }catch(error){
+      try{results.push(await this.extractCurrentClientData(name));}catch(error){
         const message=error instanceof Error?error.message:String(error);
         this.logger.warn(`Extraction des cartes Total pour ${name} : ${message}`);
         results.push({client:name,error:message});

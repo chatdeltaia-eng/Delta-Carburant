@@ -2000,12 +2000,20 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     if(!clientName)throw new Error(`Aucun client Total associé à la société Delta ${company.code}`);
     const companyCode=company.code.trim().toUpperCase();
     const canonicalExpected:Record<string,number>={IKIT:5};
+    const freshTarget=this.lockedReference?.code!==companyCode;
     this.lockedReference={code:companyCode,clientName,expectedCards:canonicalExpected[companyCode]??Number(company.cards)};
     if(this.lockedReference.expectedCards<1)throw new Error(`Aucune carte de référence connue pour ${this.lockedReference.code}`);
+    if(freshTarget){
+      // Une extraction ciblée ne doit jamais reprendre un inventaire créé
+      // sous un autre client Total. Les checkpoints seront recréés après la
+      // confirmation explicite du bon radio.
+      await this.db.query(`DELETE FROM total_card_inventory_extraction_checkpoint WHERE client_name=$1`,[clientName]);
+      await this.db.query(`DELETE FROM total_card_limit_extraction_checkpoint WHERE client_name=$1`,[clientName]);
+    }
     this.setStatus('EXTRACTING',`Référentiel ${company.code} : sélection exclusive du client Total ${clientName}…`);
-    if(this.activeClientName===clientName.toUpperCase()&&
-      this.page&&!/customer-selection|\/oauth2|access-?denied/i.test(this.page.url()))
-      return this.extractCurrentClientData(clientName);
+    // Toujours repasser par « Choisir un client ». L'état mémoire de la SPA
+    // peut annoncer IKIT alors que la grille encore rendue appartient à DC.
+    this.activeClientName=undefined;
     await this.openTotalCustomerSelection();
     if(!await this.selectTotalClientByName(clientName))
       throw new Error(`Le client Total ${clientName} n'est pas sélectionnable`);

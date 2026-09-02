@@ -4299,12 +4299,11 @@ function Settings({ reset,token,user,companyId,notify,onSynced }: { reset:()=>vo
   useEffect(()=>{
     if(!token||!direction)return;
     const headers={Authorization:`Bearer ${token}`};
-    void Promise.all([fetch(`${API}/total-mobility/status`,{headers}),fetch(`${API}/total-mobility/runs`,{headers}),fetch(`${API}/total-mobility/cards/reconciliation`,{headers}),fetch(`${API}/total-mobility/agent/status`,{headers})])
-      .then(async([statusResponse,runsResponse,cardsResponse,agentResponse])=>{
+    void Promise.all([fetch(`${API}/total-mobility/status`,{headers}),fetch(`${API}/total-mobility/runs`,{headers}),fetch(`${API}/total-mobility/cards/reconciliation`,{headers})])
+      .then(async([statusResponse,runsResponse,cardsResponse])=>{
         if(statusResponse.ok)setTotal(await statusResponse.json());
         if(runsResponse.ok)setRuns(await runsResponse.json());
         if(cardsResponse.ok)setTotalCards(await cardsResponse.json());
-        if(agentResponse.ok)setAgent(await agentResponse.json());
       }).catch(()=>undefined);
   },[token,direction]);
   async function connect(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!token)return;const formElement=event.currentTarget;setBusy(true);try{const form=new FormData(formElement);const simplePayload=String(form.get("totalPayload")??"").trim();const copied=simplePayload?readTotalMobilityPayload(simplePayload):{};const configuration={customerId:copied.CustomerId||String(form.get("customerId")??""),customerNumber:copied.CustomerNumber||String(form.get("customerNumber")??""),siteNumber:copied.SiteNumber||String(form.get("siteNumber")??""),userId:copied.UserId||String(form.get("totalUserId")??""),username:copied.usersname||String(form.get("totalUsername")??""),refreshToken:String(form.get("refreshToken")??""),syncIntervalMinutes:Number(form.get("syncIntervalMinutes")??60)};if(!configuration.customerId||!configuration.customerNumber||!configuration.siteNumber)throw new Error("La configuration copiée ne contient pas les informations client Total. Utilisez « Copy value » sur Request Payload.");const response=await fetch(`${API}/total-mobility/connect`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify(configuration)});if(!response.ok){const raw=await response.text();let message="";try{const body=JSON.parse(raw) as {message?:string|string[]};message=Array.isArray(body.message)?body.message.join(" · "):body.message??"";}catch{message=raw;}throw new Error(message||`Connexion Total refusée (${response.status})`);}formElement.reset();notify("Total Mobility est connecté. Les transactions seront désormais extraites automatiquement, sans fichier CSV ou Excel.");await loadTotal();}catch(error){notify(error instanceof Error?error.message:"Connexion Total impossible");}finally{setBusy(false);}}

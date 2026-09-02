@@ -352,11 +352,12 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     // ouvert avant que le client configuré ait été réellement sélectionné et
     // validé avec « Ok », sinon le portail charge des données sans périmètre
     // fiable ou renvoie vers access-denied.
-    // En mode ciblé, extractSelectedCompany réalise lui-même l'unique
-    // sélection demandée. L'ancien enchaînement sélectionnait DC ici puis le
-    // resélectionnait immédiatement, ce que Total refusait.
-    if(!this.requestedCompanyId)await this.selectConfiguredClient();
-    this.setStatus('EXTRACTING', 'Client Total sélectionné. Extraction des transactions…');
+    // Chaque worker sélectionne lui-même son client juste avant la lecture.
+    // Ne jamais présélectionner le client configuré (historiquement DC) : une
+    // demande ciblée IKIT/DCD/TCM ne doit même pas ouvrir Delta Cuisine.
+    this.setStatus('EXTRACTING', this.requestedCompanyId
+      ? 'Connexion réussie. Sélection exclusive de la société demandée…'
+      : 'Connexion réussie. Synchronisation successive des 4 sociétés…');
     if(refreshToken)await this.total.reconnect(refreshToken, this.actor);
     else if(!accessToken)throw new Error('Total n’a fourni aucun jeton de session exploitable');
     this.setStatus('EXTRACTING', this.requestedCompanyId
@@ -1940,6 +1941,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     };
     const clientName=totalNames[company.code.trim().toUpperCase()];
     if(!clientName)throw new Error(`Aucun client Total associé à la société Delta ${company.code}`);
+    this.setStatus('EXTRACTING',`Référentiel ${company.code} : sélection exclusive du client Total ${clientName}…`);
     if(this.activeClientName===clientName.toUpperCase()&&
       this.page&&!/customer-selection|\/oauth2|access-?denied/i.test(this.page.url()))
       return this.extractCurrentClientData(clientName);
@@ -1967,6 +1969,7 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     };
     const clientName=totalNames[company.code.trim().toUpperCase()];
     if(!clientName)throw new Error(`Aucun client Total associé à la société Delta ${company.code}`);
+    this.setStatus('EXTRACTING',`Temps réel ${company.code} : sélection exclusive du client Total ${clientName}…`);
     if(this.activeClientName!==clientName.toUpperCase()||!this.page||/customer-selection|\/oauth2|access-?denied/i.test(this.page.url())){
       await this.openTotalCustomerSelection();
       if(!await this.selectTotalClientByName(clientName))throw new Error(`Le client Total ${clientName} n'est pas sélectionnable`);

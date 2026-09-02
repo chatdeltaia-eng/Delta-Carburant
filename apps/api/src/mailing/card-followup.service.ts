@@ -54,7 +54,14 @@ export class CardFollowupService implements OnModuleInit, OnModuleDestroy {
       await this.createCardAlerts();
       const hour = Number(process.env.DIRECTION_MAIL_HOUR || 8);
       const now = new Date();
-      if (now.getHours() !== hour) return;
+      const tunisHour = Number(
+        new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Africa/Tunis',
+          hour: '2-digit',
+          hour12: false,
+        }).format(now),
+      );
+      if (tunisHour !== hour) return;
       const sent = await this.db.query(`SELECT 1 FROM management_mail_log WHERE report_type='CARD_FOLLOWUP' AND created_at::date=current_date AND status='SENT' LIMIT 1`);
       if (!sent.length) await this.sendDirectionReport('DAILY_SCHEDULE');
     } catch (error) { this.logger.error(`Rapport de suivi non envoyé : ${error instanceof Error ? error.message : 'erreur inconnue'}`); }

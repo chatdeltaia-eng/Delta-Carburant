@@ -17,6 +17,9 @@ type Actor = { sub: string; email: string };
 export class TotalCardReferenceAgentService implements OnModuleDestroy {
   private readonly coordinator: TotalLoginAgentService;
   private readonly db: DatabaseService;
+  private watchdog?: NodeJS.Timeout;
+  private currentRequest?: {actor:Actor;companyId:string};
+  private restarting=false;
 
   constructor(total: TotalMobilityService, db: DatabaseService) {
     this.db = db;
@@ -25,10 +28,34 @@ export class TotalCardReferenceAgentService implements OnModuleDestroy {
     // de société ; son onModuleInit n'est pas appelé, donc aucun worker temps
     // réel ne démarre dans cet agent manuel.
     this.coordinator = new TotalLoginAgentService(total, db);
+    // L'instance manuelle n'est pas gérée par le cycle de vie Nest du
+    // coordinateur et ne possédait donc aucun watchdog. Surveiller les étapes
+    // afin qu'un clic Quasar ou une reconnexion figée ne laisse jamais la
+    // fenêtre sur « carte 4/7 » indéfiniment.
+    this.watchdog=setInterval(()=>void this.recoverIfStalled(),30_000);
+    this.watchdog.unref();
   }
 
   onModuleDestroy() {
+    if(this.watchdog)clearInterval(this.watchdog);
     this.coordinator.onModuleDestroy();
+  }
+
+  private async recoverIfStalled(){
+    if(this.restarting||!this.currentRequest)return;
+    const status=this.coordinator.getReferenceStatus();
+    if(!['STARTING','SIGNING_IN','EXTRACTING','FAILED'].includes(status.state))return;
+    const age=Date.now()-new Date(status.updatedAt).getTime();
+    const failed=status.state==='FAILED';
+    if(!failed&&age<180_000)return;
+    this.restarting=true;
+    try{
+      await this.coordinator.restartCardReference(
+        this.currentRequest.actor,this.currentRequest.companyId,
+        failed?`Reprise après erreur : ${status.message}`:
+          `Aucune progression depuis ${Math.round(age/60_000)} minute(s) à l'étape « ${status.message} »`,
+      );
+    }finally{this.restarting=false;}
   }
 
   status() {
@@ -48,6 +75,7 @@ export class TotalCardReferenceAgentService implements OnModuleDestroy {
       `SELECT code FROM company WHERE id=$1 AND active LIMIT 1`,[companyId],
     );
     if(!company)throw new Error('La société sélectionnée est introuvable ou inactive');
+    this.currentRequest={actor,companyId};
     return {
       ...this.coordinator.triggerCardReference(actor,companyId),
       agentType:'CARD_REFERENCE' as const,

@@ -168,6 +168,20 @@ export class TotalLoginAgentService implements OnModuleInit, OnModuleDestroy {
     return this.getStatus();
   }
 
+  /**
+   * Relance uniquement l'agent manuel cartes/plafonds après un navigateur
+   * figé. Les checkpoints PostgreSQL ne sont pas supprimés : la nouvelle
+   * session reprend donc à la première carte dont la limite manque.
+   */
+  async restartCardReference(actor: Actor, companyId: string, reason: string) {
+    this.logger.warn(`Redémarrage agent Cartes & Plafonds : ${reason}`);
+    await this.closeBrowser();
+    this.statusValue=this.status('FAILED',reason);
+    this.referenceStatusValue=this.status('STARTING',
+      'Session Total figée détectée — reconnexion et reprise des plafonds sauvegardés…');
+    return this.start(actor,companyId,'REFERENCE');
+  }
+
   start(actor: Actor, companyId?: string, mode: 'REALTIME' | 'REFERENCE' = 'REALTIME') {
     // Une sélection effectuée dans Delta doit prendre effet même si le
     // watchdog avait déjà démarré un cycle. L'ancien code retournait avant

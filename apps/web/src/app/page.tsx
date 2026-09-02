@@ -2112,6 +2112,7 @@ export default function Home() {
             token={token}
             user={user}
             companyId={selectedClientId??""}
+            companyCode={selectedClient?.code??""}
             notify={notify}
             onSynced={() => setRefreshTick((current) => current + 1)}
             reset={() => {
@@ -4265,7 +4266,7 @@ function readTotalMobilityPayload(raw:string):TotalMobilityPayload{
   };
   return {CustomerId:read("CustomerId"),CustomerNumber:read("CustomerNumber"),SiteNumber:read("SiteNumber"),UserId:read("UserId"),usersname:read("usersname")};
 }
-function Settings({ reset,token,user,companyId,notify,onSynced }: { reset:()=>void;token:string|null;user:User;companyId:string;notify:(message:string)=>void;onSynced:()=>void }) {
+function Settings({ reset,token,user,companyId,companyCode,notify,onSynced }: { reset:()=>void;token:string|null;user:User;companyId:string;companyCode:string;notify:(message:string)=>void;onSynced:()=>void }) {
   const [total,setTotal]=useState<TotalMobilityStatus>({});
   const [runs,setRuns]=useState<TotalMobilityRun[]>([]);
   const [busy,setBusy]=useState(false);
@@ -4287,11 +4288,12 @@ function Settings({ reset,token,user,companyId,notify,onSynced }: { reset:()=>vo
   }
   async function runAgentAction(path:"realtime"|"reference",selectedOnly=false){
     if(!token)return;
+    if(selectedOnly&&!companyId){notify("Sélectionnez explicitement une société avant de lancer cet agent.");return;}
     const cardReference=path==="reference";
     setAgentKind(cardReference?"CARD_REFERENCE":"REALTIME");
     setBusy(true);
     try{
-      const endpoint=cardReference?"card-agent/start":"agent/realtime";
+      const endpoint=cardReference?(selectedOnly?"card-agent/start-selected":"card-agent/start"):"agent/realtime";
       const response=await fetch(`${API}/total-mobility/${endpoint}`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify(selectedOnly&&companyId?{companyId}:{})});
       const body=await response.json().catch(()=>({})) as TotalAgentStatus&{message?:string|string[]};
       if(!response.ok)throw new Error(Array.isArray(body.message)?body.message.join(" · "):body.message||"Impossible de lancer l’extraction Total");
@@ -4330,6 +4332,7 @@ function Settings({ reset,token,user,companyId,notify,onSynced }: { reset:()=>vo
           <button className={styles.connectorSecondaryButton} disabled={busy} onClick={()=>runAgentAction("reference",true)}>Cartes/plafonds · société sélectionnée</button>
           <button className={styles.connectorSecondaryButton} disabled={busy} onClick={()=>runAgentAction("reference")}>Cartes/plafonds · toutes les sociétés</button>
         </div>
+        {companyCode&&<p><strong>Société verrouillée pour le bouton ciblé : {companyCode}</strong></p>}
         <p><small>Le temps réel utilise les cartes déjà extraites. L’extraction des cartes et plafonds reste strictement manuelle et ne démarre qu’avec le bouton ci-dessus.</small></p>
         <details className={styles.connectorConfig}><summary>Mode de secours administrateur</summary><form onSubmit={connect} className={styles.connectorForm}>
           <div className={styles.connectorGuide}><b>1</b><span><strong>Copiez la configuration des transactions</strong><small>Total Mobility → F12 → Network → requête <code>report/list</code> → Payload → clic droit → Copy value.</small></span></div>

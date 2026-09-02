@@ -16,8 +16,10 @@ type Actor = { sub: string; email: string };
 @Injectable()
 export class TotalCardReferenceAgentService implements OnModuleDestroy {
   private readonly coordinator: TotalLoginAgentService;
+  private readonly db: DatabaseService;
 
   constructor(total: TotalMobilityService, db: DatabaseService) {
+    this.db = db;
     // Instance volontairement indépendante de l'agent Transactions fourni par
     // Nest. Elle possède son propre Chromium, sa page, ses cookies et son état
     // de société ; son onModuleInit n'est pas appelé, donc aucun worker temps
@@ -38,6 +40,19 @@ export class TotalCardReferenceAgentService implements OnModuleDestroy {
       ...this.coordinator.triggerCardReference(actor, companyId),
       agentType: 'CARD_REFERENCE' as const,
       lockedCompanyId: companyId ?? null,
+    };
+  }
+
+  async startSelected(actor: Actor, companyId: string) {
+    const [company]=await this.db.query<{code:string}>(
+      `SELECT code FROM company WHERE id=$1 AND active LIMIT 1`,[companyId],
+    );
+    if(!company)throw new Error('La société sélectionnée est introuvable ou inactive');
+    return {
+      ...this.coordinator.triggerCardReference(actor,companyId),
+      agentType:'CARD_REFERENCE' as const,
+      lockedCompanyId:companyId,
+      lockedCompanyCode:company.code,
     };
   }
 }

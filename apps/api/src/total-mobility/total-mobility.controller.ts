@@ -53,6 +53,9 @@ class TotalVerificationCodeDto {
 class StartTotalAgentDto {
   @IsOptional() @IsUUID() companyId?: string;
 }
+class StartSelectedTotalAgentDto {
+  @IsUUID() companyId!: string;
+}
 
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Roles('SUPER_ADMIN', 'DIRECTION_GENERAL')
@@ -92,6 +95,12 @@ export class TotalMobilityController {
     @Req() req: { user: { sub: string; email: string } },
   ) {
     return this.cardAgent.start(req.user, dto.companyId);
+  }
+  @Post('card-agent/start-selected') startSelectedCardAgent(
+    @Body() dto: StartSelectedTotalAgentDto,
+    @Req() req: { user: { sub: string; email: string } },
+  ) {
+    return this.cardAgent.startSelected(req.user, dto.companyId);
   }
   @Post('agent/code') submitAgentCode(@Body() dto: TotalVerificationCodeDto) {
     return this.agent.submitCode(dto.code);
